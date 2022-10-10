@@ -1,0 +1,17 @@
+[package]
+name = "alt-http"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eyre = "0.6.8"
+futures = "0.3.24"
+httparse = "1.8.0"
+tokio = { version = "1.21.2", features = ["full"] }
+# this includes a fix for accept
+tokio-uring = { git = "https://github.com/tokio-rs/tokio-uring", rev = "a42af77" }
+tracing = "0.1.37"
+
+[dev-dependencies]
+hyper = { version = "0.14.20", features = ["client", "server", "http1", "tcp", "stream"] }
+tracing-subscriber = "0.3.16"
