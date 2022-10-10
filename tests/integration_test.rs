@@ -92,8 +92,8 @@ async fn test_simple_server_inner() -> eyre::Result<()> {
     }
 
     impl RequestDriver for RDriver {
-        fn upstream_addr(&self) -> std::net::SocketAddr {
-            self.upstream_addr
+        fn upstream_addr(&self) -> eyre::Result<std::net::SocketAddr> {
+            Ok(self.upstream_addr)
         }
 
         fn keep_header(&self, _name: &str) -> bool {

@@ -8,6 +8,8 @@ use tracing::debug;
 const MAX_HEADERS_LEN: usize = 64 * 1024;
 const MAX_READ_SIZE: usize = 4 * 1024;
 
+pub use httparse;
+
 /// re-exported so consumers can use whatever forked version we use
 pub use tokio_uring;
 
@@ -21,7 +23,7 @@ pub trait ConnectionDriver {
 /// A request driver knows where a request should go, how to modify headers, etc.
 pub trait RequestDriver {
     /// Determine which upstream address to use for this request
-    fn upstream_addr(&self) -> SocketAddr;
+    fn upstream_addr(&self) -> eyre::Result<SocketAddr>;
 
     /// Returns true if this header must be kept when proxying the request upstream
     fn keep_header(&self, name: &str) -> bool;
@@ -105,7 +107,7 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
                 }
 
                 let req_dv = conn_dv.build_request_context(&dos_req)?;
-                let ups_addr = req_dv.upstream_addr();
+                let ups_addr = req_dv.upstream_addr()?;
 
                 debug!("connecting to upstream at {ups_addr}...");
                 let ups = TcpStream::connect(ups_addr).await?;
