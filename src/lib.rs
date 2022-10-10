@@ -103,6 +103,15 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
                         if header.value.eq_ignore_ascii_case(b"close") {
                             connection_close = true;
                         }
+                    } else if header.name.eq_ignore_ascii_case("transfer-encoding") {
+                        if header.value.eq_ignore_ascii_case(b"chunked") {
+                            return Err(eyre::eyre!("chunked transfer encoding not supported"));
+                        } else {
+                            return Err(eyre::eyre!(
+                                "transfer-encoding not supported: {:?}",
+                                std::str::from_utf8(header.value)
+                            ));
+                        }
                     }
                 }
 

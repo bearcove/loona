@@ -7,7 +7,7 @@ use hyper::{
     service::{make_service_fn, Service},
     Body, Request, Response,
 };
-use tracing::{info, Level};
+use tracing::Level;
 
 struct TestService;
 
@@ -23,8 +23,12 @@ impl Service<Request<Body>> for TestService {
         Ok(()).into()
     }
 
-    fn call(&mut self, _req: Request<Body>) -> Self::Future {
-        async move { Ok(Response::new(Body::from("Hi there"))) }
+    fn call(&mut self, req: Request<Body>) -> Self::Future {
+        async move {
+            let (_parts, body) = req.into_parts();
+            let res = Response::builder().body(body).unwrap();
+            Ok(res)
+        }
     }
 }
 
@@ -36,7 +40,7 @@ fn test_simple_server() {
         tracing_subscriber::fmt()
             .with_max_level(Level::TRACE)
             .init();
-        info!("Here goes nothing");
+        color_eyre::install().unwrap();
 
         if let Err(e) = test_simple_server_inner().await {
             panic!("Error: {}", e);
@@ -54,21 +58,7 @@ async fn test_simple_server_inner() -> eyre::Result<()> {
     let ln = tokio_uring::net::TcpListener::bind("[::]:0".parse()?)?;
     let ln_addr = ln.local_addr()?;
 
-    tokio_uring::spawn(async move {
-        let client = hyper::Client::new();
-        let req = Request::builder()
-            .uri(format!("http://{ln_addr}/hi"))
-            .body(Body::empty())
-            .unwrap();
-
-        let res = client.request(req).await.unwrap();
-        dbg!(res.headers());
-        let body = hyper::body::to_bytes(res.into_body())
-            .await
-            .unwrap()
-            .to_vec();
-        assert_eq!(body, b"Hi there");
-    });
+    let client_jh = tokio_uring::spawn(do_client(ln_addr));
 
     struct CDriver {
         upstream_addr: SocketAddr,
@@ -105,6 +95,28 @@ async fn test_simple_server_inner() -> eyre::Result<()> {
 
     let (stream, _remote_addr) = ln.accept().await?;
     alt_http::serve_h1(conn_dv, stream).await?;
+
+    client_jh.await??;
+
+    Ok(())
+}
+
+async fn do_client(ln_addr: SocketAddr) -> eyre::Result<()> {
+    let test_body = "A fairly simple request body";
+
+    let client = hyper::Client::new();
+    let req = Request::builder()
+        .uri(format!("http://{ln_addr}/hi"))
+        .body(Body::from(test_body))
+        .unwrap();
+
+    let res = client.request(req).await.unwrap();
+    dbg!(res.headers());
+    let body = hyper::body::to_bytes(res.into_body())
+        .await
+        .unwrap()
+        .to_vec();
+    assert_eq!(body, test_body.as_bytes());
 
     Ok(())
 }
