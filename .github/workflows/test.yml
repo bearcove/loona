@@ -14,5 +14,7 @@ jobs:
       - name: Run tests
         run: |
           cd ${{ github.workspace }}
+          sccache --zero-stats
           cargo check
           just test --no-capture
+          sccache --show-stats
