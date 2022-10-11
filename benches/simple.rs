@@ -7,9 +7,9 @@ static INPUT: &[u8] = b"This is some sample data";
 
 fn bench_bufpool(c: &mut Criterion) {
     {
-        let mut g = c.benchmark_group("alloc");
+        let mut g = c.benchmark_group("alloc-one");
 
-        g.bench_function("0-stack", |b| {
+        g.bench_function("stack", |b| {
             b.iter(|| {
                 let mut buf = [0u8; 4096];
                 buf[..INPUT.len()].copy_from_slice(INPUT);
@@ -25,11 +25,25 @@ fn bench_bufpool(c: &mut Criterion) {
                 black_box(&buf[..]);
             })
         });
-        g.bench_function("vec", |b| {
+        g.bench_function("vec-zeroed", |b| {
             b.iter(|| {
                 let mut buf: Vec<u8> = Vec::with_capacity(4096);
                 buf.resize(INPUT.len(), 0);
                 buf[..INPUT.len()].copy_from_slice(INPUT);
+                assert_eq!(&buf[..INPUT.len()], INPUT);
+                black_box(&buf[..]);
+            })
+        });
+        g.bench_function("vec-uninit", |b| {
+            b.iter(|| {
+                let mut buf: Vec<u8> = Vec::with_capacity(4096);
+                let slice = buf.spare_capacity_mut();
+                for i in 0..INPUT.len() {
+                    slice[i].write(INPUT[i]);
+                }
+                unsafe {
+                    buf.set_len(INPUT.len());
+                }
                 assert_eq!(&buf[..INPUT.len()], INPUT);
                 black_box(&buf[..]);
             })
@@ -39,7 +53,7 @@ fn bench_bufpool(c: &mut Criterion) {
     {
         let mut g = c.benchmark_group("alloc-many");
 
-        for count in [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024] {
+        for count in [16, 32, 64, 128, 256, 512, 1024, 2048, 4096] {
             g.bench_with_input(BenchmarkId::new("pool", count), &count, |b, &s| {
                 b.iter(|| {
                     let mut bufs = Vec::with_capacity(s);
