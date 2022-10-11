@@ -1,5 +1,6 @@
 #![feature(thread_local)]
 
+use bufpool::Buf;
 use eyre::Context;
 use futures::FutureExt;
 use httparse::{Request, Response, Status, EMPTY_HEADER};
@@ -8,7 +9,6 @@ use tokio_uring::{buf::IoBuf, net::TcpStream};
 use tracing::debug;
 
 const MAX_HEADERS_LEN: usize = 64 * 1024;
-const MAX_READ_SIZE: usize = 4 * 1024;
 
 pub mod bufpool;
 
@@ -41,16 +41,14 @@ pub trait RequestDriver {
 
 /// Handle a plaintext HTTP/1.1 connection
 pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::Result<()> {
-    let mut ups_rd_buf = Vec::with_capacity(MAX_READ_SIZE);
-    let mut dos_rd_buf = Vec::with_capacity(MAX_READ_SIZE);
+    let mut ups_rd_buf = Buf::alloc()?;
+    let mut dos_rd_buf = Buf::alloc()?;
 
     // try to read a complete request
     let mut dos_header_buf = Vec::with_capacity(MAX_HEADERS_LEN);
     let mut ups_header_buf = Vec::with_capacity(MAX_HEADERS_LEN);
 
     loop {
-        dos_rd_buf.clear();
-
         let res;
         (res, dos_rd_buf) = dos.read(dos_rd_buf).await;
         let n = res?;
@@ -164,7 +162,7 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
                 'read_response: loop {
                     ups_header_buf.clear();
 
-                    ups_rd_buf.clear();
+                    // ups_rd_buf.clear();
                     let res;
                     (res, ups_rd_buf) = ups.read(ups_rd_buf).await;
                     let n = res?;
@@ -286,14 +284,13 @@ async fn copy(
     role: &str,
     src: &TcpStream,
     dst: &TcpStream,
-    buf: Vec<u8>,
+    buf: Buf,
     content_length: &mut u64,
-) -> eyre::Result<Vec<u8>> {
+) -> eyre::Result<Buf> {
     let mut buf = buf;
 
     while *content_length > 0 {
         debug!(%role, "{content_length} left");
-        buf.clear();
 
         let res;
         (res, buf) = src.read(buf).await;
