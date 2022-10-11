@@ -10,6 +10,10 @@ use memmap2::MmapMut;
 #[thread_local]
 static BUF_POOL: BufPool = BufPool::new_empty(4096, 1024);
 
+thread_local! {
+    static BUF_POOL_DESTRUCTOR: RefCell<Option<MmapMut>> = RefCell::new(None);
+}
+
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(thiserror::Error, Debug)]
@@ -101,6 +105,7 @@ impl Buf {
         BUF_POOL.alloc()
     }
 
+    #[inline(always)]
     pub fn len() -> usize {
         BUF_POOL.buf_size
     }
@@ -109,6 +114,7 @@ impl Buf {
 impl ops::Deref for Buf {
     type Target = [u8];
 
+    #[inline(always)]
     fn deref(&self) -> &[u8] {
         let start = self.index as usize * BUF_POOL.buf_size;
         // TODO: review safety of this. the thread can end, which would run
@@ -121,6 +127,7 @@ impl ops::Deref for Buf {
 }
 
 impl ops::DerefMut for Buf {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         let start = self.index as usize * BUF_POOL.buf_size;
         let ptr = BUF_POOL
