@@ -8,7 +8,7 @@ use tracing::debug;
 const MAX_HEADERS_LEN: usize = 64 * 1024;
 const MAX_READ_SIZE: usize = 4 * 1024;
 
-mod bufpool;
+pub mod bufpool;
 
 pub use httparse;
 
