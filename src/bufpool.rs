@@ -1,10 +1,16 @@
-use std::{cell::RefCell, collections::VecDeque, marker::PhantomData, ops, rc::Rc};
+use std::{
+    cell::{RefCell, RefMut},
+    collections::VecDeque,
+    marker::PhantomData,
+    ops,
+};
 
 use memmap2::MmapMut;
 
-thread_local! {
-    static BUF_POOL: Rc<BufPool> = Rc::new(BufPool::new(4096, 1024).unwrap());
-}
+#[thread_local]
+static BUF_POOL: BufPool = BufPool::new_empty(4096, 1024);
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -17,40 +23,41 @@ pub enum Error {
 
 /// A buffer pool
 pub(crate) struct BufPool {
-    map: MmapMut,
-    ptr: *mut u8,
     buf_size: usize,
     num_buf: usize,
-    inner: RefCell<BufPoolInner>,
+    inner: RefCell<Option<BufPoolInner>>,
 }
 
 struct BufPoolInner {
+    map: MmapMut,
     free: VecDeque<u16>,
 }
 
 impl BufPool {
-    pub(crate) fn new(buf_size: u16, num_buf: u16) -> Result<BufPool, Error> {
-        let len = num_buf as usize * buf_size as usize;
-        let mut map = memmap2::MmapOptions::new().len(len).map_anon()?;
-        let ptr = map.as_mut_ptr();
-
-        let mut free = VecDeque::with_capacity(num_buf as usize);
-        for i in 0..num_buf {
-            free.push_back(i);
-        }
-
-        let inner = BufPoolInner { free };
-        Ok(BufPool {
-            map,
-            ptr,
+    pub(crate) const fn new_empty(buf_size: u16, num_buf: u16) -> BufPool {
+        BufPool {
             buf_size: buf_size as usize,
             num_buf: num_buf as usize,
-            inner: RefCell::new(inner),
-        })
+            inner: RefCell::new(None),
+        }
     }
 
-    pub(crate) fn alloc(self: &Rc<Self>) -> Result<Buf, Error> {
-        let mut inner = self.inner.borrow_mut();
+    pub(crate) fn alloc_unchecked(&self) -> Result<Buf> {
+        let mut inner = self.borrow_mut_unchecked();
+
+        if let Some(index) = inner.free.pop_front() {
+            Ok(Buf {
+                index,
+                _non_send: Default::default(),
+            })
+        } else {
+            Err(Error::OutOfMemory)
+        }
+    }
+
+    pub(crate) fn alloc(&self) -> Result<Buf> {
+        let mut inner = self.borrow_mut()?;
+
         if let Some(index) = inner.free.pop_front() {
             Ok(Buf {
                 index,
@@ -63,12 +70,43 @@ impl BufPool {
 
     fn reclaim(&self, index: u16) {
         let mut inner = self.inner.borrow_mut();
+        let inner = inner.as_mut().unwrap();
         inner.free.push_back(index);
     }
 
-    fn num_free(&self) -> usize {
-        self.inner.borrow().free.len()
+    pub(crate) fn num_free(&self) -> Result<usize> {
+        Ok(self.borrow_mut()?.free.len())
     }
+
+    fn borrow_mut(&self) -> Result<RefMut<BufPoolInner>> {
+        let mut inner = self.inner.borrow_mut();
+        if inner.is_none() {
+            let len = self.num_buf as usize * self.buf_size as usize;
+            let map = memmap2::MmapOptions::new().len(len).map_anon()?;
+
+            let mut free = VecDeque::with_capacity(self.num_buf as usize);
+            for i in 0..self.num_buf {
+                free.push_back(i as u16);
+            }
+
+            *inner = Some(BufPoolInner { map, free });
+        }
+
+        let r = RefMut::map(inner, |o| o.as_mut().unwrap());
+        Ok(r)
+    }
+
+    #[inline(always)]
+    fn borrow_mut_unchecked(&self) -> RefMut<BufPoolInner> {
+        RefMut::map(self.inner.borrow_mut(), |o| unsafe {
+            o.as_mut().unwrap_unchecked()
+        })
+    }
+}
+
+pub fn init() -> Result<()> {
+    BUF_POOL.borrow_mut()?;
+    Ok(())
 }
 
 pub struct Buf {
@@ -78,12 +116,18 @@ pub struct Buf {
 }
 
 impl Buf {
+    #[inline(always)]
     pub fn alloc() -> Result<Buf, Error> {
-        BUF_POOL.with(|pool| pool.alloc())
+        BUF_POOL.alloc()
+    }
+
+    #[inline(always)]
+    pub fn alloc_unchecked() -> Result<Buf, Error> {
+        BUF_POOL.alloc_unchecked()
     }
 
     pub fn len() -> usize {
-        BUF_POOL.with(|pool| pool.buf_size)
+        BUF_POOL.buf_size
     }
 }
 
@@ -91,29 +135,33 @@ impl ops::Deref for Buf {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {
-        BUF_POOL.with(|pool| {
-            let start = self.index as usize * pool.buf_size;
-            // TODO: review safety of this. the thread can end, which would run
-            // the destructor, drop the `MmapMut`, and unmap the memory. but
-            // `Buf` is !Send and !Sync, and the returned slice has the same
-            // lifetime as `Buf`, so I think this is okay? - amos
-            unsafe { std::slice::from_raw_parts(pool.ptr.add(start), pool.buf_size) }
-        })
+        let start = self.index as usize * BUF_POOL.buf_size;
+        // TODO: review safety of this. the thread can end, which would run
+        // the destructor, drop the `MmapMut`, and unmap the memory. but
+        // `Buf` is !Send and !Sync, and the returned slice has the same
+        // lifetime as `Buf`, so I think this is okay? - amos
+        let ptr = BUF_POOL.inner.borrow().as_ref().unwrap().map.as_ptr();
+        unsafe { std::slice::from_raw_parts(ptr.add(start), BUF_POOL.buf_size) }
     }
 }
 
 impl ops::DerefMut for Buf {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        BUF_POOL.with(|pool| {
-            let start = self.index as usize * pool.buf_size;
-            unsafe { std::slice::from_raw_parts_mut(pool.ptr.add(start), pool.buf_size) }
-        })
+        let start = self.index as usize * BUF_POOL.buf_size;
+        let ptr = BUF_POOL
+            .inner
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .map
+            .as_mut_ptr();
+        unsafe { std::slice::from_raw_parts_mut(ptr.add(start), BUF_POOL.buf_size) }
     }
 }
 
 impl Drop for Buf {
     fn drop(&mut self) {
-        BUF_POOL.with(|pool| pool.reclaim(self.index));
+        BUF_POOL.reclaim(self.index);
     }
 }
 
@@ -124,12 +172,12 @@ mod tests {
     use super::Buf;
 
     #[test]
-    fn simple_bufpool_test() {
-        let initial_free = BUF_POOL.with(|pool| pool.num_free());
+    fn simple_bufpool_test() -> eyre::Result<()> {
+        let initial_free = BUF_POOL.num_free()?;
 
         let mut buf = Buf::alloc().unwrap();
 
-        let now_free = BUF_POOL.with(|pool| pool.num_free());
+        let now_free = BUF_POOL.num_free()?;
         assert_eq!(initial_free - 1, now_free);
         assert_eq!(buf.len(), 4096);
 
@@ -138,7 +186,9 @@ mod tests {
 
         drop(buf);
 
-        let now_free = BUF_POOL.with(|pool| pool.num_free());
+        let now_free = BUF_POOL.num_free()?;
         assert_eq!(initial_free, now_free);
+
+        Ok(())
     }
 }

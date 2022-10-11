@@ -8,4 +8,4 @@ test *args:
 	RUST_BACKTRACE=1 cargo nextest run {{args}}
 
 bench *args:
-	RUST_BACKTRACE=1 cargo bench {{args}}
+	RUST_BACKTRACE=1 cargo bench {{args}} -- --plotting-backend plotters

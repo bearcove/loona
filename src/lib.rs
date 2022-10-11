@@ -1,3 +1,5 @@
+#![feature(thread_local)]
+
 use eyre::Context;
 use futures::FutureExt;
 use httparse::{Request, Response, Status, EMPTY_HEADER};
