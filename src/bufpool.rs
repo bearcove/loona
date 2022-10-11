@@ -42,19 +42,6 @@ impl BufPool {
         }
     }
 
-    pub(crate) fn alloc_unchecked(&self) -> Result<Buf> {
-        let mut inner = self.borrow_mut_unchecked();
-
-        if let Some(index) = inner.free.pop_front() {
-            Ok(Buf {
-                index,
-                _non_send: Default::default(),
-            })
-        } else {
-            Err(Error::OutOfMemory)
-        }
-    }
-
     pub(crate) fn alloc(&self) -> Result<Buf> {
         let mut inner = self.borrow_mut()?;
 
@@ -95,13 +82,6 @@ impl BufPool {
         let r = RefMut::map(inner, |o| o.as_mut().unwrap());
         Ok(r)
     }
-
-    #[inline(always)]
-    fn borrow_mut_unchecked(&self) -> RefMut<BufPoolInner> {
-        RefMut::map(self.inner.borrow_mut(), |o| unsafe {
-            o.as_mut().unwrap_unchecked()
-        })
-    }
 }
 
 pub fn init() -> Result<()> {
@@ -119,11 +99,6 @@ impl Buf {
     #[inline(always)]
     pub fn alloc() -> Result<Buf, Error> {
         BUF_POOL.alloc()
-    }
-
-    #[inline(always)]
-    pub fn alloc_unchecked() -> Result<Buf, Error> {
-        BUF_POOL.alloc_unchecked()
     }
 
     pub fn len() -> usize {
