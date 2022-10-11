@@ -7,6 +7,7 @@ jobs:
     env:
       RUSTC_WRAPPER: sccache
       CARGO_INCREMENTAL: 0
+      CARGO_HOME: /vol/cargo
     runs-on: self-hosted
     steps:
       - name: Check out repository code
@@ -15,6 +16,6 @@ jobs:
         run: |
           cd ${{ github.workspace }}
           sccache --zero-stats
-          cargo check
+          cargo clippy
           just test --no-capture
           sccache --show-stats
