@@ -17,5 +17,5 @@ jobs:
           cd ${{ github.workspace }}
           sccache --zero-stats
           cargo clippy
-          just test --no-capture
+          just test
           sccache --show-stats

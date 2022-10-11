@@ -8,6 +8,7 @@ use hyper::{
     Body, Request, Response,
 };
 use tracing::Level;
+use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::SubscriberInitExt};
 
 struct TestService;
 
@@ -32,20 +33,40 @@ impl Service<Request<Body>> for TestService {
     }
 }
 
-#[test]
-fn test_simple_server() {
+/// Set up a global tracing subscriber.
+///
+/// This won't play well outside of cargo-nextest or running a single
+/// test, which is a limitation we accept.
+fn setup_tracing() {
+    let filter_layer = Targets::new()
+        .with_default(Level::DEBUG)
+        .with_target("want", Level::INFO);
+
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_file(true)
+        .with_line_number(true)
+        .with_thread_ids(true);
+
+    tracing_subscriber::registry()
+        .with(filter_layer)
+        .with(fmt_layer)
+        .init();
+}
+
+fn run(test: impl Future<Output = eyre::Result<()>>) {
     tokio_uring::start(async {
-        // this won't play well outside of cargo-nextest or running a single
-        // test, which is fine.
-        tracing_subscriber::fmt()
-            .with_max_level(Level::TRACE)
-            .init();
+        setup_tracing();
         color_eyre::install().unwrap();
 
-        if let Err(e) = test_simple_server_inner().await {
+        if let Err(e) = test.await {
             panic!("Error: {}", e);
         }
     });
+}
+
+#[test]
+fn test_simple_server() {
+    run(test_simple_server_inner())
 }
 
 async fn test_simple_server_inner() -> eyre::Result<()> {
