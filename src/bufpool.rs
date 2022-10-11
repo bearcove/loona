@@ -11,7 +11,6 @@ use memmap2::MmapMut;
 static BUF_POOL: BufPool = BufPool::new_empty(4096, 4096);
 
 thread_local! {
-    // TODO: actually use that
     static BUF_POOL_DESTRUCTOR: RefCell<Option<MmapMut>> = RefCell::new(None);
 }
 
@@ -34,7 +33,9 @@ pub(crate) struct BufPool {
 }
 
 struct BufPoolInner {
-    map: MmapMut,
+    // this is tied to an [MmapMut] that gets deallocated at thread exit
+    // thanks to [BUF_POOL_DESTRUCTOR]
+    ptr: *mut u8,
     free: VecDeque<u16>,
 }
 
@@ -75,14 +76,19 @@ impl BufPool {
         let mut inner = self.inner.borrow_mut();
         if inner.is_none() {
             let len = self.num_buf as usize * self.buf_size as usize;
-            let map = memmap2::MmapOptions::new().len(len).map_anon()?;
+            let mut map = memmap2::MmapOptions::new().len(len).map_anon()?;
+            let ptr = map.as_mut_ptr();
 
             let mut free = VecDeque::with_capacity(self.num_buf as usize);
             for i in 0..self.num_buf {
                 free.push_back(i as u16);
             }
 
-            *inner = Some(BufPoolInner { map, free });
+            BUF_POOL_DESTRUCTOR.with(|destructor| {
+                *destructor.borrow_mut() = Some(map);
+            });
+
+            *inner = Some(BufPoolInner { ptr, free });
         }
 
         let r = RefMut::map(inner, |o| o.as_mut().unwrap());
@@ -97,13 +103,7 @@ impl BufPool {
     #[inline(always)]
     unsafe fn base_ptr(&self, index: u16) -> *mut u8 {
         let start = index as usize * BUF_POOL.buf_size;
-        let ptr = BUF_POOL
-            .inner
-            .borrow_mut()
-            .as_mut()
-            .unwrap()
-            .map
-            .as_mut_ptr();
+        let ptr = BUF_POOL.inner.borrow_mut().as_mut().unwrap().ptr;
         ptr.add(start)
     }
 }
