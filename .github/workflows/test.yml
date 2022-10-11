@@ -1,12 +1,11 @@
-name: Tests
-run-name: ${{ github.actor }} is testing out GitHub Actions 🚀
+name: test
 on: [push]
 jobs:
-  Explore-GitHub-Actions:
-    runs-on: ubuntu-latest
+  test:
+    runs-on: self-hosted
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
-        run: |
+      - run: |
           cd ${{ github.workspace }}
           just test
