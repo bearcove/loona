@@ -156,7 +156,9 @@ impl BufMut {
         self.len == 0
     }
 
-    #[inline(always)]
+    /// Turn this buffer immutable. The reference count doesn't change, but the
+    /// immutable view can be cloned.
+    #[inline]
     pub fn freeze(self) -> Buf {
         let b = Buf {
             index: self.index,
@@ -166,10 +168,37 @@ impl BufMut {
             _non_send: PhantomData,
         };
 
-        // keep ref count at 1
-        std::mem::forget(self);
+        std::mem::forget(self); // don't decrease ref count
 
         b
+    }
+
+    /// Split this buffer in twain. Both parts can be written to.  Panics if
+    /// `at` is out of bounds.
+    #[inline]
+    pub fn split_at(self, at: usize) -> (Self, Self) {
+        assert!(at <= self.len as usize);
+
+        let left = BufMut {
+            index: self.index,
+            off: self.off,
+            len: at as _,
+
+            _non_send: PhantomData,
+        };
+
+        let right = BufMut {
+            index: self.index,
+            off: self.off + at as u16,
+            len: (self.len - at as u16),
+
+            _non_send: PhantomData,
+        };
+
+        std::mem::forget(self); // don't decrease ref count
+        BUF_POOL.inc(left.index); // in fact, increase it by 1
+
+        (left, right)
     }
 }
 
@@ -299,9 +328,8 @@ mod tests {
     }
 
     #[test]
-    fn simple_bufpool_test() -> eyre::Result<()> {
+    fn freeze_test() -> eyre::Result<()> {
         let total_bufs = BUF_POOL.num_free()?;
-
         let mut bm = BufMut::alloc().unwrap();
 
         assert_eq!(total_bufs - 1, BUF_POOL.num_free()?);
@@ -322,8 +350,24 @@ mod tests {
         assert_eq!(total_bufs - 1, BUF_POOL.num_free()?);
 
         drop(b2);
-
         assert_eq!(total_bufs, BUF_POOL.num_free()?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn split_test() -> eyre::Result<()> {
+        let total_bufs = BUF_POOL.num_free()?;
+        let mut bm = BufMut::alloc().unwrap();
+
+        bm[..12].copy_from_slice(b"yellowjacket");
+        let (a, b) = bm.split_at(6);
+
+        assert_eq!(total_bufs - 1, BUF_POOL.num_free()?);
+        assert_eq!(&a[..], b"yellow");
+        assert_eq!(&b[..6], b"jacket");
+
+        drop((a, b));
 
         Ok(())
     }
