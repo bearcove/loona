@@ -1,13 +1,18 @@
 name: test
+
 on: [push]
+
 jobs:
   test:
+    env:
+      RUSTC_WRAPPER: sccache
+      CARGO_INCREMENTAL: 0
     runs-on: self-hosted
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
-      - run: |
-          export RUSTC_WRAPPER=sccache
+      - name: Run tests
+        run: |
           cd ${{ github.workspace }}
           cargo check
           just test --no-capture
