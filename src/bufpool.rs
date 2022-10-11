@@ -65,6 +65,7 @@ impl BufPool {
         inner.free.push_back(index);
     }
 
+    #[cfg(test)]
     pub(crate) fn num_free(&self) -> Result<usize> {
         Ok(self.borrow_mut()?.free.len())
     }
