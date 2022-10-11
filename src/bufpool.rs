@@ -11,6 +11,7 @@ use memmap2::MmapMut;
 static BUF_POOL: BufPool = BufPool::new_empty(4096, 4096);
 
 thread_local! {
+    // TODO: actually use that
     static BUF_POOL_DESTRUCTOR: RefCell<Option<MmapMut>> = RefCell::new(None);
 }
 
@@ -87,6 +88,24 @@ impl BufPool {
         let r = RefMut::map(inner, |o| o.as_mut().unwrap());
         Ok(r)
     }
+
+    /// Returns the base pointer for a block
+    ///
+    /// # Safety
+    ///
+    /// Borrow-checking is on you!
+    #[inline(always)]
+    unsafe fn base_ptr(&self, index: u16) -> *mut u8 {
+        let start = index as usize * BUF_POOL.buf_size;
+        let ptr = BUF_POOL
+            .inner
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .map
+            .as_mut_ptr();
+        ptr.add(start)
+    }
 }
 
 pub fn init() -> Result<()> {
@@ -117,28 +136,41 @@ impl ops::Deref for Buf {
 
     #[inline(always)]
     fn deref(&self) -> &[u8] {
-        let start = self.index as usize * BUF_POOL.buf_size;
-        // TODO: review safety of this. the thread can end, which would run
-        // the destructor, drop the `MmapMut`, and unmap the memory. but
-        // `Buf` is !Send and !Sync, and the returned slice has the same
-        // lifetime as `Buf`, so I think this is okay? - amos
-        let ptr = BUF_POOL.inner.borrow().as_ref().unwrap().map.as_ptr();
-        unsafe { std::slice::from_raw_parts(ptr.add(start), BUF_POOL.buf_size) }
+        unsafe { std::slice::from_raw_parts(BUF_POOL.base_ptr(self.index), BUF_POOL.buf_size) }
     }
 }
 
 impl ops::DerefMut for Buf {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        let start = self.index as usize * BUF_POOL.buf_size;
-        let ptr = BUF_POOL
-            .inner
-            .borrow_mut()
-            .as_mut()
-            .unwrap()
-            .map
-            .as_mut_ptr();
-        unsafe { std::slice::from_raw_parts_mut(ptr.add(start), BUF_POOL.buf_size) }
+        unsafe { std::slice::from_raw_parts_mut(BUF_POOL.base_ptr(self.index), BUF_POOL.buf_size) }
+    }
+}
+
+unsafe impl tokio_uring::buf::IoBuf for Buf {
+    fn stable_ptr(&self) -> *const u8 {
+        unsafe { BUF_POOL.base_ptr(self.index) as *const u8 }
+    }
+
+    fn bytes_init(&self) -> usize {
+        // no-op: buffers are zero-initialized, and users should be careful
+        // not to read bonus data
+        BUF_POOL.buf_size
+    }
+
+    fn bytes_total(&self) -> usize {
+        BUF_POOL.buf_size
+    }
+}
+
+unsafe impl tokio_uring::buf::IoBufMut for Buf {
+    fn stable_mut_ptr(&mut self) -> *mut u8 {
+        unsafe { BUF_POOL.base_ptr(self.index) }
+    }
+
+    unsafe fn set_init(&mut self, _pos: usize) {
+        // no-op: buffers are zero-initialized, and users should be careful
+        // not to read bonus data
     }
 }
 
