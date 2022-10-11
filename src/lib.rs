@@ -1,3 +1,5 @@
+#![feature(thread_local)]
+
 use eyre::Context;
 use futures::FutureExt;
 use httparse::{Request, Response, Status, EMPTY_HEADER};
@@ -7,6 +9,8 @@ use tracing::debug;
 
 const MAX_HEADERS_LEN: usize = 64 * 1024;
 const MAX_READ_SIZE: usize = 4 * 1024;
+
+pub mod bufpool;
 
 pub use httparse;
 

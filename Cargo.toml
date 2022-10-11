@@ -3,10 +3,19 @@ name = "alt-http"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+bench = false
+
+[[bench]]
+name = "simple"
+harness = false
+
 [dependencies]
 eyre = "0.6.8"
 futures = "0.3.24"
 httparse = "1.8.0"
+memmap2 = "0.5.7"
+thiserror = "1.0.37"
 tokio = { version = "1.21.2", features = ["full"] }
 # this includes a fix for accept
 tokio-uring = { git = "https://github.com/tokio-rs/tokio-uring", rev = "a42af77" }
@@ -14,5 +23,6 @@ tracing = "0.1.37"
 
 [dev-dependencies]
 color-eyre = "0.6.2"
+criterion = "0.4.0"
 hyper = { version = "0.14.20", features = ["client", "server", "http1", "tcp", "stream"] }
 tracing-subscriber = "0.3.16"
