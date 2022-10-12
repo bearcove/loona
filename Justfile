@@ -6,6 +6,9 @@ _default:
 # Run all tests with cargo nextest
 test *args:
 	RUST_BACKTRACE=1 cargo nextest run {{args}}
+	
+single-test *args:
+	just test --no-capture {{args}}
 
 bench *args:
 	RUST_BACKTRACE=1 cargo bench {{args}} -- --plotting-backend plotters

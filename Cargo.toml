@@ -22,7 +22,12 @@ tokio-uring = { git = "https://github.com/tokio-rs/tokio-uring", rev = "a42af77"
 tracing = "0.1.37"
 
 [dev-dependencies]
+bytes = "1.2.1"
 color-eyre = "0.6.2"
 criterion = "0.4.0"
 hyper = { version = "0.14.20", features = ["client", "server", "http1", "tcp", "stream"] }
+pretty_assertions = "1.3.0"
 tracing-subscriber = "0.3.16"
+
+[profile.dev.package."*"]
+opt-level = 2

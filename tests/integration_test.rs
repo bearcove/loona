@@ -1,143 +1,134 @@
 #![feature(type_alias_impl_trait)]
 
-use std::{convert::Infallible, future::Future, net::SocketAddr, rc::Rc};
+mod helpers;
 
-use alt_http::{ConnectionDriver, RequestDriver};
-use hyper::{
-    service::{make_service_fn, Service},
-    Body, Request, Response,
+use bytes::BytesMut;
+use httparse::{Status, EMPTY_HEADER};
+use pretty_assertions::assert_eq;
+use std::{net::SocketAddr, time::Duration};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
 };
-use tracing::Level;
-use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing::debug;
 
-struct TestService;
+use crate::helpers::tcp_serve_h1_once;
 
-impl Service<Request<Body>> for TestService {
-    type Response = Response<Body>;
-    type Error = Infallible;
-    type Future = impl Future<Output = Result<Self::Response, Self::Error>>;
+// Test ideas:
+// headers too large (ups/dos)
+// too many headers (ups/dos)
+// invalid transfer-encoding header
+// chunked transfer-encoding but bad chunks
+// various timeouts (slowloris, idle body, etc.)
 
-    fn poll_ready(
-        &mut self,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
-        Ok(()).into()
+#[test]
+fn header_too_large() {
+    async fn client(ln_addr: SocketAddr) -> eyre::Result<()> {
+        let mut socket = TcpStream::connect(ln_addr).await?;
+        socket.set_nodelay(true)?;
+
+        debug!("Making request...");
+        socket.write_all(b"POST /hi HTTP/1.1\r\ntoo-long: ").await?;
+
+        let garbage = "o".repeat(32678);
+        let mut conn_reset = false;
+
+        for _ in 0..128 {
+            debug!("writing...");
+            if let Err(e) = socket.write_all(garbage.as_bytes()).await {
+                if e.kind() == std::io::ErrorKind::ConnectionReset {
+                    debug!("connection reset, as expected");
+                    conn_reset = true;
+                    break;
+                } else {
+                    return Err(e.into());
+                }
+            };
+            // this isn't great, but we're waiting for a connection reset
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        assert!(conn_reset);
+
+        debug!("reading response");
+        let mut buf = BytesMut::new();
+        socket.read_buf(&mut buf).await?;
+        debug!("got response: {:?}", String::from_utf8_lossy(&buf[..]));
+
+        let mut headers = [EMPTY_HEADER; 16];
+        let mut res = httparse::Response::new(&mut headers[..]);
+        let _body_offset = match res.parse(&buf[..])? {
+            Status::Complete(off) => off,
+            Status::Partial => panic!("partial response"),
+        };
+
+        assert_eq!(res.code, Some(431));
+        assert_eq!(res.reason, Some("Request Header Fields Too Large"));
+
+        debug!("Done with client altogether");
+
+        Ok(())
     }
 
-    fn call(&mut self, req: Request<Body>) -> Self::Future {
-        async move {
-            let (_parts, body) = req.into_parts();
-            let res = Response::builder().body(body).unwrap();
-            Ok(res)
-        }
-    }
-}
+    helpers::run(async move {
+        let (server_addr, server_fut) = tcp_serve_h1_once()?;
+        let client_fut = client(server_addr);
 
-/// Set up a global tracing subscriber.
-///
-/// This won't play well outside of cargo-nextest or running a single
-/// test, which is a limitation we accept.
-fn setup_tracing() {
-    let filter_layer = Targets::new()
-        .with_default(Level::DEBUG)
-        .with_target("want", Level::INFO);
-
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .with_file(true)
-        .with_line_number(true)
-        .with_thread_ids(true);
-
-    tracing_subscriber::registry()
-        .with(filter_layer)
-        .with(fmt_layer)
-        .init();
-}
-
-fn run(test: impl Future<Output = eyre::Result<()>>) {
-    tokio_uring::start(async {
-        setup_tracing();
-        color_eyre::install().unwrap();
-
-        if let Err(e) = test.await {
-            panic!("Error: {}", e);
-        }
-    });
+        tokio::try_join!(server_fut, client_fut)?;
+        Ok(())
+    })
 }
 
 #[test]
-fn test_simple_server() {
-    run(test_simple_server_inner())
-}
+fn simple_post() {
+    async fn client(ln_addr: SocketAddr) -> eyre::Result<()> {
+        let test_body = "A fairly simple request body";
+        let content_length = test_body.len();
+        let mut socket = TcpStream::connect(ln_addr).await?;
+        socket.set_nodelay(true)?;
 
-async fn test_simple_server_inner() -> eyre::Result<()> {
-    let upstream = hyper::Server::bind(&"[::]:0".parse()?).serve(make_service_fn(|_addr| async {
-        Ok::<_, Infallible>(TestService)
-    }));
-    let upstream_addr = upstream.local_addr();
-    tokio_uring::spawn(upstream);
+        debug!("Sending request headers...");
+        socket
+        .write_all(
+            format!("POST /hi HTTP/1.1\r\ncontent-length: {content_length}\r\nconnection: close\r\n\r\n").as_bytes(),
+        )
+        .await?;
 
-    let ln = tokio_uring::net::TcpListener::bind("[::]:0".parse()?)?;
-    let ln_addr = ln.local_addr()?;
+        debug!("Sending request body...");
+        socket.write_all(test_body.as_bytes()).await?;
 
-    let client_jh = tokio_uring::spawn(do_client(ln_addr));
+        socket.flush().await?;
 
-    struct CDriver {
-        upstream_addr: SocketAddr,
+        debug!("Reading response...");
+        let mut buf = Vec::new();
+        socket.read_to_end(&mut buf).await?;
+        debug!("Done reading response");
+
+        let mut headers = [EMPTY_HEADER; 16];
+        let mut res = httparse::Response::new(&mut headers[..]);
+        let body_offset = match res.parse(&buf[..])? {
+            Status::Complete(off) => off,
+            Status::Partial => panic!("partial response"),
+        };
+
+        let body_len = buf.len() - body_offset;
+        assert_eq!(content_length, body_len);
+
+        assert_eq!(res.code, Some(200));
+        assert_eq!(res.headers.len(), 2);
+
+        let received_body = &buf[body_offset..];
+        assert_eq!(test_body.as_bytes(), received_body);
+
+        debug!("Done with client altogether");
+
+        Ok(())
     }
 
-    struct RDriver {
-        upstream_addr: SocketAddr,
-    }
+    helpers::run(async move {
+        let (server_addr, server_fut) = tcp_serve_h1_once()?;
+        let client_fut = client(server_addr);
 
-    impl ConnectionDriver for CDriver {
-        type RequestDriver = RDriver;
-
-        fn build_request_context(
-            &self,
-            _req: &httparse::Request,
-        ) -> eyre::Result<Self::RequestDriver> {
-            Ok(RDriver {
-                upstream_addr: self.upstream_addr,
-            })
-        }
-    }
-
-    impl RequestDriver for RDriver {
-        fn upstream_addr(&self) -> eyre::Result<std::net::SocketAddr> {
-            Ok(self.upstream_addr)
-        }
-
-        fn keep_header(&self, _name: &str) -> bool {
-            true
-        }
-    }
-
-    let conn_dv = Rc::new(CDriver { upstream_addr });
-
-    let (stream, _remote_addr) = ln.accept().await?;
-    alt_http::serve_h1(conn_dv, stream).await?;
-
-    client_jh.await??;
-
-    Ok(())
-}
-
-async fn do_client(ln_addr: SocketAddr) -> eyre::Result<()> {
-    let test_body = "A fairly simple request body";
-
-    let client = hyper::Client::new();
-    let req = Request::builder()
-        .uri(format!("http://{ln_addr}/hi"))
-        .body(Body::from(test_body))
-        .unwrap();
-
-    let res = client.request(req).await.unwrap();
-    dbg!(res.headers());
-    let body = hyper::body::to_bytes(res.into_body())
-        .await
-        .unwrap()
-        .to_vec();
-    assert_eq!(body, test_body.as_bytes());
-
-    Ok(())
+        tokio::try_join!(server_fut, client_fut)?;
+        Ok(())
+    })
 }
