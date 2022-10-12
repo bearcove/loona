@@ -5,7 +5,7 @@ mod helpers;
 use bytes::BytesMut;
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -44,6 +44,8 @@ fn header_too_large() {
                     return Err(e.into());
                 }
             };
+            // this isn't great, but we're waiting for a connection reset
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
         assert!(conn_reset);
 
