@@ -4,7 +4,10 @@ use bufpool::BufMut;
 use eyre::Context;
 use futures::FutureExt;
 use httparse::{Request, Response, Status, EMPTY_HEADER};
-use std::{net::SocketAddr, rc::Rc};
+use std::{
+    net::{Shutdown, SocketAddr},
+    rc::Rc,
+};
 use tokio_uring::{buf::IoBuf, net::TcpStream};
 use tracing::debug;
 
@@ -67,7 +70,18 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
         match dos_status {
             Status::Partial => {
                 if dos_header_buf.len() >= MAX_HEADERS_LEN {
-                    return Err(eyre::eyre!("downstream request headers too large"));
+                    dos.shutdown(Shutdown::Read)?;
+
+                    debug!("downstream request headers too large");
+                    let err_payload = b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n";
+
+                    let mut slice = dos_rd_buf.slice(..err_payload.len());
+                    slice[..].copy_from_slice(err_payload);
+
+                    let (res, _) = dos.write_all(slice).await;
+                    res?;
+
+                    return Ok(());
                 } else {
                     debug!("partial request (read of size {n}), continuing to read");
                     continue;
@@ -270,6 +284,8 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
 
                 if connection_close {
                     debug!("client requested connection close");
+                    dos.shutdown(Shutdown::Both)?;
+                    debug!("downstream shutdown");
                     return Ok(());
                 }
 
