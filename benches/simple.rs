@@ -19,7 +19,7 @@ fn bench_bufpool(c: &mut Criterion) {
         });
         g.bench_function("pool", |b| {
             b.iter(|| {
-                let mut buf = alt_http::bufpool::Buf::alloc().unwrap();
+                let mut buf = alt_http::bufpool::BufMut::alloc().unwrap();
                 buf[..INPUT.len()].copy_from_slice(INPUT);
                 assert_eq!(&buf[..INPUT.len()], INPUT);
                 black_box(&buf[..]);
@@ -58,7 +58,7 @@ fn bench_bufpool(c: &mut Criterion) {
                 b.iter(|| {
                     let mut bufs = Vec::with_capacity(s);
                     for _ in 0..s {
-                        let mut buf = alt_http::bufpool::Buf::alloc().unwrap();
+                        let mut buf = alt_http::bufpool::BufMut::alloc().unwrap();
                         buf[..INPUT.len()].copy_from_slice(INPUT);
                         assert_eq!(&buf[..INPUT.len()], INPUT);
                         bufs.push(buf);

@@ -1,6 +1,6 @@
 #![feature(thread_local)]
 
-use bufpool::Buf;
+use bufpool::BufMut;
 use eyre::Context;
 use futures::FutureExt;
 use httparse::{Request, Response, Status, EMPTY_HEADER};
@@ -41,8 +41,8 @@ pub trait RequestDriver {
 
 /// Handle a plaintext HTTP/1.1 connection
 pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::Result<()> {
-    let mut ups_rd_buf = Buf::alloc()?;
-    let mut dos_rd_buf = Buf::alloc()?;
+    let mut ups_rd_buf = BufMut::alloc()?;
+    let mut dos_rd_buf = BufMut::alloc()?;
 
     // try to read a complete request
     let mut dos_header_buf = Vec::with_capacity(MAX_HEADERS_LEN);
@@ -284,9 +284,9 @@ async fn copy(
     role: &str,
     src: &TcpStream,
     dst: &TcpStream,
-    buf: Buf,
+    buf: BufMut,
     content_length: &mut u64,
-) -> eyre::Result<Buf> {
+) -> eyre::Result<BufMut> {
     let mut buf = buf;
 
     while *content_length > 0 {

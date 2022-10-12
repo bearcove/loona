@@ -27,8 +27,8 @@ pub enum Error {
 
 /// A buffer pool
 pub(crate) struct BufPool {
-    buf_size: usize,
-    num_buf: usize,
+    buf_size: u16,
+    num_buf: u32,
     inner: RefCell<Option<BufPoolInner>>,
 }
 
@@ -36,35 +36,54 @@ struct BufPoolInner {
     // this is tied to an [MmapMut] that gets deallocated at thread exit
     // thanks to [BUF_POOL_DESTRUCTOR]
     ptr: *mut u8,
-    free: VecDeque<u16>,
+
+    // index of free blocks
+    free: VecDeque<u32>,
+
+    // ref counts start as all zeroes, get incremented when a block is borrowed
+    ref_counts: Vec<i16>,
 }
 
 impl BufPool {
-    pub(crate) const fn new_empty(buf_size: u16, num_buf: u16) -> BufPool {
+    pub(crate) const fn new_empty(buf_size: u16, num_buf: u32) -> BufPool {
         BufPool {
-            buf_size: buf_size as usize,
-            num_buf: num_buf as usize,
+            buf_size,
+            num_buf,
             inner: RefCell::new(None),
         }
     }
 
-    pub(crate) fn alloc(&self) -> Result<Buf> {
+    pub(crate) fn alloc(&self) -> Result<BufMut> {
         let mut inner = self.borrow_mut()?;
 
         if let Some(index) = inner.free.pop_front() {
-            Ok(Buf {
+            inner.ref_counts[index as usize] += 1;
+            Ok(BufMut {
                 index,
-                _non_send: Default::default(),
+                off: 0,
+                len: self.buf_size as _,
+                _non_send: PhantomData,
             })
         } else {
             Err(Error::OutOfMemory)
         }
     }
 
-    fn reclaim(&self, index: u16) {
+    fn inc(&self, index: u32) {
         let mut inner = self.inner.borrow_mut();
         let inner = inner.as_mut().unwrap();
-        inner.free.push_back(index);
+
+        inner.ref_counts[index as usize] += 1;
+    }
+
+    fn dec(&self, index: u32) {
+        let mut inner = self.inner.borrow_mut();
+        let inner = inner.as_mut().unwrap();
+
+        inner.ref_counts[index as usize] -= 1;
+        if inner.ref_counts[index as usize] == 0 {
+            inner.free.push_back(index);
+        }
     }
 
     #[cfg(test)]
@@ -78,17 +97,21 @@ impl BufPool {
             let len = self.num_buf as usize * self.buf_size as usize;
             let mut map = memmap2::MmapOptions::new().len(len).map_anon()?;
             let ptr = map.as_mut_ptr();
-
-            let mut free = VecDeque::with_capacity(self.num_buf as usize);
-            for i in 0..self.num_buf {
-                free.push_back(i as u16);
-            }
-
             BUF_POOL_DESTRUCTOR.with(|destructor| {
                 *destructor.borrow_mut() = Some(map);
             });
 
-            *inner = Some(BufPoolInner { ptr, free });
+            let mut free = VecDeque::with_capacity(self.num_buf as usize);
+            for i in 0..self.num_buf {
+                free.push_back(i as u32);
+            }
+            let ref_counts = vec![0; self.num_buf as usize];
+
+            *inner = Some(BufPoolInner {
+                ptr,
+                free,
+                ref_counts,
+            });
         }
 
         let r = RefMut::map(inner, |o| o.as_mut().unwrap());
@@ -101,71 +124,129 @@ impl BufPool {
     ///
     /// Borrow-checking is on you!
     #[inline(always)]
-    unsafe fn base_ptr(&self, index: u16) -> *mut u8 {
-        let start = index as usize * BUF_POOL.buf_size;
-        let ptr = BUF_POOL.inner.borrow_mut().as_mut().unwrap().ptr;
-        ptr.add(start)
+    unsafe fn base_ptr(&self, index: u32) -> *mut u8 {
+        let start = index as usize * self.buf_size as usize;
+        self.inner.borrow_mut().as_mut().unwrap().ptr.add(start)
     }
 }
 
-pub fn init() -> Result<()> {
-    BUF_POOL.borrow_mut()?;
-    Ok(())
-}
+/// A mutable buffer. Cannot be cloned, but can be written to
+pub struct BufMut {
+    index: u32,
+    off: u16,
+    len: u16,
 
-pub struct Buf {
-    index: u16,
-    // makes this type non-Send
+    // makes this type non-Send, which we do want
     _non_send: PhantomData<*mut ()>,
 }
 
-impl Buf {
+impl BufMut {
     #[inline(always)]
-    pub fn alloc() -> Result<Buf, Error> {
+    pub fn alloc() -> Result<BufMut, Error> {
         BUF_POOL.alloc()
     }
 
     #[inline(always)]
-    pub fn len() -> usize {
-        BUF_POOL.buf_size
+    pub fn len(&self) -> usize {
+        self.len as _
+    }
+
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Turn this buffer immutable. The reference count doesn't change, but the
+    /// immutable view can be cloned.
+    #[inline]
+    pub fn freeze(self) -> Buf {
+        let b = Buf {
+            index: self.index,
+            off: self.off,
+            len: self.len,
+
+            _non_send: PhantomData,
+        };
+
+        std::mem::forget(self); // don't decrease ref count
+
+        b
+    }
+
+    /// Split this buffer in twain. Both parts can be written to.  Panics if
+    /// `at` is out of bounds.
+    #[inline]
+    pub fn split_at(self, at: usize) -> (Self, Self) {
+        assert!(at <= self.len as usize);
+
+        let left = BufMut {
+            index: self.index,
+            off: self.off,
+            len: at as _,
+
+            _non_send: PhantomData,
+        };
+
+        let right = BufMut {
+            index: self.index,
+            off: self.off + at as u16,
+            len: (self.len - at as u16),
+
+            _non_send: PhantomData,
+        };
+
+        std::mem::forget(self); // don't decrease ref count
+        BUF_POOL.inc(left.index); // in fact, increase it by 1
+
+        (left, right)
     }
 }
 
-impl ops::Deref for Buf {
+impl ops::Deref for BufMut {
     type Target = [u8];
 
     #[inline(always)]
     fn deref(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(BUF_POOL.base_ptr(self.index), BUF_POOL.buf_size) }
+        unsafe {
+            std::slice::from_raw_parts(
+                BUF_POOL.base_ptr(self.index).add(self.off as _),
+                self.len as _,
+            )
+        }
     }
 }
 
-impl ops::DerefMut for Buf {
+impl ops::DerefMut for BufMut {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { std::slice::from_raw_parts_mut(BUF_POOL.base_ptr(self.index), BUF_POOL.buf_size) }
+        unsafe {
+            std::slice::from_raw_parts_mut(
+                BUF_POOL.base_ptr(self.index).add(self.off as _),
+                self.len as _,
+            )
+        }
     }
 }
 
-unsafe impl tokio_uring::buf::IoBuf for Buf {
+unsafe impl tokio_uring::buf::IoBuf for BufMut {
     fn stable_ptr(&self) -> *const u8 {
-        unsafe { BUF_POOL.base_ptr(self.index) as *const u8 }
+        unsafe { BUF_POOL.base_ptr(self.index).add(self.off as _) as *const u8 }
     }
 
     fn bytes_init(&self) -> usize {
         // no-op: buffers are zero-initialized, and users should be careful
         // not to read bonus data
-        BUF_POOL.buf_size
+        self.len as _
     }
 
     fn bytes_total(&self) -> usize {
-        BUF_POOL.buf_size
+        self.len as _
     }
 }
 
-unsafe impl tokio_uring::buf::IoBufMut for Buf {
+unsafe impl tokio_uring::buf::IoBufMut for BufMut {
     fn stable_mut_ptr(&mut self) -> *mut u8 {
-        unsafe { BUF_POOL.base_ptr(self.index) }
+        unsafe { BUF_POOL.base_ptr(self.index).add(self.off as _) }
     }
 
     unsafe fn set_init(&mut self, _pos: usize) {
@@ -174,35 +255,119 @@ unsafe impl tokio_uring::buf::IoBufMut for Buf {
     }
 }
 
+impl Drop for BufMut {
+    fn drop(&mut self) {
+        BUF_POOL.dec(self.index);
+    }
+}
+
+/// A read-only buffer. Can be cloned, but cannot be written to.
+pub struct Buf {
+    index: u32,
+    off: u16,
+    len: u16,
+
+    // makes this type non-Send, which we do want
+    _non_send: PhantomData<*mut ()>,
+}
+
+impl Buf {
+    #[inline(always)]
+    pub fn len(&self) -> usize {
+        self.len as _
+    }
+
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+impl ops::Deref for Buf {
+    type Target = [u8];
+
+    #[inline(always)]
+    fn deref(&self) -> &[u8] {
+        unsafe {
+            std::slice::from_raw_parts(
+                BUF_POOL.base_ptr(self.index).add(self.off as _),
+                self.len as _,
+            )
+        }
+    }
+}
+
+impl Clone for Buf {
+    fn clone(&self) -> Self {
+        BUF_POOL.inc(self.index);
+        Self {
+            index: self.index,
+            off: self.off,
+            len: self.len,
+            _non_send: PhantomData,
+        }
+    }
+}
+
 impl Drop for Buf {
     fn drop(&mut self) {
-        BUF_POOL.reclaim(self.index);
+        BUF_POOL.dec(self.index);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::bufpool::BUF_POOL;
+    use crate::bufpool::{Buf, BUF_POOL};
 
-    use super::Buf;
+    use super::BufMut;
 
     #[test]
-    fn simple_bufpool_test() -> eyre::Result<()> {
-        let initial_free = BUF_POOL.num_free()?;
+    fn align_test() {
+        assert_eq!(4, std::mem::align_of::<BufMut>());
+        assert_eq!(4, std::mem::align_of::<Buf>());
+    }
 
-        let mut buf = Buf::alloc().unwrap();
+    #[test]
+    fn freeze_test() -> eyre::Result<()> {
+        let total_bufs = BUF_POOL.num_free()?;
+        let mut bm = BufMut::alloc().unwrap();
 
-        let now_free = BUF_POOL.num_free()?;
-        assert_eq!(initial_free - 1, now_free);
-        assert_eq!(buf.len(), 4096);
+        assert_eq!(total_bufs - 1, BUF_POOL.num_free()?);
+        assert_eq!(bm.len(), 4096);
 
-        buf[..11].copy_from_slice(b"hello world");
-        assert_eq!(&buf[..11], b"hello world");
+        bm[..11].copy_from_slice(b"hello world");
+        assert_eq!(&bm[..11], b"hello world");
 
-        drop(buf);
+        let b = bm.freeze();
+        assert_eq!(&b[..11], b"hello world");
+        assert_eq!(total_bufs - 1, BUF_POOL.num_free()?);
 
-        let now_free = BUF_POOL.num_free()?;
-        assert_eq!(initial_free, now_free);
+        let b2 = b.clone();
+        assert_eq!(&b[..11], b"hello world");
+        assert_eq!(total_bufs - 1, BUF_POOL.num_free()?);
+
+        drop(b);
+        assert_eq!(total_bufs - 1, BUF_POOL.num_free()?);
+
+        drop(b2);
+        assert_eq!(total_bufs, BUF_POOL.num_free()?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn split_test() -> eyre::Result<()> {
+        let total_bufs = BUF_POOL.num_free()?;
+        let mut bm = BufMut::alloc().unwrap();
+
+        bm[..12].copy_from_slice(b"yellowjacket");
+        let (a, b) = bm.split_at(6);
+
+        assert_eq!(total_bufs - 1, BUF_POOL.num_free()?);
+        assert_eq!(&a[..], b"yellow");
+        assert_eq!(&b[..6], b"jacket");
+
+        drop((a, b));
 
         Ok(())
     }
