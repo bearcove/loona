@@ -23,7 +23,7 @@ macro_rules! dbg2 {
 /// An "aggregate buffer", uses one or more [BufMut]s for storage. Allows
 /// writing to uninitialized data, and borrowing ref-counted [AggregateSlice] of
 /// initialized data.
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct AggregateBuf {
     inner: Rc<RefCell<AggregateBufInner>>,
 }
@@ -69,6 +69,34 @@ impl AggregateBuf {
 
     pub fn write(&self) -> RefMut<AggregateBufInner> {
         self.inner.borrow_mut()
+    }
+
+    /// Split off a new [AggregateBuf] from this one, re-using any unfilled
+    /// space.
+    pub fn split(self) -> Result<Self, bufpool::Error> {
+        // Safety: we might have a bunch of [AggregateSlice] out there. They're
+        // immutable references to the _filled_ part of `self`, so it's okay.
+
+        let inner = self.inner.borrow();
+        let reusable = inner.capacity() - inner.len;
+        if reusable == 0 {
+            return Self::new();
+        }
+
+        // we can re-use the last block
+        let global_off = inner.block_size - reusable;
+        let reused_block = inner.blocks.iter().last().unwrap().dangerous_clone();
+
+        let mut new_inner = AggregateBufInner {
+            blocks: Default::default(),
+            block_size: inner.block_size,
+            off: global_off,
+            len: 0,
+        };
+        new_inner.blocks.push(reused_block);
+        Ok(Self {
+            inner: Rc::new(RefCell::new(new_inner)),
+        })
     }
 }
 
@@ -183,7 +211,7 @@ impl AggregateBufRead<'_> {
         assert!(range.end <= self.borrow.len());
 
         AggregateSlice {
-            pool: AggregateBuf {
+            parent: AggregateBuf {
                 inner: self.handle.clone(),
             },
             off: range.start as _,
@@ -207,11 +235,22 @@ impl AggregateBufRead<'_> {
 /// A slice of an [AggregateBuf]. This is a read-only view, it's clonable,
 /// it holds a reference to the underlying [AggregateBuf], so holding it
 /// will keep the _whole_ [AggregateBuf] alive.
-#[derive(Clone)]
 pub struct AggregateSlice {
-    pool: AggregateBuf,
+    parent: AggregateBuf,
     off: u32,
     len: u32,
+}
+
+impl Clone for AggregateSlice {
+    fn clone(&self) -> Self {
+        Self {
+            parent: AggregateBuf {
+                inner: self.parent.inner.clone(),
+            },
+            off: self.off,
+            len: self.len,
+        }
+    }
 }
 
 impl fmt::Debug for AggregateSlice {
@@ -262,7 +301,9 @@ impl nom::InputTake for AggregateSlice {
         }
 
         Self {
-            pool: self.pool.clone(),
+            parent: AggregateBuf {
+                inner: self.parent.inner.clone(),
+            },
             off: self.off,
             len: count,
         }
@@ -276,12 +317,16 @@ impl nom::InputTake for AggregateSlice {
 
         (
             Self {
-                pool: self.pool.clone(),
+                parent: AggregateBuf {
+                    inner: self.parent.inner.clone(),
+                },
                 off: self.off,
                 len: count,
             },
             Self {
-                pool: self.pool.clone(),
+                parent: AggregateBuf {
+                    inner: self.parent.inner.clone(),
+                },
                 off: self.off + count,
                 len: self.len - count,
             },
@@ -347,7 +392,7 @@ impl Iterator for AggregateSliceIter<'_> {
         // FIXME: this implementation is extremely naive and not efficient at
         // all. we shouldn't have to borrow here or do block math on every
         // iteration: just until we run out of the current block.
-        let inner = self.slice.pool.inner.borrow();
+        let inner = self.slice.parent.inner.borrow();
         let global_off = self.pos + self.slice.off;
         let (block_index, range) = inner.contiguous_range(global_off..global_off + 1);
         self.pos += 1;
@@ -424,21 +469,21 @@ mod tests {
         }
 
         {
-            let pool = buf.read();
+            let buf = buf.read();
 
-            let slice = pool.filled(0..agg_len);
+            let slice = buf.filled(0..agg_len);
             assert_eq!(slice.len(), block_size as usize);
             for b in slice {
                 assert_eq!(*b, 1)
             }
 
-            let slice = pool.filled(15..agg_len);
+            let slice = buf.filled(15..agg_len);
             assert_eq!(slice.len(), block_size as usize - 15);
             for b in slice {
                 assert_eq!(*b, 1)
             }
 
-            let slice = pool.filled((agg_len / 2)..agg_len);
+            let slice = buf.filled((agg_len / 2)..agg_len);
             assert_eq!(slice.len(), block_size as usize);
             for b in slice {
                 assert_eq!(*b, 2)
