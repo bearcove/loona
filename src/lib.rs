@@ -205,11 +205,10 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
                             res_body_first_part = res_body_offset..n;
                             debug!("upstream response body starts with {res_body_first_part:?} into ups_read_buf");
 
-                            debug!("writing response header to downstream...");
-
                             let res_status = ups_res
                                 .code
                                 .ok_or_else(|| eyre::eyre!("missing http status"))?;
+                            debug!("writing response header to downstream (HTTP {res_status})");
 
                             dos_header_buf.clear();
                             dos_header_buf.extend_from_slice(b"HTTP/1.1 ");

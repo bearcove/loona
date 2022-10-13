@@ -4,6 +4,7 @@ use bytes::Bytes;
 use futures::{Future, StreamExt};
 use hyper::{service::Service, Body, Request, Response};
 use tokio_stream::wrappers::ReceiverStream;
+use tracing::debug;
 
 pub(crate) struct TestService;
 
@@ -44,8 +45,19 @@ impl Service<Request<Body>> for TestService {
                     Ok(res)
                 }
                 _ => {
-                    let res = Response::builder().status(404).body(Body::empty()).unwrap();
-                    Ok(res)
+                    let parts = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
+                    if let ["status", code] = parts.as_slice() {
+                        let code = code.parse::<u16>().unwrap();
+                        let res = Response::builder()
+                            .status(code)
+                            .body(Body::empty())
+                            .unwrap();
+                        debug!("Replying with {res:?}");
+                        Ok(res)
+                    } else {
+                        let res = Response::builder().status(404).body(Body::empty()).unwrap();
+                        Ok(res)
+                    }
                 }
             }
         }
