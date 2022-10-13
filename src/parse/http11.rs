@@ -1,71 +1,55 @@
 use nom::{
     bytes::streaming::{tag, take_until, take_while1},
-    character::is_digit,
-    combinator::{map_res, opt},
-    sequence::{preceded, terminated},
     IResult,
 };
+use tracing::debug;
 
-#[derive(Debug)]
-pub struct Response<'a> {
-    pub status: u16,
-    pub status_text: &'a str,
+use super::aggregate::AggregateSlice;
 
-    // header names/values could be non-UTF-8, but let's not care for this sample.
-    // we are however careful not to use a HashMap, since headers can repeat.
-    pub headers: Vec<(&'a str, &'a str)>,
+const CRLF: &[u8] = b"\r\n";
+
+pub struct Request {
+    pub method: AggregateSlice,
+    pub path: AggregateSlice,
+    pub version: AggregateSlice,
 }
 
-const CRLF: &str = "\r\n";
+// Looks like `GET /path HTTP/1.1\r\n`, then headers
+pub fn request(i: AggregateSlice) -> IResult<AggregateSlice, Request> {
+    debug!("parsing method");
+    let (i, method) = take_while1_and_consume(i, |c| c != b' ')?;
+    debug!("parsing path");
+    let (i, path) = take_while1_and_consume(i, |c| c != b' ')?;
+    debug!("parsing version");
+    let (i, version) = take_until_and_consume(i, CRLF)?;
 
-// Looks like `HTTP/1.1 200 OK\r\n` or `HTTP/1.1 404 Not Found\r\n`
-pub fn response(i: &[u8]) -> IResult<&[u8], Response<'_>> {
-    let (i, _) = tag("HTTP/1.1 ")(i)?;
-
-    let (i, status) = terminated(u16_text, ws)(i)?;
-    let (i, status_text) =
-        map_res(terminated(take_until(CRLF), tag(CRLF)), std::str::from_utf8)(i)?;
-
-    let mut res = Response {
-        status,
-        status_text,
-        headers: Default::default(),
+    let request = Request {
+        method,
+        path,
+        version,
     };
 
-    let mut i = i;
-    loop {
-        if let (i, Some(_)) = opt(tag(CRLF))(i)? {
-            // end of headers
-            return Ok((i, res));
-        }
-
-        let (i2, (name, value)) = header(i)?;
-        res.headers.push((name, value));
-        i = i2;
-    }
+    Ok((i, request))
 }
 
-/// Parses a single header line
-fn header(i: &[u8]) -> IResult<&[u8], (&str, &str)> {
-    let (i, name) = map_res(terminated(take_until(":"), tag(":")), std::str::from_utf8)(i)?;
-    let (i, value) = map_res(
-        preceded(ws, terminated(take_until(CRLF), tag(CRLF))),
-        std::str::from_utf8,
-    )(i)?;
-
-    Ok((i, (name, value)))
+fn take_while1_and_consume(
+    i: AggregateSlice,
+    predicate: impl Fn(u8) -> bool,
+) -> IResult<AggregateSlice, AggregateSlice> {
+    // isn't actually redundant. passing it moves it
+    #[allow(clippy::redundant_closure)]
+    let (i, out) = take_while1(|c| predicate(c))(i)?;
+    let (i, _separator) = take_while1(|c| !predicate(c))(i)?;
+    Ok((i, out))
 }
 
-/// Parses whitespace (not including newlines)
-fn ws(i: &[u8]) -> IResult<&[u8], ()> {
-    let (i, _) = take_while1(|c| c == b' ')(i)?;
-    Ok((i, ()))
-}
-
-/// Parses text as a u16
-fn u16_text(i: &[u8]) -> IResult<&[u8], u16> {
-    let f = take_while1(is_digit);
-    let f = map_res(f, std::str::from_utf8);
-    let mut f = map_res(f, |s| s.parse());
-    f(i)
+fn take_until_and_consume(
+    i: AggregateSlice,
+    needle: &[u8],
+) -> IResult<AggregateSlice, AggregateSlice> {
+    // isn't actually redundant. passing it moves it
+    #[allow(clippy::redundant_closure)]
+    let (i, out) = take_until(needle)(i)?;
+    let (i, _separator) = tag(needle)(i)?;
+    Ok((i, out))
 }

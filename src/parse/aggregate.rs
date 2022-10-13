@@ -5,7 +5,7 @@ use std::{
     rc::Rc,
 };
 
-use nom::CompareResult;
+use nom::{Compare, CompareResult, FindSubstring, InputLength, InputTake, InputTakeAtPosition};
 use smallvec::SmallVec;
 
 use crate::bufpool::{self, BufMut};
@@ -23,7 +23,6 @@ macro_rules! dbg2 {
 /// An "aggregate buffer", uses one or more [BufMut]s for storage. Allows
 /// writing to uninitialized data, and borrowing ref-counted [AggregateSlice] of
 /// initialized data.
-#[derive(Default)]
 pub struct AggregateBuf {
     inner: Rc<RefCell<AggregateBufInner>>,
 }
@@ -101,6 +100,7 @@ impl AggregateBuf {
         })
     }
 
+    /// Return a write slice appropriate for a io_uring read
     pub fn write_slice(self) -> AggregateWriteSlice {
         let ptr;
         let len;
@@ -120,23 +120,49 @@ impl AggregateBuf {
             buf: self,
             ptr,
             len,
+            pos: 0,
         }
     }
 }
 
-struct AggregateWriteSlice {
+/// A write slice of an [AggregateBuf] suitable for an io_uring read/write
+pub struct AggregateWriteSlice {
     buf: AggregateBuf,
     ptr: *mut u8,
+    pos: usize,
     len: usize,
 }
 
 impl AggregateWriteSlice {
     pub fn into_inner(self) -> AggregateBuf {
+        self.buf.inner.borrow_mut().len += self.pos as u32;
         self.buf
     }
 }
 
-unsafe impl tokio_uring::buf::IoBuf for BufMut {}
+unsafe impl tokio_uring::buf::IoBuf for AggregateWriteSlice {
+    fn stable_ptr(&self) -> *const u8 {
+        self.ptr
+    }
+
+    fn bytes_init(&self) -> usize {
+        self.pos
+    }
+
+    fn bytes_total(&self) -> usize {
+        self.len
+    }
+}
+
+unsafe impl tokio_uring::buf::IoBufMut for AggregateWriteSlice {
+    fn stable_mut_ptr(&mut self) -> *mut u8 {
+        self.ptr
+    }
+
+    unsafe fn set_init(&mut self, pos: usize) {
+        self.pos = pos
+    }
+}
 
 impl AggregateBufInner {
     fn new() -> Result<Self, bufpool::Error> {
@@ -288,6 +314,18 @@ impl AggregateBufRead<'_> {
         let (block_index, given) = self.borrow.contiguous_range(wanted);
         &self.borrow.blocks[block_index][given]
     }
+
+    /// Returns the (filled) length of the buffer
+    #[inline(always)]
+    pub fn len(&self) -> u32 {
+        self.borrow.len()
+    }
+
+    /// Return true if this aggregate buf is empty
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.borrow.is_empty()
+    }
 }
 
 /// A slice of an [AggregateBuf]. This is a read-only view, it's clonable,
@@ -345,13 +383,13 @@ impl AggregateSlice {
     }
 }
 
-impl nom::InputLength for AggregateSlice {
+impl InputLength for AggregateSlice {
     fn input_len(&self) -> usize {
         self.len as _
     }
 }
 
-impl nom::InputTake for AggregateSlice {
+impl InputTake for AggregateSlice {
     fn take(&self, count: usize) -> Self {
         let count: u32 = count.try_into().unwrap();
         if count > self.len {
@@ -392,7 +430,7 @@ impl nom::InputTake for AggregateSlice {
     }
 }
 
-impl nom::Compare<&[u8]> for AggregateSlice {
+impl Compare<&[u8]> for AggregateSlice {
     #[inline(always)]
     fn compare(&self, t: &[u8]) -> CompareResult {
         let pos = self.iter().zip(t.iter()).position(|(a, b)| a != *b);
@@ -422,6 +460,94 @@ impl nom::Compare<&[u8]> for AggregateSlice {
         } else {
             CompareResult::Ok
         }
+    }
+}
+
+impl InputTakeAtPosition for AggregateSlice {
+    type Item = u8;
+
+    fn split_at_position<P, E: nom::error::ParseError<Self>>(
+        &self,
+        predicate: P,
+    ) -> nom::IResult<Self, Self, E>
+    where
+        P: Fn(Self::Item) -> bool,
+    {
+        match self.iter().position(predicate) {
+            Some(i) => Ok(self.clone().take_split(i)),
+            None => Err(nom::Err::Incomplete(nom::Needed::new(1))),
+        }
+    }
+
+    fn split_at_position1<P, E: nom::error::ParseError<Self>>(
+        &self,
+        predicate: P,
+        e: nom::error::ErrorKind,
+    ) -> nom::IResult<Self, Self, E>
+    where
+        P: Fn(Self::Item) -> bool,
+    {
+        match self.iter().position(predicate) {
+            Some(0) => Err(nom::Err::Error(E::from_error_kind(self.clone(), e))),
+            Some(i) => Ok(self.take_split(i)),
+            None => Err(nom::Err::Incomplete(nom::Needed::new(1))),
+        }
+    }
+
+    fn split_at_position_complete<P, E: nom::error::ParseError<Self>>(
+        &self,
+        predicate: P,
+    ) -> nom::IResult<Self, Self, E>
+    where
+        P: Fn(Self::Item) -> bool,
+    {
+        match self.iter().position(predicate) {
+            Some(i) => Ok(self.take_split(i)),
+            None => Ok(self.take_split(self.input_len())),
+        }
+    }
+
+    fn split_at_position1_complete<P, E: nom::error::ParseError<Self>>(
+        &self,
+        predicate: P,
+        e: nom::error::ErrorKind,
+    ) -> nom::IResult<Self, Self, E>
+    where
+        P: Fn(Self::Item) -> bool,
+    {
+        match self.iter().position(predicate) {
+            Some(0) => Err(nom::Err::Error(E::from_error_kind(self.clone(), e))),
+            Some(i) => Ok(self.take_split(i)),
+            None => {
+                if self.is_empty() {
+                    Err(nom::Err::Error(E::from_error_kind(self.clone(), e)))
+                } else {
+                    Ok(self.take_split(self.input_len()))
+                }
+            }
+        }
+    }
+}
+
+impl FindSubstring<&[u8]> for AggregateSlice {
+    fn find_substring(&self, substr: &[u8]) -> Option<usize> {
+        let mut offset = None;
+        let mut curr_substr = substr;
+        for (i, c) in self.iter().enumerate() {
+            if c == curr_substr[0] {
+                if offset.is_none() {
+                    offset = Some(i);
+                }
+                curr_substr = &curr_substr[1..];
+                if curr_substr.is_empty() {
+                    return offset;
+                }
+            } else {
+                curr_substr = substr;
+            }
+        }
+
+        None
     }
 }
 

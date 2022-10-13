@@ -4,6 +4,7 @@ use bufpool::BufMut;
 use eyre::Context;
 use futures::FutureExt;
 use httparse::{Request, Response, Status, EMPTY_HEADER};
+use parse::aggregate::AggregateBuf;
 use std::{
     net::{Shutdown, SocketAddr},
     rc::Rc,
@@ -19,6 +20,8 @@ pub use httparse;
 
 /// re-exported so consumers can use whatever forked version we use
 pub use tokio_uring;
+
+use crate::parse::http11;
 
 /// A connection driver maintains per-connection state and steers requests
 pub trait ConnectionDriver {
@@ -367,4 +370,39 @@ async fn copy(
     }
 
     Ok(buf)
+}
+
+/// Handle a plaintext HTTP/1.1 connection
+pub async fn serve_h1_b(_conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::Result<()> {
+    let mut dos_req_hdr = AggregateBuf::new()?;
+
+    loop {
+        let (res, buf) = dos.read(dos_req_hdr.write_slice()).await;
+        res?;
+        dos_req_hdr = buf.into_inner();
+        debug!("dos_req_hdr len = {}", dos_req_hdr.read().len());
+
+        let slice = dos_req_hdr.read().slice(0..dos_req_hdr.read().len());
+        debug!(
+            "what we got so far: {}",
+            String::from_utf8_lossy(&slice.to_vec())
+        );
+
+        match http11::request(slice) {
+            Ok((rest, _req)) => {
+                debug!("got request, {} left over", rest.len());
+            }
+            Err(err) => {
+                if err.is_incomplete() {
+                    debug!("incomplete request, need more data");
+                    continue;
+                } else {
+                    debug!("parsing error: {}", err.to_string());
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
