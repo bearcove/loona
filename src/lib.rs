@@ -389,8 +389,8 @@ pub async fn serve_h1_b(_conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> 
         );
 
         match http11::request(slice) {
-            Ok((rest, _req)) => {
-                debug!("got request, {} left over", rest.len());
+            Ok((rest, req)) => {
+                debug!(rest = %rest.len(), method = %req.method.to_string_lossy(), path = %req.path.to_string_lossy(), version = %req.version.to_string_lossy(), "got request");
             }
             Err(err) => {
                 if err.is_incomplete() {

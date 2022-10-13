@@ -367,9 +367,14 @@ impl AggregateSlice {
         }
     }
 
-    /// Returns as a vector. This allocates.
+    /// Returns as a vector. This allocates a lot.
     pub fn to_vec(&self) -> Vec<u8> {
         self.iter().collect()
+    }
+
+    /// Returns as a string. This allocates a lot.
+    pub fn to_string_lossy(&self) -> String {
+        String::from_utf8_lossy(&self.to_vec()).to_string()
     }
 
     /// Returns the length of this slice
@@ -411,22 +416,21 @@ impl InputTake for AggregateSlice {
             panic!("take_split: count > self.len");
         }
 
-        (
-            Self {
-                parent: AggregateBuf {
-                    inner: self.parent.inner.clone(),
-                },
-                off: self.off,
-                len: count,
+        let prefix = Self {
+            parent: AggregateBuf {
+                inner: self.parent.inner.clone(),
             },
-            Self {
-                parent: AggregateBuf {
-                    inner: self.parent.inner.clone(),
-                },
-                off: self.off + count,
-                len: self.len - count,
+            off: self.off,
+            len: count,
+        };
+        let suffix = Self {
+            parent: AggregateBuf {
+                inner: self.parent.inner.clone(),
             },
-        )
+            off: self.off + count,
+            len: self.len - count,
+        };
+        (suffix, prefix)
     }
 }
 
