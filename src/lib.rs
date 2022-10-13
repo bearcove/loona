@@ -21,7 +21,7 @@ pub use httparse;
 /// re-exported so consumers can use whatever forked version we use
 pub use tokio_uring;
 
-use crate::parse::http11;
+use crate::parse::h1;
 
 /// A connection driver maintains per-connection state and steers requests
 pub trait ConnectionDriver {
@@ -374,35 +374,42 @@ async fn copy(
 
 /// Handle a plaintext HTTP/1.1 connection
 pub async fn serve_h1_b(_conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::Result<()> {
-    let mut dos_req_hdr = AggregateBuf::new()?;
+    let mut buf = AggregateBuf::new()?;
 
     loop {
-        let (res, buf) = dos.read(dos_req_hdr.write_slice()).await;
+        let (new_buf, req) = read_req_header(&dos, buf).await?;
+        buf = new_buf;
+
+        debug!(method = %req.method.to_string_lossy(), path = %req.path.to_string_lossy(), version = %req.version, "got request");
+        for h in &req.headers {
+            debug!(name = %h.name.to_string_lossy(), value = %h.value.to_string_lossy(), "got header");
+        }
+
+        todo!("send request upstream");
+    }
+
+    Ok(())
+}
+
+async fn read_req_header(dos: &TcpStream, mut buf: AggregateBuf) -> eyre::Result<(AggregateBuf, h1::Request)> {
+    loop {
+        let (res, buf_s) = dos.read(buf.write_slice()).await;
         res?;
-        dos_req_hdr = buf.into_inner();
-        debug!("dos_req_hdr len = {}", dos_req_hdr.read().len());
+        buf = buf_s.into_inner();
+        let slice = buf.read().slice(0..buf.read().len());
 
-        let slice = dos_req_hdr.read().slice(0..dos_req_hdr.read().len());
-        debug!(
-            "what we got so far: {}",
-            String::from_utf8_lossy(&slice.to_vec())
-        );
-
-        match http11::request(slice) {
-            Ok((rest, req)) => {
-                debug!(rest = %rest.len(), method = %req.method.to_string_lossy(), path = %req.path.to_string_lossy(), version = %req.version, "got request");
-            }
+        let (rest, req) = match h1::request(slice) {
+            Ok(t) => t
             Err(err) => {
                 if err.is_incomplete() {
                     debug!("incomplete request, need more data");
                     continue;
                 } else {
-                    debug!("parsing error: {}", err.to_string());
-                    return Ok(());
+                    return Err(eyre::eyre!("parsing error: {err}"));
                 }
             }
-        }
-    }
+        };
 
-    Ok(())
+        return Ok((buf, req));
+    }
 }

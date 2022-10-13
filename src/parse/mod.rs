@@ -1,3 +1,3 @@
 pub mod aggregate;
-pub mod http11;
-pub mod http11_ref;
+pub mod h1;
+pub mod h1_ref;

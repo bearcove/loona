@@ -1,7 +1,10 @@
 use nom::{
     bytes::streaming::{tag, take, take_until, take_while1},
+    combinator::opt,
+    sequence::{preceded, terminated},
     IResult,
 };
+use smallvec::SmallVec;
 
 use super::aggregate::AggregateSlice;
 
@@ -14,6 +17,8 @@ pub struct Request {
 
     /// The 'b' in 'HTTP/1.b'
     pub version: u8,
+
+    pub headers: SmallVec<[Header; 32]>,
 }
 
 pub struct Header {
@@ -40,13 +45,38 @@ pub fn request(i: AggregateSlice) -> IResult<AggregateSlice, Request> {
     };
     let (i, _) = tag(CRLF)(i)?;
 
-    let request = Request {
+    let mut request = Request {
         method,
         path,
         version,
+        headers: Default::default(),
     };
 
-    Ok((i, request))
+    let mut i = i;
+    loop {
+        if let (i, Some(_)) = opt(tag(CRLF))(i.clone())? {
+            // end of headers
+            return Ok((i, request));
+        }
+
+        let (i2, (name, value)) = header(i)?;
+        request.headers.push(Header { name, value });
+        i = i2;
+    }
+}
+
+/// Parses a single header line
+fn header(i: AggregateSlice) -> IResult<AggregateSlice, (AggregateSlice, AggregateSlice)> {
+    let (i, name) = terminated(take_until(&b":"[..]), tag(&b":"[..]))(i)?;
+    let (i, value) = preceded(ws, terminated(take_until(CRLF), tag(CRLF)))(i)?;
+
+    Ok((i, (name, value)))
+}
+
+/// Parses whitespace (not including newlines)
+fn ws(i: AggregateSlice) -> IResult<AggregateSlice, ()> {
+    let (i, _) = take_while1(|c| c == b' ')(i)?;
+    Ok((i, ()))
 }
 
 fn take_while1_and_consume(

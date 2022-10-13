@@ -644,6 +644,11 @@ mod tests {
     }
 
     #[test]
+    fn agg_slice_size() {
+        assert_eq!(std::mem::size_of::<AggregateBufInner>(), 16);
+    }
+
+    #[test]
     fn agg_fill() {
         let buf = AggregateBuf::new().unwrap();
 
