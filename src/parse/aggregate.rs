@@ -556,24 +556,26 @@ mod tests {
 
     #[test]
     fn agg_nom_sample() {
-        let buf = AggregateBuf::new().unwrap();
-
-        // TODO: have the input span across two blocks
-        let input = "HTTP/1.1 200 OK";
-
-        {
-            let mut buf = buf.write();
-            buf.unfilled_mut()[..input.len()].copy_from_slice(input.as_bytes());
-            buf.advance(input.len() as _);
-        }
-
-        let slice = buf.read().slice(0..input.len() as u32);
-
         fn parse(i: AggregateSlice) -> IResult<AggregateSlice, AggregateSlice> {
             nom::bytes::streaming::tag(&b"HTTP/1.1"[..])(i)
         }
 
-        let (version, _rest) = parse(slice).unwrap();
-        assert_eq!(std::str::from_utf8(&version.to_vec()).unwrap(), "HTTP/1.1");
+        let mut buf = AggregateBuf::new().unwrap();
+
+        for _ in 0..300 {
+            let input = "HTTP/1.1 200 OK";
+
+            {
+                let mut buf = buf.write();
+                buf.unfilled_mut()[..input.len()].copy_from_slice(input.as_bytes());
+                buf.advance(input.len() as _);
+            }
+
+            let slice = buf.read().slice(0..input.len() as u32);
+            let (version, _rest) = parse(slice).unwrap();
+            assert_eq!(std::str::from_utf8(&version.to_vec()).unwrap(), "HTTP/1.1");
+
+            buf = buf.split().unwrap();
+        }
     }
 }
