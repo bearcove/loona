@@ -391,7 +391,10 @@ pub async fn serve_h1_b(_conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> 
     Ok(())
 }
 
-async fn read_req_header(dos: &TcpStream, mut buf: AggregateBuf) -> eyre::Result<(AggregateBuf, h1::Request)> {
+async fn read_req_header(
+    dos: &TcpStream,
+    mut buf: AggregateBuf,
+) -> eyre::Result<(AggregateBuf, h1::Request)> {
     loop {
         let (res, buf_s) = dos.read(buf.write_slice()).await;
         res?;
@@ -399,7 +402,7 @@ async fn read_req_header(dos: &TcpStream, mut buf: AggregateBuf) -> eyre::Result
         let slice = buf.read().slice(0..buf.read().len());
 
         let (rest, req) = match h1::request(slice) {
-            Ok(t) => t
+            Ok(t) => t,
             Err(err) => {
                 if err.is_incomplete() {
                     debug!("incomplete request, need more data");
