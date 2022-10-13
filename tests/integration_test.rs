@@ -19,7 +19,18 @@ use crate::helpers::tcp_serve_h1_once;
 // too many headers (ups/dos)
 // invalid transfer-encoding header
 // chunked transfer-encoding but bad chunks
+// timeout while reading request headers from downstream
+// timeout while writing request headers to upstream
+// connection reset from upstream after request headers
 // various timeouts (slowloris, idle body, etc.)
+// proxy responds with 4xx, 5xx
+// upstream connection resets
+// idle timeout while streaming bodies
+// proxies status from upstream (200, 404, 500, etc.)
+// 204
+// 204 with body?
+// retry / replay
+// re-use upstream connection
 
 #[test]
 fn header_too_large() {
@@ -79,7 +90,7 @@ fn header_too_large() {
 }
 
 #[test]
-fn simple_post() {
+fn echo_body_small() {
     async fn client(ln_addr: SocketAddr) -> eyre::Result<()> {
         let test_body = "A fairly simple request body";
         let content_length = test_body.len();
@@ -89,7 +100,7 @@ fn simple_post() {
         debug!("Sending request headers...");
         socket
         .write_all(
-            format!("POST /hi HTTP/1.1\r\ncontent-length: {content_length}\r\nconnection: close\r\n\r\n").as_bytes(),
+            format!("POST /echo-body HTTP/1.1\r\ncontent-length: {content_length}\r\nconnection: close\r\n\r\n").as_bytes(),
         )
         .await?;
 
@@ -121,6 +132,108 @@ fn simple_post() {
 
         debug!("Done with client altogether");
 
+        Ok(())
+    }
+
+    helpers::run(async move {
+        let (server_addr, server_fut) = tcp_serve_h1_once()?;
+        let client_fut = client(server_addr);
+
+        tokio::try_join!(server_fut, client_fut)?;
+        Ok(())
+    })
+}
+
+#[test]
+fn proxy_http_status() {
+    async fn client(ln_addr: SocketAddr) -> eyre::Result<()> {
+        let mut socket = TcpStream::connect(ln_addr).await?;
+        socket.set_nodelay(true)?;
+
+        let mut buf = BytesMut::with_capacity(256);
+
+        for status in 200..=599 {
+            debug!("Asking for a {status}");
+            socket
+                .write_all(format!("GET /status/{status} HTTP/1.1\r\n\r\n").as_bytes())
+                .await?;
+
+            socket.flush().await?;
+
+            debug!("Reading response...");
+            'read_response: loop {
+                buf.reserve(256);
+                socket.read_buf(&mut buf).await?;
+                debug!("After read, got {} bytes", buf.len());
+
+                let mut headers = [EMPTY_HEADER; 16];
+                let mut res = httparse::Response::new(&mut headers[..]);
+                let _body_offset = match res.parse(&buf[..])? {
+                    Status::Complete(off) => off,
+                    Status::Partial => continue 'read_response,
+                };
+                debug!("Got a complete response");
+                assert_eq!(res.code, Some(status));
+
+                _ = buf.split();
+                break 'read_response;
+            }
+        }
+
+        debug!("Done with client altogether");
+        Ok(())
+    }
+
+    helpers::run(async move {
+        let (server_addr, server_fut) = tcp_serve_h1_once()?;
+        let client_fut = client(server_addr);
+
+        tokio::try_join!(server_fut, client_fut)?;
+        Ok(())
+    })
+}
+
+#[test]
+fn read_streaming_body() {
+    async fn client(ln_addr: SocketAddr) -> eyre::Result<()> {
+        let mut socket = TcpStream::connect(ln_addr).await?;
+        socket.set_nodelay(true)?;
+
+        let mut buf = BytesMut::with_capacity(256);
+
+        debug!("Sending request headers");
+        socket
+            .write_all(b"GET /stream-big-body HTTP/1.1\r\n\r\n")
+            .await?;
+
+        socket.flush().await?;
+
+        debug!("Reading response...");
+        'read_response: loop {
+            buf.reserve(256);
+            socket.read_buf(&mut buf).await?;
+            debug!("After read, got {} bytes", buf.len());
+
+            let mut headers = [EMPTY_HEADER; 16];
+            let mut res = httparse::Response::new(&mut headers[..]);
+            let _body_offset = match res.parse(&buf[..])? {
+                Status::Complete(off) => off,
+                Status::Partial => continue 'read_response,
+            };
+            debug!("Got a complete response");
+
+            // FIXME: this should be 200 and should stream the body back.
+            // for now we don't support chunked transfer encoding.
+            assert_eq!(res.code, Some(500));
+            // assert_eq!(res.code, Some(200));
+
+            _ = buf.split();
+            break 'read_response;
+        }
+
+        debug!("Now must read body");
+
+        debug!("Done with client altogether");
         Ok(())
     }
 

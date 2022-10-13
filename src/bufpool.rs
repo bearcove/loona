@@ -7,8 +7,10 @@ use std::{
 
 use memmap2::MmapMut;
 
+pub const BUF_SIZE: u16 = 4096;
+
 #[thread_local]
-static BUF_POOL: BufPool = BufPool::new_empty(4096, 4096);
+static BUF_POOL: BufPool = BufPool::new_empty(BUF_SIZE, 64 * 1024);
 
 thread_local! {
     static BUF_POOL_DESTRUCTOR: RefCell<Option<MmapMut>> = RefCell::new(None);
@@ -141,6 +143,18 @@ pub struct BufMut {
 }
 
 impl BufMut {
+    /// Clone this buffer. This is only pub(crate) because it's used
+    /// by `AggregateBuf`.
+    pub(crate) fn dangerous_clone(&self) -> Self {
+        BUF_POOL.inc(1); // in fact, increase it by 1
+        BufMut {
+            index: self.index,
+            off: self.off,
+            len: self.len,
+            _non_send: PhantomData,
+        }
+    }
+
     #[inline(always)]
     pub fn alloc() -> Result<BufMut, Error> {
         BUF_POOL.alloc()

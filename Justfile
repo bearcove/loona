@@ -12,3 +12,6 @@ single-test *args:
 
 bench *args:
 	RUST_BACKTRACE=1 cargo bench {{args}} -- --plotting-backend plotters
+
+check:
+	cargo clippy --all-targets
