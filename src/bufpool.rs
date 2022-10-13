@@ -248,6 +248,10 @@ unsafe impl tokio_uring::buf::IoBuf for BufMut {
     }
 
     fn bytes_init(&self) -> usize {
+        // FIXME: this is incompatible with `readv`, but it is compatible with
+        // `read`, which doesn't take `bytes_init` into account. This is
+        // confusing.
+
         // no-op: buffers are zero-initialized, and users should be careful
         // not to read bonus data
         self.len as _

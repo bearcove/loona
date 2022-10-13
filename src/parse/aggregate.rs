@@ -100,7 +100,43 @@ impl AggregateBuf {
             inner: Rc::new(RefCell::new(new_inner)),
         })
     }
+
+    pub fn write_slice(self) -> AggregateWriteSlice {
+        let ptr;
+        let len;
+
+        {
+            let mut inner = self.inner.borrow_mut();
+            let (block_index, block_range) = inner.contiguous_range(inner.len..inner.capacity());
+            ptr = unsafe {
+                inner.blocks[block_index]
+                    .as_mut_ptr()
+                    .add(block_range.start)
+            };
+            len = block_range.len();
+        }
+
+        AggregateWriteSlice {
+            buf: self,
+            ptr,
+            len,
+        }
+    }
 }
+
+struct AggregateWriteSlice {
+    buf: AggregateBuf,
+    ptr: *mut u8,
+    len: usize,
+}
+
+impl AggregateWriteSlice {
+    pub fn into_inner(self) -> AggregateBuf {
+        self.buf
+    }
+}
+
+unsafe impl tokio_uring::buf::IoBuf for BufMut {}
 
 impl AggregateBufInner {
     fn new() -> Result<Self, bufpool::Error> {
