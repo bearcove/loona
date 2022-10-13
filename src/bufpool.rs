@@ -7,8 +7,10 @@ use std::{
 
 use memmap2::MmapMut;
 
+pub const BUF_SIZE: u16 = 4096;
+
 #[thread_local]
-static BUF_POOL: BufPool = BufPool::new_empty(4096, 4096);
+static BUF_POOL: BufPool = BufPool::new_empty(BUF_SIZE, 64 * 1024);
 
 thread_local! {
     static BUF_POOL_DESTRUCTOR: RefCell<Option<MmapMut>> = RefCell::new(None);

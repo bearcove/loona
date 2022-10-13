@@ -14,7 +14,7 @@ use tracing::debug;
 const MAX_HEADERS_LEN: usize = 64 * 1024;
 
 pub mod bufpool;
-
+pub mod parse;
 pub use httparse;
 
 /// re-exported so consumers can use whatever forked version we use
