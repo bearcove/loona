@@ -90,7 +90,7 @@ fn header_too_large() {
 }
 
 #[test]
-fn echo_non_chunked_body() {
+fn echo_body_small() {
     async fn client(ln_addr: SocketAddr) -> eyre::Result<()> {
         let test_body = "A fairly simple request body";
         let content_length = test_body.len();
@@ -172,13 +172,63 @@ fn proxy_http_status() {
                     Status::Complete(off) => off,
                     Status::Partial => continue 'read_response,
                 };
-                debug!("Got a complete request");
+                debug!("Got a complete response");
                 assert_eq!(res.code, Some(status));
 
                 _ = buf.split();
                 break 'read_response;
             }
         }
+
+        debug!("Done with client altogether");
+        Ok(())
+    }
+
+    helpers::run(async move {
+        let (server_addr, server_fut) = tcp_serve_h1_once()?;
+        let client_fut = client(server_addr);
+
+        tokio::try_join!(server_fut, client_fut)?;
+        Ok(())
+    })
+}
+
+#[test]
+fn read_streaming_body() {
+    async fn client(ln_addr: SocketAddr) -> eyre::Result<()> {
+        let mut socket = TcpStream::connect(ln_addr).await?;
+        socket.set_nodelay(true)?;
+
+        let mut buf = BytesMut::with_capacity(256);
+
+        debug!("Sending request headers");
+        socket
+            .write_all(b"GET /stream-big-body HTTP/1.1\r\n\r\n")
+            .await?;
+
+        socket.flush().await?;
+
+        debug!("Reading response...");
+        'read_response: loop {
+            buf.reserve(256);
+            socket.read_buf(&mut buf).await?;
+            debug!("After read, got {} bytes", buf.len());
+
+            let mut headers = [EMPTY_HEADER; 16];
+            let mut res = httparse::Response::new(&mut headers[..]);
+            let _body_offset = match res.parse(&buf[..])? {
+                Status::Complete(off) => off,
+                Status::Partial => continue 'read_response,
+            };
+            debug!("Got a complete response");
+
+            assert_eq!(res.code, Some(200));
+
+            _ = buf.split();
+            break 'read_response;
+        }
+
+        debug!("Now must read body");
 
         debug!("Done with client altogether");
         Ok(())

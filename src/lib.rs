@@ -101,7 +101,7 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
                     .path
                     .ok_or_else(|| eyre::eyre!("missing http path"))?;
 
-                let mut connection_close = false;
+                let mut dos_conn_close = false;
                 let mut req_content_length: Option<u64> = None;
 
                 for header in dos_req.headers.iter() {
@@ -117,7 +117,7 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
                     } else if header.name.eq_ignore_ascii_case("connection") {
                         #[allow(clippy::collapsible_if)]
                         if header.value.eq_ignore_ascii_case(b"close") {
-                            connection_close = true;
+                            dos_conn_close = true;
                         }
                     } else if header.name.eq_ignore_ascii_case("transfer-encoding") {
                         if header.value.eq_ignore_ascii_case(b"chunked") {
@@ -173,10 +173,13 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
                 let res_body_first_part;
 
                 debug!("reading response header from upstream...");
+
+                let mut ups_chunked = false;
+                let mut ups_conn_close = false;
+
                 'read_response: loop {
                     ups_header_buf.clear();
 
-                    // ups_rd_buf.clear();
                     let res;
                     (res, ups_rd_buf) = ups.read(ups_rd_buf).await;
                     let n = res?;
@@ -228,6 +231,21 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
                                             .parse()
                                             .wrap_err("could not parse content-length")?,
                                     );
+                                } else if header.name.eq_ignore_ascii_case("transfer-encoding") {
+                                    if header.value.eq_ignore_ascii_case(b"chunked") {
+                                        ups_chunked = true;
+                                        debug!("upstream is doing chunked transfer encoding");
+                                    } else {
+                                        return Err(eyre::eyre!(
+                                            "transfer-encoding not supported: {:?}",
+                                            std::str::from_utf8(header.value)
+                                        ));
+                                    }
+                                } else if header.name.eq_ignore_ascii_case("connection") {
+                                    #[allow(clippy::collapsible_if)]
+                                    if header.value.eq_ignore_ascii_case(b"close") {
+                                        ups_conn_close = true;
+                                    }
                                 }
 
                                 dos_header_buf.extend_from_slice(header.name.as_bytes());
@@ -237,6 +255,21 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
                             }
 
                             dos_header_buf.extend_from_slice(b"\r\n");
+
+                            if ups_chunked {
+                                // TODO: add support for chunked transfer-encoding
+                                let err_payload = b"HTTP/1.1 500 Internal Server Error\r\n\r\n";
+
+                                let mut slice = dos_rd_buf.slice(..err_payload.len());
+                                slice[..].copy_from_slice(err_payload);
+
+                                let (res, _) = dos.write_all(slice).await;
+                                res?;
+
+                                // FIXME: that's wrong, what if the client established a
+                                // persistent connection with us?
+                                return Ok(());
+                            }
 
                             let res;
                             (res, dos_header_buf) = dos.write_all(dos_header_buf).await;
@@ -262,6 +295,8 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
                 debug!(
                     "writing first response body part to downstream ({res_body_first_part:?})..."
                 );
+                // FIXME: this can overflow if content-length is smaller than
+                // what upstream actually sent.
                 res_content_length -= res_body_first_part.len() as u64;
                 let res;
                 let slice;
@@ -281,8 +316,13 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
 
                 (dos_rd_buf, ups_rd_buf) = tokio::try_join!(res_body_fut, req_body_fut)?;
 
-                if connection_close {
-                    debug!("client requested connection close");
+                if ups_conn_close {
+                    debug!("upstream requested connection close, that's fine we don't re-use connections yet");
+                    return Ok(());
+                }
+
+                if dos_conn_close {
+                    debug!("downstream requested connection close");
                     dos.shutdown(Shutdown::Both)?;
                     debug!("downstream shutdown");
                     return Ok(());
