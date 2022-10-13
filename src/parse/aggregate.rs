@@ -4,9 +4,20 @@ use std::{
     rc::Rc,
 };
 
+use nom::CompareResult;
 use smallvec::SmallVec;
 
 use crate::bufpool::{self, BufMut};
+
+macro_rules! dbg2 {
+    ($($arg:tt)*) => {
+        #[cfg(debug_assertions)]
+        {
+            // 🐉 uncomment to debug tests:
+            // dbg!($($arg)*);
+        }
+    };
+}
 
 /// An "aggregate buffer", uses one or more [BufMut]s for storage. Allows
 /// writing to uninitialized data, and borrowing ref-counted [AggregateSlice] of
@@ -112,7 +123,7 @@ impl AggregateBufInner {
         // take the global offset into account when indexing into bufs
         let start = start + self.off;
         let block_index = (start / self.block_size) as usize;
-        // dbg!(start, end, self.block_size, block_index);
+
         debug_assert!(block_index < self.blocks.len());
 
         let block_offset = start % self.block_size;
@@ -121,6 +132,17 @@ impl AggregateBufInner {
 
         let block_offset = block_offset as usize;
         let given = given as usize;
+
+        dbg2!(
+            "contiguous_range",
+            start,
+            end,
+            self.block_size,
+            block_index,
+            block_offset,
+            avail,
+            given
+        );
 
         (block_index, block_offset..block_offset + given)
     }
@@ -191,6 +213,25 @@ pub struct AggregateSlice {
     len: u32,
 }
 
+impl AggregateSlice {
+    /// Returns an iterator over the bytes in this slice
+    pub fn iter(&self) -> AggregateSliceIter<'_> {
+        AggregateSliceIter {
+            slice: self,
+            pos: 0,
+        }
+    }
+
+    /// Returns the length of this slice
+    pub fn len(&self) -> usize {
+        self.len as _
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
 impl nom::InputLength for AggregateSlice {
     fn input_len(&self) -> usize {
         self.len as _
@@ -233,18 +274,75 @@ impl nom::InputTake for AggregateSlice {
 }
 
 impl nom::Compare<&[u8]> for AggregateSlice {
-    fn compare(&self, _t: &[u8]) -> nom::CompareResult {
-        todo!()
+    #[inline(always)]
+    fn compare(&self, t: &[u8]) -> CompareResult {
+        let pos = self.iter().zip(t.iter()).position(|(a, b)| a != *b);
+
+        match pos {
+            Some(_) => CompareResult::Error,
+            None => {
+                if self.len() >= t.len() {
+                    CompareResult::Ok
+                } else {
+                    CompareResult::Incomplete
+                }
+            }
+        }
     }
 
-    fn compare_no_case(&self, _t: &[u8]) -> nom::CompareResult {
-        todo!()
+    #[inline(always)]
+    fn compare_no_case(&self, t: &[u8]) -> CompareResult {
+        if self
+            .iter()
+            .zip(t)
+            .any(|(a, b)| lowercase_byte(a) != lowercase_byte(*b))
+        {
+            CompareResult::Error
+        } else if self.len() < t.len() {
+            CompareResult::Incomplete
+        } else {
+            CompareResult::Ok
+        }
+    }
+}
+
+fn lowercase_byte(c: u8) -> u8 {
+    match c {
+        b'A'..=b'Z' => c - b'A' + b'a',
+        _ => c,
+    }
+}
+
+pub struct AggregateSliceIter<'a> {
+    slice: &'a AggregateSlice,
+    pos: u32,
+}
+
+impl Iterator for AggregateSliceIter<'_> {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pos >= self.slice.len {
+            return None;
+        }
+
+        dbg2!("AggregateSliceIter::next", self.pos, self.slice.len);
+
+        // FIXME: this implementation is extremely naive and not efficient at
+        // all. we shouldn't have to borrow here or do block math on every
+        // iteration: just until we run out of the current block.
+        let inner = self.slice.pool.inner.borrow();
+        let global_off = self.pos + self.slice.off;
+        let (block_index, range) = inner.contiguous_range(global_off..global_off + 1);
+        self.pos += 1;
+        Some(inner.blocks[block_index][range][0])
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{AggregateBuf, AggregateBufInner};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn agg_inner_size() {
@@ -338,8 +436,8 @@ mod tests {
             {
                 let dst = buf.unfilled_mut();
                 let dst_len = dst.len();
-                let mut src = b"#".repeat(dst.len());
-                src[..hello.len()].copy_from_slice(hello.as_bytes());
+                let mut src = b"#".repeat(dst_len);
+                src[(dst_len - hello.len())..].copy_from_slice(hello.as_bytes());
                 dst.copy_from_slice(&src);
 
                 buf.advance(dst_len as _);
@@ -360,11 +458,16 @@ mod tests {
         let slice = buf.read().slice(start..end);
         assert_eq!(slice.input_len(), hello.len() + world.len());
 
+        eprintln!("collect + compare owned");
+        let owned = slice.iter().collect::<Vec<_>>();
+        assert_eq!(String::from_utf8_lossy(&owned[..]), "helloworld");
+
         assert_eq!(slice.compare(b"that's not it"), nom::CompareResult::Error);
         assert_eq!(slice.compare(b"hello"), nom::CompareResult::Ok);
-        assert_eq!(slice.compare(b"hello world"), nom::CompareResult::Ok);
+        eprintln!("helloworld nom::Compare");
+        assert_eq!(slice.compare(b"helloworld"), nom::CompareResult::Ok);
         assert_eq!(
-            slice.compare(b"hello world woops"),
+            slice.compare(b"helloworldwoops"),
             nom::CompareResult::Incomplete
         );
 
