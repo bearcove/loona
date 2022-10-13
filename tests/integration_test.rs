@@ -19,7 +19,18 @@ use crate::helpers::tcp_serve_h1_once;
 // too many headers (ups/dos)
 // invalid transfer-encoding header
 // chunked transfer-encoding but bad chunks
+// timeout while reading request headers from downstream
+// timeout while writing request headers to upstream
+// connection reset from upstream after request headers
 // various timeouts (slowloris, idle body, etc.)
+// proxy responds with 4xx, 5xx
+// upstream connection resets
+// idle timeout while streaming bodies
+// proxies status from upstream (200, 404, 500, etc.)
+// 204
+// 204 with body?
+// retry / replay
+// re-use upstream connection
 
 #[test]
 fn header_too_large() {
@@ -79,7 +90,7 @@ fn header_too_large() {
 }
 
 #[test]
-fn simple_post() {
+fn echo_non_chunked_body() {
     async fn client(ln_addr: SocketAddr) -> eyre::Result<()> {
         let test_body = "A fairly simple request body";
         let content_length = test_body.len();
@@ -89,7 +100,7 @@ fn simple_post() {
         debug!("Sending request headers...");
         socket
         .write_all(
-            format!("POST /hi HTTP/1.1\r\ncontent-length: {content_length}\r\nconnection: close\r\n\r\n").as_bytes(),
+            format!("POST /echo-body HTTP/1.1\r\ncontent-length: {content_length}\r\nconnection: close\r\n\r\n").as_bytes(),
         )
         .await?;
 
