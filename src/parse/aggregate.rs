@@ -83,6 +83,8 @@ impl AggregateBuf {
             return Self::new();
         }
 
+        dbg2!(reusable, inner.block_size);
+
         // we can re-use the last block
         let global_off = inner.block_size - reusable;
         let reused_block = inner.blocks.iter().last().unwrap().dangerous_clone();
@@ -180,8 +182,28 @@ impl AggregateBufInner {
     /// to add a block to this aggregate buffer. This is fallible, as we might
     /// be out of memory.
     pub fn grow_if_needed(&mut self) -> Result<(), bufpool::Error> {
+        if self.len < self.capacity() {
+            return Ok(());
+        }
+
         let block = BufMut::alloc()?;
         self.blocks.push(block);
+        Ok(())
+    }
+
+    pub fn put(&mut self, mut s: &[u8]) -> Result<(), bufpool::Error> {
+        while !s.is_empty() {
+            self.grow_if_needed()?;
+
+            {
+                let unfilled = self.unfilled_mut();
+                let unfilled_len = unfilled.len();
+                let to_copy = std::cmp::min(unfilled_len, s.len());
+                unfilled[..to_copy].copy_from_slice(&s[..to_copy]);
+                self.advance(to_copy as u32);
+                s = &s[to_copy..];
+            }
+        }
         Ok(())
     }
 
@@ -564,12 +586,7 @@ mod tests {
 
         for _ in 0..300 {
             let input = "HTTP/1.1 200 OK";
-
-            {
-                let mut buf = buf.write();
-                buf.unfilled_mut()[..input.len()].copy_from_slice(input.as_bytes());
-                buf.advance(input.len() as _);
-            }
+            buf.write().put(input.as_bytes()).unwrap();
 
             let slice = buf.read().slice(0..input.len() as u32);
             let (version, _rest) = parse(slice).unwrap();
