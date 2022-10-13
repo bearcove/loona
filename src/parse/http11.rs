@@ -9,8 +9,11 @@ const CRLF: &[u8] = b"\r\n";
 
 pub struct Request {
     pub method: AggregateSlice,
+
     pub path: AggregateSlice,
-    pub version: AggregateSlice,
+
+    /// The 'b' in 'HTTP/1.b'
+    pub version: u8,
 }
 
 pub struct Header {
@@ -24,7 +27,18 @@ pub fn request(i: AggregateSlice) -> IResult<AggregateSlice, Request> {
     let (i, path) = take_while1_and_consume(i, |c| c != b' ')?;
     let (i, _) = tag(&b"HTTP/1."[..])(i)?;
     let (i, version) = take(1usize)(i)?;
-    let (i, version) = tag(CRLF)(i)?;
+    let version = match version.iter().next().unwrap() {
+        b'0' => 0,
+        b'1' => 1,
+        _ => {
+            return Err(nom::Err::Error(nom::error::Error::new(
+                i,
+                // FIXME: this is not good error reporting
+                nom::error::ErrorKind::Digit,
+            )));
+        }
+    };
+    let (i, _) = tag(CRLF)(i)?;
 
     let request = Request {
         method,

@@ -1,11 +1,14 @@
 use std::{
     cell::{RefCell, RefMut},
     fmt,
+    iter::Enumerate,
     ops::Range,
     rc::Rc,
 };
 
-use nom::{Compare, CompareResult, FindSubstring, InputLength, InputTake, InputTakeAtPosition};
+use nom::{
+    Compare, CompareResult, FindSubstring, InputIter, InputLength, InputTake, InputTakeAtPosition,
+};
 use smallvec::SmallVec;
 
 use crate::bufpool::{self, BufMut};
@@ -360,9 +363,10 @@ impl fmt::Debug for AggregateSlice {
 
 impl AggregateSlice {
     /// Returns an iterator over the bytes in this slice
-    pub fn iter(&self) -> AggregateSliceIter<'_> {
+    #[inline]
+    pub fn iter(&self) -> AggregateSliceIter {
         AggregateSliceIter {
-            slice: self,
+            slice: self.clone(),
             pos: 0,
         }
     }
@@ -555,6 +559,39 @@ impl FindSubstring<&[u8]> for AggregateSlice {
     }
 }
 
+impl InputIter for AggregateSlice {
+    type Item = u8;
+    type Iter = Enumerate<AggregateSliceIter>;
+    type IterElem = AggregateSliceIter;
+
+    #[inline]
+    fn iter_indices(&self) -> Self::Iter {
+        self.iter().enumerate()
+    }
+
+    #[inline]
+    fn iter_elements(&self) -> Self::IterElem {
+        self.iter()
+    }
+
+    #[inline]
+    fn position<P>(&self, predicate: P) -> Option<usize>
+    where
+        P: Fn(Self::Item) -> bool,
+    {
+        self.iter().position(predicate)
+    }
+
+    #[inline]
+    fn slice_index(&self, count: usize) -> Result<usize, nom::Needed> {
+        if self.len() >= count {
+            Ok(count)
+        } else {
+            Err(nom::Needed::new(count - self.len()))
+        }
+    }
+}
+
 fn lowercase_byte(c: u8) -> u8 {
     match c {
         b'A'..=b'Z' => c - b'A' + b'a',
@@ -562,12 +599,12 @@ fn lowercase_byte(c: u8) -> u8 {
     }
 }
 
-pub struct AggregateSliceIter<'a> {
-    slice: &'a AggregateSlice,
+pub struct AggregateSliceIter {
+    slice: AggregateSlice,
     pos: u32,
 }
 
-impl Iterator for AggregateSliceIter<'_> {
+impl Iterator for AggregateSliceIter {
     type Item = u8;
 
     fn next(&mut self) -> Option<Self::Item> {
