@@ -1,5 +1,6 @@
 use std::{
     cell::{RefCell, RefMut},
+    fmt,
     ops::Range,
     rc::Rc,
 };
@@ -213,6 +214,15 @@ pub struct AggregateSlice {
     len: u32,
 }
 
+impl fmt::Debug for AggregateSlice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AggregateSlice")
+            .field("off", &self.off)
+            .field("len", &self.len)
+            .finish()
+    }
+}
+
 impl AggregateSlice {
     /// Returns an iterator over the bytes in this slice
     pub fn iter(&self) -> AggregateSliceIter<'_> {
@@ -222,11 +232,17 @@ impl AggregateSlice {
         }
     }
 
+    /// Returns as a vector. This allocates.
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.iter().collect()
+    }
+
     /// Returns the length of this slice
     pub fn len(&self) -> usize {
         self.len as _
     }
 
+    /// Returns true if this is empty
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -337,11 +353,19 @@ impl Iterator for AggregateSliceIter<'_> {
         self.pos += 1;
         Some(inner.blocks[block_index][range][0])
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.slice.len - self.pos;
+        (remaining as _, Some(remaining as _))
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::parse::aggregate::AggregateSlice;
+
     use super::{AggregateBuf, AggregateBufInner};
+    use nom::IResult;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -458,8 +482,8 @@ mod tests {
         let slice = buf.read().slice(start..end);
         assert_eq!(slice.input_len(), hello.len() + world.len());
 
-        eprintln!("collect + compare owned");
-        let owned = slice.iter().collect::<Vec<_>>();
+        eprintln!("to_vec + compare owned");
+        let owned = slice.to_vec();
         assert_eq!(String::from_utf8_lossy(&owned[..]), "helloworld");
 
         assert_eq!(slice.compare(b"that's not it"), nom::CompareResult::Error);
@@ -483,5 +507,28 @@ mod tests {
         }
 
         // TODO: test `compare_no_case`
+    }
+
+    #[test]
+    fn agg_nom_sample() {
+        let buf = AggregateBuf::new().unwrap();
+
+        // TODO: have the input span across two blocks
+        let input = "HTTP/1.1 200 OK";
+
+        {
+            let mut buf = buf.write();
+            buf.unfilled_mut()[..input.len()].copy_from_slice(input.as_bytes());
+            buf.advance(input.len() as _);
+        }
+
+        let slice = buf.read().slice(0..input.len() as u32);
+
+        fn parse(i: AggregateSlice) -> IResult<AggregateSlice, AggregateSlice> {
+            nom::bytes::streaming::tag(&b"HTTP/1.1"[..])(i)
+        }
+
+        let (version, _rest) = parse(slice).unwrap();
+        assert_eq!(std::str::from_utf8(&version.to_vec()).unwrap(), "HTTP/1.1");
     }
 }
