@@ -2,7 +2,7 @@ use std::{
     cell::{RefCell, RefMut},
     collections::VecDeque,
     marker::PhantomData,
-    ops,
+    ops::{self, Range},
 };
 
 use memmap2::MmapMut;
@@ -187,6 +187,20 @@ impl BufMut {
         b
     }
 
+    /// Dangerous: freeze a slice of this. Must only be used if you can
+    /// guarantee this portion won't be written to anymore.
+    pub(crate) fn freeze_slice(&self, range: Range<u16>) -> Buf {
+        let b = Buf {
+            index: self.index,
+            off: self.off,
+            len: self.len,
+
+            _non_send: PhantomData,
+        };
+
+        b.slice(range)
+    }
+
     /// Split this buffer in twain. Both parts can be written to.  Panics if
     /// `at` is out of bounds.
     #[inline]
@@ -298,6 +312,35 @@ impl Buf {
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    /// Slice this buffer
+    pub fn slice(&self, range: Range<u16>) -> Self {
+        assert!(range.end >= range.start);
+        assert!(range.end <= self.len);
+
+        BUF_POOL.inc(1);
+        Buf {
+            index: self.index,
+            off: self.off + range.start,
+            len: (range.end - range.start) as _,
+
+            _non_send: PhantomData,
+        }
+    }
+}
+
+unsafe impl tokio_uring::buf::IoBuf for Buf {
+    fn stable_ptr(&self) -> *const u8 {
+        unsafe { BUF_POOL.base_ptr(self.index).add(self.off as _) as *const u8 }
+    }
+
+    fn bytes_init(&self) -> usize {
+        self.len as _
+    }
+
+    fn bytes_total(&self) -> usize {
+        self.len as _
     }
 }
 

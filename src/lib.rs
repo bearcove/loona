@@ -69,6 +69,7 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
 
         debug!("connecting to upstream at {ups_addr}...");
         let ups = TcpStream::connect(ups_addr).await?;
+        // TODO: set no_delay
 
         debug!("writing request header");
         let ups_buf = AggregateBuf::default();
@@ -88,6 +89,17 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
                 ups_buf.put(b"\r\n")?;
             }
             ups_buf.put(b"\r\n")?;
+        }
+
+        {
+            let ups_req_header_slice = ups_buf.read().read_slice();
+
+            let mut offset = 0;
+            while let Some(slice) = ups_req_header_slice.next_slice(offset) {
+                offset += slice.len() as u32;
+                let (res, _) = ups.write_all(slice).await;
+                res.wrap_err("writing request header upstream")?;
+            }
         }
 
         todo!("send request upstream");

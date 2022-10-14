@@ -12,7 +12,7 @@ use nom::{
 use smallvec::SmallVec;
 use tracing::debug;
 
-use crate::bufpool::{self, BufMut};
+use crate::bufpool::{self, Buf, BufMut};
 
 macro_rules! dbg2 {
     ($($arg:tt)*) => {
@@ -392,6 +392,11 @@ impl AggregateBufInner {
 }
 
 impl AggregateBufRead<'_> {
+    /// Return a slice for the whole length of this buffer
+    pub fn read_slice(&self) -> AggregateSlice {
+        self.slice(0..self.len())
+    }
+
     /// Take a slice out of the filled portion of this buffer. Panics if
     /// it is outside the filled portion.
     pub fn slice(&self, range: Range<u32>) -> AggregateSlice {
@@ -463,6 +468,21 @@ impl fmt::Debug for AggregateSlice {
 }
 
 impl AggregateSlice {
+    /// Returns next contiguous slice
+    pub fn next_slice(&self, offset: u32) -> Option<Buf> {
+        let r = self.parent.read();
+        if offset == self.len {
+            return None;
+        }
+        let (block_index, range) = r
+            .borrow
+            .contiguous_range(self.off + offset..self.off + self.len);
+
+        // FIXME: use try_into?
+        let range = (range.start as u16)..(range.end as u16);
+        Some(r.borrow.blocks[block_index].freeze_slice(range))
+    }
+
     /// Returns an iterator over the bytes in this slice
     #[inline]
     pub fn iter(&self) -> AggregateSliceIter {
