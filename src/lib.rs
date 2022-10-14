@@ -15,6 +15,8 @@ pub use tokio_uring;
 
 use crate::parse::h1;
 
+const MAX_HEADERS_LEN: u32 = 64 * 1024;
+
 /// A connection driver maintains per-connection state and steers requests
 pub trait ConnectionDriver {
     type RequestDriver: RequestDriver;
@@ -42,9 +44,19 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
     let mut buf = AggregateBuf::default();
 
     loop {
-        buf.write().grow_if_needed()?;
         let req;
-        (buf, req) = read_req_header(&dos, buf).await?;
+        (buf, req) = match read_req_header(&dos, buf).await {
+            Ok(t) => t,
+            Err(e) => {
+                if let Some(se) = e.downcast_ref::<SemanticError>() {
+                    let (res, _) = dos.write_all(se.as_http_response()).await;
+                    res.wrap_err("writing error response downstream")?;
+                }
+
+                debug!(?e, "error reading request header");
+                return Ok(());
+            }
+        };
 
         debug!(method = %req.method.to_string_lossy(), path = %req.path.to_string_lossy(), version = %req.version, "got request");
         for h in &req.headers {
@@ -63,9 +75,15 @@ async fn read_req_header(
     mut buf: AggregateBuf,
 ) -> eyre::Result<(AggregateBuf, h1::Request)> {
     loop {
+        if buf.write().capacity() >= MAX_HEADERS_LEN {
+            return Err(SemanticError::HeadersTooLong.into());
+        }
+        buf.write().grow_if_needed()?;
+
         let (res, buf_s) = dos.read(buf.write_slice()).await;
         res.wrap_err("reading request headers from downstream")?;
         buf = buf_s.into_inner();
+        debug!("reading headers ({} bytes so far)", buf.read().len());
         let slice = buf.read().slice(0..buf.read().len());
 
         let (rest, req) = match h1::request(slice) {
@@ -81,5 +99,19 @@ async fn read_req_header(
         };
 
         return Ok((buf.split_keeping_rest(rest), req));
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+enum SemanticError {
+    #[error("the headers are too long")]
+    HeadersTooLong,
+}
+
+impl SemanticError {
+    fn as_http_response(&self) -> &'static [u8] {
+        match self {
+            Self::HeadersTooLong => b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n",
+        }
     }
 }

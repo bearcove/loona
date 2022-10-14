@@ -10,6 +10,7 @@ use nom::{
     Compare, CompareResult, FindSubstring, InputIter, InputLength, InputTake, InputTakeAtPosition,
 };
 use smallvec::SmallVec;
+use tracing::debug;
 
 use crate::bufpool::{self, BufMut};
 
@@ -149,8 +150,14 @@ impl AggregateBuf {
         //                    abs_block_start +          |          + abs_filled_end
         //                                               + abs_rest_start
 
-        assert!(abs_block_start <= abs_rest_start);
-        assert!(abs_rest_start <= abs_filled_end);
+        assert!(
+            abs_block_start <= abs_rest_start,
+            "rest must start into last block"
+        );
+        assert!(
+            abs_rest_start <= abs_filled_end,
+            "rest must start before end of filled part"
+        );
 
         // let's clone get that block and make everything relative to its start
         let reused_block = inner.blocks.iter().last().unwrap().dangerous_clone();
@@ -192,6 +199,9 @@ impl AggregateBuf {
     }
 
     /// Return a write slice appropriate for a io_uring read.
+    ///
+    /// This panics if the write_slice would be empty, to avoid
+    /// misuse / no-op reads.
     pub fn write_slice(self) -> AggregateWriteSlice {
         let ptr;
         let len;
@@ -226,6 +236,7 @@ pub struct AggregateWriteSlice {
 
 impl AggregateWriteSlice {
     pub fn into_inner(self) -> AggregateBuf {
+        debug!("into_inner, self.pos = {}", self.pos);
         self.buf.inner.borrow_mut().len += self.pos as u32;
         self.buf
     }
@@ -251,6 +262,7 @@ unsafe impl tokio_uring::buf::IoBufMut for AggregateWriteSlice {
     }
 
     unsafe fn set_init(&mut self, pos: usize) {
+        debug!("set init: {} -> {}", self.pos, pos);
         self.pos = pos
     }
 }
