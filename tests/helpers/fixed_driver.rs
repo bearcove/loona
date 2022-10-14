@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use alt_http::{ConnectionDriver, RequestDriver};
+use alt_http::{parse::h1::Request, ConnectionDriver, RequestDriver};
 
 pub(crate) struct FixedConnDriver {
     pub(crate) upstream_addr: SocketAddr,
@@ -13,7 +13,7 @@ pub(crate) struct FixedReqDriver {
 impl ConnectionDriver for FixedConnDriver {
     type RequestDriver = FixedReqDriver;
 
-    fn build_request_context(&self, _req: &httparse::Request) -> eyre::Result<Self::RequestDriver> {
+    fn steer_request(&self, _req: &Request) -> eyre::Result<Self::RequestDriver> {
         Ok(FixedReqDriver {
             upstream_addr: self.upstream_addr,
         })

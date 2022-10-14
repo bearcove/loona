@@ -90,6 +90,7 @@ fn take_while1_and_consume(
     Ok((i, out))
 }
 
+#[allow(dead_code)]
 fn take_until_and_consume(
     i: AggregateSlice,
     needle: &[u8],

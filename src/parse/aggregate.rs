@@ -18,7 +18,7 @@ macro_rules! dbg2 {
         #[cfg(debug_assertions)]
         {
             // 🐉 uncomment to debug tests:
-            // dbg!($($arg)*);
+            dbg!($($arg)*);
         }
     };
 }
@@ -26,6 +26,24 @@ macro_rules! dbg2 {
 /// An "aggregate buffer", uses one or more [BufMut]s for storage. Allows
 /// writing to uninitialized data, and borrowing ref-counted [AggregateSlice] of
 /// initialized data.
+///
+/// ```text
+///     +-------------------------------+---------------------------------+
+///     |             block 0           |            block 1              |
+///     +-------------------------------+---------------------------------+
+///     |                  |                 |                            |
+///     |<----- off ------>|<----------------+- capacity ---------------->|
+///     |                  |                 |                            |
+///     | used by previous |<----- len ----->|<---------- avail --------->|
+///     | bufs and slices. |                 |                            |
+///                        |   filled and    |     can be written to      |
+///                        |    readable     |                            |
+/// ```
+///
+/// A non-zero `off` indicates that this [AggregateBuf] was split from another
+/// one, re-using `avail` bytes.
+///
+/// [AggregateSlice] offsets are relative to the global offset.
 pub struct AggregateBuf {
     inner: Rc<RefCell<AggregateBufInner>>,
 }
@@ -54,56 +72,126 @@ pub struct AggregateBufRead<'a> {
     borrow: std::cell::Ref<'a, AggregateBufInner>,
 }
 
-impl AggregateBuf {
-    /// Create a new aggregate buffer backed by one buffer.
-    pub fn new() -> Result<Self, bufpool::Error> {
-        let inner = AggregateBufInner::new()?;
-        Ok(Self {
+impl Default for AggregateBuf {
+    /// Create an empty [AggregateBuf].
+    ///
+    /// [AggregateBuf::grow_if_needed] must be called before writing to it.
+    fn default() -> Self {
+        let inner = AggregateBufInner::new();
+        Self {
             inner: Rc::new(RefCell::new(inner)),
-        })
+        }
     }
+}
 
+impl AggregateBuf {
+    /// Borrow this aggregate buffer immutably
     pub fn read(&self) -> AggregateBufRead<'_> {
         let handle = &self.inner;
         let borrow = handle.borrow();
         AggregateBufRead { handle, borrow }
     }
 
+    /// Borrow this aggregate buffer mutably
     pub fn write(&self) -> RefMut<AggregateBufInner> {
         self.inner.borrow_mut()
     }
 
-    /// Split off a new [AggregateBuf] from this one, re-using any unfilled
-    /// space.
-    pub fn split(self) -> Result<Self, bufpool::Error> {
-        // Safety: we might have a bunch of [AggregateSlice] out there. They're
-        // immutable references to the _filled_ part of `self`, so it's okay.
-
+    /// Split off at the start of the given slice, re-using the space in the
+    /// given slice, and any unfilled space.
+    ///
+    /// ```text
+    /// Before/after (1 block)
+    ///
+    ///                                               <-- rest -->
+    /// [.............AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBB...........]
+    /// <--- off ----><-------------------- len -----------------><-- avail-->
+    ///
+    /// [.............................................BBBBBBBBBBBB...........]
+    /// <------------------- off --------------------><--- len --><-- avail-->
+    ///
+    /// Before/after (2+ blocks)
+    ///
+    ///                                               <-- rest -->
+    /// [.............AAAAAAAAAAAAAAAAAAAA][AAAAAAAAAABBBBBBBBBBBB...........]
+    /// <--- off ----><-------------------- len -----------------><-- avail-->
+    ///
+    /// [..........BBBBBBBBBBBB...........]
+    /// <-- off --><--- len --><-- avail-->
+    /// ```
+    pub fn split_keeping_rest(self, rest: AggregateSlice) -> Self {
         let inner = self.inner.borrow();
-        let reusable = inner.capacity() - inner.len;
-        if reusable == 0 {
-            return Self::new();
-        }
+        let block_size = inner.block_size;
 
-        dbg2!(reusable, inner.block_size);
+        dbg2!("split_keeping_rest", inner.off, inner.len, inner.capacity(),);
 
-        // we can re-use the last block
-        let global_off = inner.block_size - reusable;
+        let abs_block_start = (inner.blocks.len() as u32 - 1) * block_size;
+        let abs_filled_end = inner.len + inner.off;
+        let abs_rest_start = rest.off + inner.off;
+        dbg2!(
+            "split_keeping_rest",
+            abs_block_start,
+            abs_filled_end,
+            abs_rest_start
+        );
+
+        // we now have (1 block)
+        //
+        // [.............AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBB...........]
+        // |                                             |          |
+        // +- abs_block_start                            |          + abs_filled_end
+        //                                               + abs_rest_start
+        //
+        // or (2+ blocks)
+        //
+        // [.............AAAAAAAAAAAAAAAAAAAA][AAAAAAAAAABBBBBBBBBBBB...........]
+        //                                    |          |          |
+        //                    abs_block_start +          |          + abs_filled_end
+        //                                               + abs_rest_start
+
+        assert!(abs_block_start <= abs_rest_start);
+        assert!(abs_rest_start <= abs_filled_end);
+
+        // let's clone get that block and make everything relative to its start
         let reused_block = inner.blocks.iter().last().unwrap().dangerous_clone();
+
+        let rel_filled_end = abs_filled_end - abs_block_start;
+        let rel_rest_start = abs_rest_start - abs_block_start;
+
+        // we now have (1 block)
+        //
+        // <------------------ offset ------------------><--- len --><-- avail-->
+        // [.............AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBB...........]
+        //                                               |          |
+        //                                               |          + rel_filled_end
+        //                                               + rel_rest_start
+        //
+        // or (2+ blocks)
+        //
+        // <- offset -><-- len --><-- avail-->
+        // [AAAAAAAAAABBBBBBBBBBBB...........]
+        //            |          |
+        //            |          + rel_filled_end
+        //            + rel_rest_start
+
+        if rel_rest_start == inner.block_size {
+            // there's nothing to re-use here, just return an empty buffer
+            return Default::default();
+        }
 
         let mut new_inner = AggregateBufInner {
             blocks: Default::default(),
             block_size: inner.block_size,
-            off: global_off,
-            len: 0,
+            off: rel_rest_start,
+            len: rel_filled_end - rel_rest_start,
         };
         new_inner.blocks.push(reused_block);
-        Ok(Self {
+        Self {
             inner: Rc::new(RefCell::new(new_inner)),
-        })
+        }
     }
 
-    /// Return a write slice appropriate for a io_uring read
+    /// Return a write slice appropriate for a io_uring read.
     pub fn write_slice(self) -> AggregateWriteSlice {
         let ptr;
         let len;
@@ -168,15 +256,13 @@ unsafe impl tokio_uring::buf::IoBufMut for AggregateWriteSlice {
 }
 
 impl AggregateBufInner {
-    fn new() -> Result<Self, bufpool::Error> {
-        let mut s = Self {
+    fn new() -> Self {
+        Self {
             blocks: Default::default(),
             block_size: crate::bufpool::BUF_SIZE as _,
             off: 0,
             len: 0,
-        };
-        s.blocks.push(BufMut::alloc()?);
-        Ok(s)
+        }
     }
 
     /// Returns the size of each buffer in the pool
@@ -206,6 +292,7 @@ impl AggregateBufInner {
     /// Returns a block index and a slice into it, given a slice into the
     /// aggregate buffer. Doesn't check for the `filled` region
     fn contiguous_range(&self, wanted: Range<u32>) -> (usize, Range<usize>) {
+        dbg2!("contiguous_range", &wanted);
         let (start, end) = (wanted.start, wanted.end);
         assert!(start <= end);
 
@@ -223,22 +310,13 @@ impl AggregateBufInner {
         debug_assert!(block_index < self.blocks.len());
 
         let block_offset = start % self.block_size;
+        dbg2!("contiguous_range", block_index, block_offset);
         let avail = self.block_size - block_offset;
         let given = std::cmp::min(avail, wanted);
+        dbg2!("contiguous_range", avail, given);
 
         let block_offset = block_offset as usize;
         let given = given as usize;
-
-        dbg2!(
-            "contiguous_range",
-            start,
-            end,
-            self.block_size,
-            block_index,
-            block_offset,
-            avail,
-            given
-        );
 
         (block_index, block_offset..block_offset + given)
     }
@@ -275,6 +353,10 @@ impl AggregateBufInner {
     /// Gives a mutable slice that can be written to.
     /// Must call `advance` after writing to the returned slice.
     pub fn unfilled_mut(&mut self) -> &mut [u8] {
+        if self.blocks.is_empty() {
+            return &mut [];
+        }
+
         let (block_index, range) = self.contiguous_range(self.len()..self.capacity());
         &mut self.blocks[block_index][range]
     }
@@ -389,6 +471,36 @@ impl AggregateSlice {
     /// Returns true if this is empty
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    /// Returns true if this slice equals `slice`, ignoring ASCII case
+    pub fn eq_ignore_ascii_case(self, slice: impl AsRef<[u8]>) -> bool {
+        let slice = slice.as_ref();
+
+        if self.len() != slice.len() {
+            return false;
+        }
+
+        // FIXME: this is very naive and could be optimized
+        self.iter()
+            .zip(slice.iter())
+            .all(|(l, r)| l.eq_ignore_ascii_case(r))
+    }
+}
+
+impl<T> PartialEq<T> for AggregateSlice
+where
+    T: AsRef<[u8]>,
+{
+    fn eq(&self, slice: &T) -> bool {
+        let slice = slice.as_ref();
+
+        if self.len() != slice.len() {
+            return false;
+        }
+
+        // FIXME: this is very naive and could be optimized
+        self.iter().eq(slice.iter().copied())
     }
 }
 
@@ -645,18 +757,23 @@ mod tests {
 
     #[test]
     fn agg_slice_size() {
-        assert_eq!(std::mem::size_of::<AggregateBufInner>(), 16);
+        assert_eq!(std::mem::size_of::<AggregateSlice>(), 16);
     }
 
     #[test]
     fn agg_fill() {
-        let buf = AggregateBuf::new().unwrap();
+        let buf: AggregateBuf = Default::default();
 
         let block_size;
         let agg_len;
         {
             let mut buf = buf.write();
             block_size = buf.block_size();
+
+            {
+                println!("allocating first block");
+                buf.grow_if_needed().unwrap();
+            }
 
             {
                 println!("filling first block");
@@ -725,12 +842,13 @@ mod tests {
     fn agg_nom_traits() {
         use nom::{Compare, InputLength, InputTake};
 
-        let buf = AggregateBuf::new().unwrap();
+        let buf: AggregateBuf = Default::default();
         let hello = "hello";
         let world = "world";
 
         {
             let mut buf = buf.write();
+            buf.grow_if_needed().unwrap();
 
             {
                 let dst = buf.unfilled_mut();
@@ -758,8 +876,7 @@ mod tests {
         assert_eq!(slice.input_len(), hello.len() + world.len());
 
         eprintln!("to_vec + compare owned");
-        let owned = slice.to_vec();
-        assert_eq!(String::from_utf8_lossy(&owned[..]), "helloworld");
+        assert_eq!(slice.to_string_lossy(), "helloworld");
 
         assert_eq!(slice.compare(b"that's not it"), nom::CompareResult::Error);
         assert_eq!(slice.compare(b"hello"), nom::CompareResult::Ok);
@@ -772,11 +889,14 @@ mod tests {
 
         {
             let hello_slice = slice.take(5);
+            dbg2!(hello_slice.to_string_lossy());
             assert_eq!(hello_slice.compare(b"hello"), nom::CompareResult::Ok);
         }
 
         {
-            let (hello_slice, world_slice) = slice.take_split(5);
+            let (world_slice, hello_slice) = slice.take_split(5);
+            dbg2!(hello_slice.to_string_lossy());
+            dbg2!(world_slice.to_string_lossy());
             assert_eq!(hello_slice.compare(b"hello"), nom::CompareResult::Ok);
             assert_eq!(world_slice.compare(b"world"), nom::CompareResult::Ok);
         }
@@ -787,20 +907,26 @@ mod tests {
     #[test]
     fn agg_nom_sample() {
         fn parse(i: AggregateSlice) -> IResult<AggregateSlice, AggregateSlice> {
-            nom::bytes::streaming::tag(&b"HTTP/1.1"[..])(i)
+            nom::bytes::streaming::tag(&b"HTTP/1.1 200 OK"[..])(i)
         }
 
-        let mut buf = AggregateBuf::new().unwrap();
+        let mut buf: AggregateBuf = Default::default();
 
-        for _ in 0..300 {
-            let input = "HTTP/1.1 200 OK";
-            buf.write().put(input.as_bytes()).unwrap();
+        let input = "HTTP/1.1 200 OK";
+        let sub_iters = 10;
 
-            let slice = buf.read().slice(0..input.len() as u32);
-            let (version, _rest) = parse(slice).unwrap();
-            assert_eq!(std::str::from_utf8(&version.to_vec()).unwrap(), "HTTP/1.1");
+        for _ in 0..100 {
+            for _ in 0..sub_iters {
+                buf.write().put(input.as_bytes()).unwrap();
+            }
 
-            buf = buf.split().unwrap();
+            for _ in 0..sub_iters {
+                let slice = buf.read().slice(0..input.len() as u32);
+                let (rest, version) = parse(slice).unwrap();
+                assert_eq!(version.to_string_lossy(), "HTTP/1.1 200 OK");
+
+                buf = buf.split_keeping_rest(rest);
+            }
         }
     }
 }

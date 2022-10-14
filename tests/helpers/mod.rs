@@ -47,7 +47,7 @@ pub(crate) fn tcp_serve_h1_once(
         let (stream, remote_addr) = ln.accept().await?;
         debug!("Accepted connection from {remote_addr}");
         // alt_http::serve_h1(conn_dv, stream).await?;
-        alt_http::serve_h1_b(conn_dv, stream).await?;
+        alt_http::serve_h1(conn_dv, stream).await?;
         debug!("Done serving h1 connection, initiating graceful shutdown");
         drop(tx);
         Ok(())
