@@ -18,7 +18,7 @@ macro_rules! dbg2 {
         #[cfg(debug_assertions)]
         {
             // 🐉 uncomment to debug tests:
-            dbg!($($arg)*);
+            // dbg!($($arg)*);
         }
     };
 }
@@ -912,21 +912,39 @@ mod tests {
 
         let mut buf: AggregateBuf = Default::default();
 
-        let input = "HTTP/1.1 200 OK";
-        let sub_iters = 10;
+        let input = b"HTTP/1.1 200 OK".repeat(1000);
+        let mut pending = &input[..];
 
-        for _ in 0..100 {
-            for _ in 0..sub_iters {
-                buf.write().put(input.as_bytes()).unwrap();
-            }
+        loop {
+            let slice = buf.read().slice(0..buf.read().len() as u32);
+            let (rest, version) = match parse(slice) {
+                Ok(t) => t,
+                Err(e) => {
+                    if e.is_incomplete() {
+                        {
+                            if pending.is_empty() {
+                                println!("ran out of input");
+                                break;
+                            }
 
-            for _ in 0..sub_iters {
-                let slice = buf.read().slice(0..input.len() as u32);
-                let (rest, version) = parse(slice).unwrap();
-                assert_eq!(version.to_string_lossy(), "HTTP/1.1 200 OK");
+                            let mut buf = buf.write();
+                            buf.grow_if_needed().unwrap();
+                            let unfilled = buf.unfilled_mut();
+                            let n = std::cmp::min(unfilled.len(), pending.len());
+                            unfilled[..n].copy_from_slice(&pending[..n]);
+                            pending = &pending[n..];
+                            buf.advance(n as _);
+                            println!("advanced by {n}, {} remaining", pending.len());
+                        }
 
-                buf = buf.split_keeping_rest(rest);
-            }
+                        continue;
+                    }
+                    panic!("parsing error: {e}");
+                }
+            };
+            assert_eq!(version.to_string_lossy(), "HTTP/1.1 200 OK");
+
+            buf = buf.split_keeping_rest(rest);
         }
     }
 }
