@@ -41,11 +41,11 @@ pub trait RequestDriver {
 
 /// Handle a plaintext HTTP/1.1 connection
 pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::Result<()> {
-    let mut buf = AggregateBuf::default();
+    let mut dos_buf = AggregateBuf::default();
 
     loop {
         let req;
-        (buf, req) = match read_req_header(&dos, buf).await {
+        (dos_buf, req) = match read_req_header(&dos, dos_buf).await {
             Ok(t) => t,
             Err(e) => {
                 if let Some(se) = e.downcast_ref::<SemanticError>() {
@@ -63,9 +63,33 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
             debug!(name = %h.name.to_string_lossy(), value = %h.value.to_string_lossy(), "got header");
         }
 
-        let req_cv = conn_dv.steer_request(&req).wrap_err("steering request")?;
+        let req_dv = conn_dv.steer_request(&req).wrap_err("steering request")?;
 
-        _ = (buf, req_cv);
+        let ups_addr = req_dv.upstream_addr()?;
+
+        debug!("connecting to upstream at {ups_addr}...");
+        let ups = TcpStream::connect(ups_addr).await?;
+
+        debug!("writing request header");
+        let ups_buf = AggregateBuf::default();
+        {
+            let mut ups_buf = ups_buf.write();
+            ups_buf.put_agg(&req.method)?;
+            ups_buf.put(b" ")?;
+            ups_buf.put_agg(&req.path)?;
+            match req.version {
+                1 => ups_buf.put(b" HTTP/1.1\r\n")?,
+                _ => return Err(eyre::eyre!("unsupported HTTP version 1.{}", req.version)),
+            }
+            for header in &req.headers {
+                ups_buf.put_agg(&header.name)?;
+                ups_buf.put(b": ")?;
+                ups_buf.put_agg(&header.name)?;
+                ups_buf.put(b"\r\n")?;
+            }
+            ups_buf.put(b"\r\n")?;
+        }
+
         todo!("send request upstream");
     }
 }

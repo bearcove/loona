@@ -346,6 +346,7 @@ impl AggregateBufInner {
         Ok(())
     }
 
+    /// Writes a slice into the buffer, growing it if needed.
     pub fn put(&mut self, mut s: &[u8]) -> Result<(), bufpool::Error> {
         while !s.is_empty() {
             self.grow_if_needed()?;
@@ -360,6 +361,12 @@ impl AggregateBufInner {
             }
         }
         Ok(())
+    }
+
+    /// Writes an [AggregateSlice] into this buffer, growing it if needed.
+    pub fn put_agg(&mut self, s: &AggregateSlice) -> Result<(), bufpool::Error> {
+        // TODO: this is very, very inefficient
+        self.put(&s.to_vec())
     }
 
     /// Gives a mutable slice that can be written to.
