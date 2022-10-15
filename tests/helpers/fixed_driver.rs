@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use alt_http::{parse::h1::Request, ConnectionDriver, RequestDriver};
+use hring::{parse::h1::Request, ConnectionDriver, RequestDriver};
 
 pub(crate) struct FixedConnDriver {
     pub(crate) upstream_addr: SocketAddr,
