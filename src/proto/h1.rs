@@ -13,7 +13,7 @@ use crate::{
         errors::SemanticError,
         util::{read_and_parse, write_all},
     },
-    types::{ConnectionDriver, Headers, Request, RequestDriver, Response},
+    types::{ConnectionDriver, Request, RequestDriver, Response},
 };
 
 /// maximum HTTP/1.1 header length (includes request-line/response-line etc.)
@@ -46,7 +46,7 @@ pub async fn proxy(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::
         };
         debug_print_req(&dos_req);
 
-        if is_chunked_transfer_encoding(&dos_req.headers) {
+        if dos_req.headers.is_chunked_transfer_encoding() {
             let (res, _) = dos
                 .write_all(SemanticError::NoChunked.as_http_response())
                 .await;
@@ -95,7 +95,7 @@ pub async fn proxy(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::
             };
         debug_print_res(&ups_res);
 
-        if is_chunked_transfer_encoding(&ups_res.headers) {
+        if ups_res.headers.is_chunked_transfer_encoding() {
             let (res, _) = dos
                 .write_all(SemanticError::NoChunked.as_http_response())
                 .await;
@@ -115,11 +115,11 @@ pub async fn proxy(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::
             .await
             .wrap_err("writing response headers to downstream");
 
-        let connection_close = has_connection_close(&dos_req.headers);
+        let connection_close = dos_req.headers.has_connection_close();
 
         // now let's proxy bodies!
-        let dos_req_clen = get_content_len(&dos_req.headers);
-        let ups_res_clen = get_content_len(&ups_res.headers);
+        let dos_req_clen = dos_req.headers.content_len().unwrap_or_default();
+        let ups_res_clen = ups_res.headers.content_len().unwrap_or_default();
 
         let to_dos = copy(ups_buf, ups_res_clen, &ups, &dos);
         let to_ups = copy(dos_buf, dos_req_clen, &dos, &ups);
@@ -224,46 +224,4 @@ fn debug_print_res(res: &Response) {
     for h in &res.headers {
         debug!(name = %h.name.to_string_lossy(), value = %h.value.to_string_lossy(), "got header");
     }
-}
-
-fn get_content_len(headers: &Headers) -> u64 {
-    let mut content_len = 0;
-    for h in headers {
-        if h.name.eq_ignore_ascii_case("content-length") {
-            // FIXME: this is really wasteful. maybe there's something to be
-            // done where: 1) it's probably contiguous aynway, so just use that,
-            // or: 2) if it's not, just copy it to a stack-allocated slice.
-            //
-            // this could be a method of AggregateSlice that lends a `&[u8]`
-            // to a closure and errors out if it's too big. it could take
-            // const generics.
-            let value = h.value.to_vec();
-            if let Ok(s) = std::str::from_utf8(&value[..]) {
-                if let Ok(l) = s.parse() {
-                    content_len = l;
-                }
-            }
-        }
-    }
-    content_len
-}
-
-fn has_header_kv(headers: &Headers, k: impl AsRef<[u8]>, v: impl AsRef<[u8]>) -> bool {
-    let k = k.as_ref();
-    let v = v.as_ref();
-
-    for h in headers {
-        if h.name.eq_ignore_ascii_case(k) && h.value.eq_ignore_ascii_case(v) {
-            return true;
-        }
-    }
-    false
-}
-
-fn has_connection_close(headers: &Headers) -> bool {
-    has_header_kv(headers, "connection", "close")
-}
-
-fn is_chunked_transfer_encoding(headers: &Headers) -> bool {
-    has_header_kv(headers, "transfer-encoding", "chunked")
 }
