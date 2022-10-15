@@ -403,6 +403,14 @@ impl AggregateBufInner {
     }
 }
 
+impl<'a> std::ops::Deref for AggregateBufRead<'a> {
+    type Target = AggregateBufInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.borrow
+    }
+}
+
 impl AggregateBufRead<'_> {
     /// Return a slice for the whole length of this buffer
     pub fn read_slice(&self) -> AggregateSlice {
@@ -413,7 +421,7 @@ impl AggregateBufRead<'_> {
     /// it is outside the filled portion.
     pub fn slice(&self, range: Range<u32>) -> AggregateSlice {
         assert!(range.start <= range.end);
-        assert!(range.end <= self.borrow.len());
+        assert!(range.end <= self.len);
 
         AggregateSlice {
             parent: AggregateBuf {
@@ -430,28 +438,10 @@ impl AggregateBufRead<'_> {
     pub fn filled(&self, wanted: Range<u32>) -> &[u8] {
         // FIXME: this probably shouldn't be pub
 
-        assert!(wanted.end <= self.borrow.len);
+        assert!(wanted.end <= self.len);
 
-        let (block_index, given) = self.borrow.contiguous_range(wanted);
-        &self.borrow.blocks[block_index][given]
-    }
-
-    /// Returns the total capacity of the buffer
-    #[inline(always)]
-    pub fn capacity(&self) -> u32 {
-        self.borrow.capacity()
-    }
-
-    /// Returns the (filled) length of the buffer
-    #[inline(always)]
-    pub fn len(&self) -> u32 {
-        self.borrow.len()
-    }
-
-    /// Return true if this aggregate buf is empty
-    #[inline(always)]
-    pub fn is_empty(&self) -> bool {
-        self.borrow.is_empty()
+        let (block_index, given) = self.contiguous_range(wanted);
+        &self.blocks[block_index][given]
     }
 }
 
@@ -488,17 +478,16 @@ impl fmt::Debug for AggregateSlice {
 impl AggregateSlice {
     /// Returns next contiguous slice
     pub fn next_slice(&self, offset: u32) -> Option<Buf> {
-        let r = self.parent.read();
         if offset == self.len {
             return None;
         }
-        let (block_index, range) = r
-            .borrow
-            .contiguous_range(self.off + offset..self.off + self.len);
+
+        let parent = self.parent.read();
+        let (block_index, range) = parent.contiguous_range(self.off + offset..self.off + self.len);
 
         // FIXME: use try_into?
         let range = (range.start as u16)..(range.end as u16);
-        Some(r.borrow.blocks[block_index].freeze_slice(range))
+        Some(parent.blocks[block_index].freeze_slice(range))
     }
 
     /// Returns an iterator over the bytes in this slice
