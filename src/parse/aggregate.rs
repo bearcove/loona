@@ -10,7 +10,6 @@ use nom::{
     Compare, CompareResult, FindSubstring, InputIter, InputLength, InputTake, InputTakeAtPosition,
 };
 use smallvec::SmallVec;
-use tracing::debug;
 
 use crate::bufpool::{self, Buf, BufMut};
 

@@ -15,6 +15,12 @@ use super::aggregate::AggregateSlice;
 
 const CRLF: &[u8] = b"\r\n";
 
+// TODO: this could/should be a multimap. http's multimap is neat but doesn't
+// support `AggregateSlice`. The `HeaderName` type should probably have three
+// variants:
+//   WellKnown (TransferEncoding, Connection, etc.)
+//   &'static [u8] (custom)
+//   AggregateSlice (proxied)
 pub type Headers = SmallVec<[Header; 32]>;
 
 /// An HTTP request
