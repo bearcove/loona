@@ -1,3 +1,5 @@
+pub mod aggregate;
+
 use std::{
     cell::{RefCell, RefMut},
     collections::VecDeque,

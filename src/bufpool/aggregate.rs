@@ -801,9 +801,7 @@ impl Iterator for AggregateSliceIter {
 
 #[cfg(test)]
 mod tests {
-    use crate::parse::aggregate::AggregateSlice;
-
-    use super::{AggregateBuf, AggregateBufInner};
+    use crate::bufpool::aggregate::{AggregateBuf, AggregateBufInner, AggregateSlice};
     use nom::IResult;
     use pretty_assertions::assert_eq;
 

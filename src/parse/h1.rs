@@ -11,7 +11,7 @@ use nom::{
 };
 use smallvec::SmallVec;
 
-use super::aggregate::AggregateSlice;
+use crate::bufpool::aggregate::AggregateSlice;
 
 const CRLF: &[u8] = b"\r\n";
 

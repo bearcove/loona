@@ -3,12 +3,10 @@
 
 #![feature(thread_local)]
 
+use bufpool::aggregate::{AggregateBuf, AggregateSlice};
 use eyre::Context;
 use nom::IResult;
-use parse::{
-    aggregate::{AggregateBuf, AggregateSlice},
-    h1::{Headers, Request, Response},
-};
+use parse::h1::{Headers, Request, Response};
 use std::{net::SocketAddr, rc::Rc};
 use tokio_uring::net::TcpStream;
 use tracing::debug;
