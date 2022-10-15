@@ -7,7 +7,7 @@ use tokio_uring::net::TcpStream;
 use tracing::debug;
 
 use crate::{
-    bufpool::AggregateBuf,
+    bufpool::AggBuf,
     parse::h1,
     proto::{
         errors::SemanticError,
@@ -21,7 +21,7 @@ const MAX_HEADER_LEN: u32 = 64 * 1024;
 
 /// Proxy incoming HTTP/1.1 requests to some upstream.
 pub async fn proxy(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::Result<()> {
-    let mut dos_buf = AggregateBuf::default();
+    let mut dos_buf = AggBuf::default();
 
     loop {
         let dos_req;
@@ -66,7 +66,7 @@ pub async fn proxy(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::
         // TODO: set no_delay
 
         debug!("writing request header to upstream");
-        let ups_buf = AggregateBuf::default();
+        let ups_buf = AggBuf::default();
         encode_request(&dos_req, &ups_buf)?;
         let ups_buf = write_all(&ups, ups_buf)
             .await
@@ -108,7 +108,7 @@ pub async fn proxy(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::
         // and `ups_buf` has the start of the response body
 
         debug!("writing response headers downstream");
-        let resh_buf = AggregateBuf::default();
+        let resh_buf = AggBuf::default();
         encode_response(&ups_res, &resh_buf)?;
 
         _ = write_all(&dos, resh_buf)
@@ -143,11 +143,11 @@ pub async fn proxy(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::
 /// Copies what's left of `buf` (filled portion), then repeatedly reads into
 /// it and writes that
 async fn copy(
-    mut buf: AggregateBuf,
+    mut buf: AggBuf,
     max_len: u64,
     src: &TcpStream,
     dst: &TcpStream,
-) -> eyre::Result<AggregateBuf> {
+) -> eyre::Result<AggBuf> {
     let mut remain = max_len;
     while remain > 0 {
         let slice = buf.read().read_slice();
@@ -169,7 +169,7 @@ async fn copy(
     Ok(buf)
 }
 
-fn encode_request(req: &Request, buf: &AggregateBuf) -> eyre::Result<()> {
+fn encode_request(req: &Request, buf: &AggBuf) -> eyre::Result<()> {
     let mut buf = buf.write();
     buf.put_agg(&req.method)?;
     buf.put(" ")?;
@@ -188,13 +188,13 @@ fn encode_request(req: &Request, buf: &AggregateBuf) -> eyre::Result<()> {
     Ok(())
 }
 
-fn encode_response(res: &Response, buf: &AggregateBuf) -> eyre::Result<()> {
+fn encode_response(res: &Response, buf: &AggBuf) -> eyre::Result<()> {
     let mut buf = buf.write();
     match res.version {
         1 => buf.put(b"HTTP/1.1 ")?,
         _ => return Err(eyre::eyre!("unsupported HTTP version 1.{}", res.version)),
     }
-    // TODO: implement `std::fmt::Write` for `AggregateBuf`?
+    // TODO: implement `std::fmt::Write` for `AggBuf`?
     // FIXME: wasteful
     let code = res.code.to_string();
     buf.put(code)?;

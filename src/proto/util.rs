@@ -4,7 +4,7 @@ use tokio_uring::net::TcpStream;
 use tracing::debug;
 
 use crate::{
-    bufpool::{AggregateBuf, AggregateSlice},
+    bufpool::{AggBuf, AggSlice},
     proto::errors::SemanticError,
 };
 
@@ -12,11 +12,11 @@ use crate::{
 pub(crate) async fn read_and_parse<Parser, Output>(
     parser: Parser,
     stream: &TcpStream,
-    mut buf: AggregateBuf,
+    mut buf: AggBuf,
     max_len: u32,
-) -> eyre::Result<Option<(AggregateBuf, Output)>>
+) -> eyre::Result<Option<(AggBuf, Output)>>
 where
-    Parser: Fn(AggregateSlice) -> IResult<AggregateSlice, Output>,
+    Parser: Fn(AggSlice) -> IResult<AggSlice, Output>,
 {
     loop {
         if buf.write().capacity() >= max_len {
@@ -63,7 +63,7 @@ where
 
 /// Write the filled part of a buffer to the given [TcpStream], returning a
 /// buffer re-using the remaining space.
-pub(crate) async fn write_all(stream: &TcpStream, buf: AggregateBuf) -> eyre::Result<AggregateBuf> {
+pub(crate) async fn write_all(stream: &TcpStream, buf: AggBuf) -> eyre::Result<AggBuf> {
     let slice = buf.read().read_slice();
 
     let mut offset = 0;

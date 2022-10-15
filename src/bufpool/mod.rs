@@ -1,5 +1,5 @@
-mod aggregate;
-pub use aggregate::*;
+mod agg;
+pub use agg::*;
 
 use std::{
     cell::{RefCell, RefMut},
@@ -147,7 +147,7 @@ pub struct BufMut {
 
 impl BufMut {
     /// Clone this buffer. This is only pub(crate) because it's used
-    /// by `AggregateBuf`.
+    /// by `AggBuf`.
     pub(crate) fn dangerous_clone(&self) -> Self {
         BUF_POOL.inc(1); // in fact, increase it by 1
         BufMut {

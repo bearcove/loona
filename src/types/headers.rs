@@ -2,16 +2,16 @@
 
 use smallvec::SmallVec;
 
-use crate::bufpool::AggregateSlice;
+use crate::bufpool::AggSlice;
 
 #[derive(Default)]
 pub struct Headers {
     // TODO: this could/should be a multimap. http's multimap is neat but doesn't
-    // support `AggregateSlice`. The `HeaderName` type should probably have three
+    // support `AggSlice`. The `HeaderName` type should probably have three
     // variants:
     //   WellKnown (TransferEncoding, Connection, etc.)
     //   &'static [u8] (custom)
-    //   AggregateSlice (proxied)
+    //   AggSlice (proxied)
     headers: SmallVec<[Header; 32]>,
 }
 
@@ -52,7 +52,7 @@ impl Headers {
                 // done where: 1) it's probably contiguous aynway, so just use that,
                 // or: 2) if it's not, just copy it to a stack-allocated slice.
                 //
-                // this could be a method of AggregateSlice that lends a `&[u8]`
+                // this could be a method of AggSlice that lends a `&[u8]`
                 // to a closure and errors out if it's too big. it could take
                 // const generics.
                 let value = h.value.to_vec();
@@ -77,6 +77,6 @@ impl<'a> IntoIterator for &'a Headers {
 }
 
 pub struct Header {
-    pub name: AggregateSlice,
-    pub value: AggregateSlice,
+    pub name: AggSlice,
+    pub value: AggSlice,
 }

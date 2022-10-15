@@ -4,14 +4,14 @@ pub use headers::*;
 mod driver;
 pub use driver::*;
 
-use crate::bufpool::AggregateSlice;
+use crate::bufpool::AggSlice;
 
 /// An HTTP request
 pub struct Request {
-    pub method: AggregateSlice,
+    pub method: AggSlice,
 
     /// Requested entity
-    pub path: AggregateSlice,
+    pub path: AggSlice,
 
     /// The 'b' in 'HTTP/1.b'
     pub version: u8,
@@ -29,7 +29,7 @@ pub struct Response {
     pub code: u16,
 
     /// Human-readable string following the status code
-    pub reason: AggregateSlice,
+    pub reason: AggSlice,
 
     /// Response headers
     pub headers: Headers,
