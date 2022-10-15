@@ -34,8 +34,7 @@ pub trait RequestDriver {
 
     /// Called when extra headers should be added to the request
     fn add_extra_headers(&self, add_header: &mut dyn FnMut(&str, &[u8])) {
-        // sigh
-        let _ = add_header;
+        _ = add_header;
     }
 }
 
@@ -102,7 +101,9 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
             }
         }
 
-        todo!("send request upstream");
+        debug!("reading response headers from upstream");
+
+        todo!("the rest of the owl");
     }
 }
 

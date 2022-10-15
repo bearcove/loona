@@ -1,3 +1,8 @@
+//! HTTP/1.1 parser
+//!
+//! As of June 2022, the authoritative document for HTTP/1.1
+//! is https://www.rfc-editor.org/rfc/rfc9110
+
 use nom::{
     bytes::streaming::{tag, take, take_until, take_while1},
     combinator::opt,
@@ -10,6 +15,9 @@ use super::aggregate::AggregateSlice;
 
 const CRLF: &[u8] = b"\r\n";
 
+type Headers = SmallVec<[Header; 32]>;
+
+/// An HTTP request
 pub struct Request {
     pub method: AggregateSlice,
 
@@ -18,7 +26,20 @@ pub struct Request {
     /// The 'b' in 'HTTP/1.b'
     pub version: u8,
 
-    pub headers: SmallVec<[Header; 32]>,
+    pub headers: Headers,
+}
+
+/// An HTTP response
+pub struct Response {
+    /// The 'b' in 'HTTP/1.b'
+    pub version: u8,
+
+    /// Status code (1xx-5xx)
+    pub code: u16,
+
+    pub reason: AggregateSlice,
+
+    pub headers: Headers,
 }
 
 pub struct Header {
@@ -30,6 +51,46 @@ pub struct Header {
 pub fn request(i: AggregateSlice) -> IResult<AggregateSlice, Request> {
     let (i, method) = take_while1_and_consume(i, |c| c != b' ')?;
     let (i, path) = take_while1_and_consume(i, |c| c != b' ')?;
+    let (i, version) = http_version(i)?;
+    let (i, _) = tag(CRLF)(i)?;
+    let (i, headers) = headers(i)?;
+
+    let request = Request {
+        method,
+        path,
+        version,
+        headers,
+    };
+    Ok((i, request))
+}
+
+// Looks like `HTTP/1.1 200 OK\r\n` or `HTTP/1.1 404 Not Found\r\n`, then headers
+pub fn response(i: AggregateSlice) -> IResult<AggregateSlice, Response> {
+    let (i, version) = http_version(i)?;
+    let (i, code) = u16_text(i)?;
+    let (i, _) = take_while1_and_consume(i, |c| c == b' ')?;
+    let (i, reason) = terminated(take_until(CRLF), tag(CRLF))(i)?;
+    let (i, headers) = headers(i)?;
+
+    let response = Response {
+        version,
+        code,
+        reason,
+        headers,
+    };
+    Ok((i, response))
+}
+
+/// Parses text as a u16
+fn u16_text(i: AggregateSlice) -> IResult<AggregateSlice, u16> {
+    let f = take_while1(nom::character::is_digit);
+    // FIXME: this is inefficient (calling `to_vec` just to parse)
+    let f = nom::combinator::map_res(f, |s: AggregateSlice| String::from_utf8(s.to_vec()));
+    let mut f = nom::combinator::map_res(f, |s| s.parse());
+    f(i)
+}
+
+pub fn http_version(i: AggregateSlice) -> IResult<AggregateSlice, u8> {
     let (i, _) = tag(&b"HTTP/1."[..])(i)?;
     let (i, version) = take(1usize)(i)?;
     let version = match version.iter().next().unwrap() {
@@ -43,24 +104,20 @@ pub fn request(i: AggregateSlice) -> IResult<AggregateSlice, Request> {
             )));
         }
     };
-    let (i, _) = tag(CRLF)(i)?;
 
-    let mut request = Request {
-        method,
-        path,
-        version,
-        headers: Default::default(),
-    };
+    Ok((i, version))
+}
 
-    let mut i = i;
+pub fn headers(mut i: AggregateSlice) -> IResult<AggregateSlice, Headers> {
+    let mut headers = Headers::default();
     loop {
         if let (i, Some(_)) = opt(tag(CRLF))(i.clone())? {
             // end of headers
-            return Ok((i, request));
+            return Ok((i, headers));
         }
 
         let (i2, (name, value)) = header(i)?;
-        request.headers.push(Header { name, value });
+        headers.push(Header { name, value });
         i = i2;
     }
 }
