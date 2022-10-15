@@ -6,14 +6,15 @@
 use bufpool::aggregate::{AggregateBuf, AggregateSlice};
 use eyre::Context;
 use nom::IResult;
-use parse::h1::{Headers, Request, Response};
 use std::{net::SocketAddr, rc::Rc};
 use tokio_uring::net::TcpStream;
 use tracing::debug;
 
 pub mod bufpool;
 pub mod parse;
-pub use httparse;
+pub mod types;
+
+use crate::types::{Headers, Request, Response};
 
 /// re-exported so consumers can use whatever forked version we use
 pub use tokio_uring;
