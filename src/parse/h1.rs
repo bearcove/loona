@@ -12,15 +12,10 @@ use nom::{
 
 use crate::{
     bufpool::aggregate::AggregateSlice,
-    types::{Headers, Request, Response},
+    types::{Header, Headers, Request, Response},
 };
 
 const CRLF: &[u8] = b"\r\n";
-
-pub struct Header {
-    pub name: AggregateSlice,
-    pub value: AggregateSlice,
-}
 
 // Looks like `GET /path HTTP/1.1\r\n`, then headers
 pub fn request(i: AggregateSlice) -> IResult<AggregateSlice, Request> {
