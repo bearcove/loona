@@ -2,14 +2,14 @@
 //! is https://www.rfc-editor.org/rfc/rfc9110
 
 use eyre::Context;
-use nom::IResult;
 use std::rc::Rc;
 use tokio_uring::net::TcpStream;
 use tracing::debug;
 
 use crate::{
-    bufpool::aggregate::{AggregateBuf, AggregateSlice},
+    bufpool::aggregate::AggregateBuf,
     parse::h1,
+    proto::{errors::SemanticError, util::read_and_parse},
     types::{ConnectionDriver, Headers, Request, RequestDriver, Response},
 };
 
@@ -22,7 +22,8 @@ pub async fn proxy(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::
 
     loop {
         let dos_req;
-        (dos_buf, dos_req) = match parse(h1::request, &dos, dos_buf, MAX_HEADER_LEN).await {
+        (dos_buf, dos_req) = match read_and_parse(h1::request, &dos, dos_buf, MAX_HEADER_LEN).await
+        {
             Ok(t) => match t {
                 Some(t) => t,
                 None => {
@@ -69,26 +70,26 @@ pub async fn proxy(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::
             .wrap_err("writing request headers upstream")?;
 
         debug!("reading response headers from upstream");
-        let (mut ups_buf, ups_res) = match parse(h1::response, &ups, ups_buf, MAX_HEADER_LEN).await
-        {
-            Ok(t) => match t {
-                Some(t) => t,
-                None => {
-                    // TODO: reply with 502 or something
-                    debug!("server went away before sending response headers");
+        let (mut ups_buf, ups_res) =
+            match read_and_parse(h1::response, &ups, ups_buf, MAX_HEADER_LEN).await {
+                Ok(t) => match t {
+                    Some(t) => t,
+                    None => {
+                        // TODO: reply with 502 or something
+                        debug!("server went away before sending response headers");
+                        return Ok(());
+                    }
+                },
+                Err(e) => {
+                    if let Some(se) = e.downcast_ref::<SemanticError>() {
+                        let (res, _) = dos.write_all(se.as_http_response()).await;
+                        res.wrap_err("writing error response downstream")?;
+                    }
+
+                    debug!(?e, "error reading request header from downstream");
                     return Ok(());
                 }
-            },
-            Err(e) => {
-                if let Some(se) = e.downcast_ref::<SemanticError>() {
-                    let (res, _) = dos.write_all(se.as_http_response()).await;
-                    res.wrap_err("writing error response downstream")?;
-                }
-
-                debug!(?e, "error reading request header from downstream");
-                return Ok(());
-            }
-        };
+            };
         debug_print_res(&ups_res);
 
         if is_chunked_transfer_encoding(&ups_res.headers) {
@@ -163,77 +164,6 @@ async fn copy(
     }
 
     Ok(buf)
-}
-
-/// Returns `None` on EOF, error if partially parsed message.
-async fn parse<Parser, Output>(
-    parser: Parser,
-    stream: &TcpStream,
-    mut buf: AggregateBuf,
-    max_len: u32,
-) -> eyre::Result<Option<(AggregateBuf, Output)>>
-where
-    Parser: Fn(AggregateSlice) -> IResult<AggregateSlice, Output>,
-{
-    loop {
-        if buf.write().capacity() >= max_len {
-            // XXX: not great that the error here is 'headers too long' when
-            // this is a generic parse function.
-            return Err(SemanticError::HeadersTooLong.into());
-        }
-        buf.write().grow_if_needed()?;
-
-        let (res, buf_s) = stream.read(buf.write_slice()).await;
-        let n = res.wrap_err("reading request headers from downstream")?;
-        buf = buf_s.into_inner();
-
-        if n == 0 {
-            if !buf.read().is_empty() {
-                return Err(eyre::eyre!("unexpected EOF"));
-            } else {
-                return Ok(None);
-            }
-        }
-
-        debug!("reading headers ({} bytes so far)", buf.read().len());
-        let slice = buf.read().slice(0..buf.read().len());
-
-        let (rest, req) = match parser(slice) {
-            Ok(t) => t,
-            Err(err) => {
-                if err.is_incomplete() {
-                    debug!("incomplete request, need more data");
-                    continue;
-                } else {
-                    if let nom::Err::Error(e) = &err {
-                        debug!(?err, "parsing error");
-                        debug!(input = %e.input.to_string_lossy(), "input was");
-                    }
-                    return Err(eyre::eyre!("parsing error: {err}"));
-                }
-            }
-        };
-
-        return Ok(Some((buf.split_at(rest), req)));
-    }
-}
-
-#[derive(thiserror::Error, Debug)]
-enum SemanticError {
-    #[error("the headers are too long")]
-    HeadersTooLong,
-
-    #[error("chunked transfer encoding is not supported")]
-    NoChunked,
-}
-
-impl SemanticError {
-    fn as_http_response(&self) -> &'static [u8] {
-        match self {
-            Self::HeadersTooLong => b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n",
-            Self::NoChunked => b"HTTP/1.1 501 Chunked Transfer Encoding Not Implemented\r\n\r\n",
-        }
-    }
 }
 
 fn encode_request(req: &Request, buf: &AggregateBuf) -> eyre::Result<()> {
