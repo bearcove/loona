@@ -7,11 +7,11 @@ use tokio_uring::net::TcpStream;
 use tracing::debug;
 
 use crate::{
-    bufpool::AggBuf,
+    bufpool::{AggBuf, IoChunkList},
     parse::h1,
     proto::{
         errors::SemanticError,
-        util::{read_and_parse, write_all},
+        util::{read_and_parse, write_all, write_all_list},
     },
     types::{ConnectionDriver, Request, RequestDriver, Response},
 };
@@ -55,6 +55,9 @@ pub async fn proxy(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::
             return Ok(());
         }
 
+        let connection_close = dos_req.headers.is_connection_close();
+        let dos_req_clen = dos_req.headers.content_len().unwrap_or_default();
+
         let req_dv = conn_dv
             .steer_request(&dos_req)
             .wrap_err("steering request")?;
@@ -66,13 +69,15 @@ pub async fn proxy(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::
         // TODO: set no_delay
 
         debug!("writing request header to upstream");
-        let ups_buf = AggBuf::default();
-        encode_request(&dos_req, &ups_buf)?;
-        let ups_buf = write_all(&ups, ups_buf)
+        let mut list = IoChunkList::default();
+        encode_request(dos_req, &mut list)?;
+        debug!("encoded...");
+        let _ = write_all_list(&ups, list)
             .await
             .wrap_err("writing request headers upstream")?;
 
         debug!("reading response headers from upstream");
+        let ups_buf = AggBuf::default();
         let (mut ups_buf, ups_res) =
             match read_and_parse(h1::response, &ups, ups_buf, MAX_HEADER_LEN).await {
                 Ok(t) => match t {
@@ -115,10 +120,7 @@ pub async fn proxy(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::
             .await
             .wrap_err("writing response headers to downstream");
 
-        let connection_close = dos_req.headers.has_connection_close();
-
         // now let's proxy bodies!
-        let dos_req_clen = dos_req.headers.content_len().unwrap_or_default();
         let ups_res_clen = ups_res.headers.content_len().unwrap_or_default();
 
         let to_dos = copy(ups_buf, ups_res_clen, &ups, &dos);
@@ -169,22 +171,21 @@ async fn copy(
     Ok(buf)
 }
 
-fn encode_request(req: &Request, buf: &AggBuf) -> eyre::Result<()> {
-    let mut buf = buf.write();
-    buf.put_agg(&req.method)?;
-    buf.put(" ")?;
-    buf.put_agg(&req.path)?;
+fn encode_request(req: Request, list: &mut IoChunkList) -> eyre::Result<()> {
+    list.push(req.method);
+    list.push(" ");
+    list.push(req.path);
     match req.version {
-        1 => buf.put(" HTTP/1.1\r\n")?,
+        1 => list.push(" HTTP/1.1\r\n"),
         _ => return Err(eyre::eyre!("unsupported HTTP version 1.{}", req.version)),
     }
-    for header in &req.headers {
-        buf.put_agg(&header.name)?;
-        buf.put(": ")?;
-        buf.put_agg(&header.value)?;
-        buf.put("\r\n")?;
+    for header in req.headers {
+        list.push(header.name);
+        list.push(": ");
+        list.push(header.value);
+        list.push("\r\n");
     }
-    buf.put("\r\n")?;
+    list.push("\r\n");
     Ok(())
 }
 

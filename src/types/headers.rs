@@ -4,6 +4,8 @@ use smallvec::SmallVec;
 
 use crate::bufpool::AggSlice;
 
+const HEADERS_SMALLVEC_CAPACITY: usize = 32;
+
 #[derive(Default)]
 pub struct Headers {
     // TODO: this could/should be a multimap. http's multimap is neat but doesn't
@@ -12,7 +14,7 @@ pub struct Headers {
     //   WellKnown (TransferEncoding, Connection, etc.)
     //   &'static [u8] (custom)
     //   AggSlice (proxied)
-    headers: SmallVec<[Header; 32]>,
+    headers: SmallVec<[Header; HEADERS_SMALLVEC_CAPACITY]>,
 }
 
 impl Headers {
@@ -35,7 +37,7 @@ impl Headers {
     }
 
     /// Returns true if we have a `connection: close` header
-    pub fn has_connection_close(&self) -> bool {
+    pub fn is_connection_close(&self) -> bool {
         self.has_kv("connection", "close")
     }
 
@@ -69,10 +71,19 @@ impl Headers {
 
 impl<'a> IntoIterator for &'a Headers {
     type Item = &'a Header;
-    type IntoIter = std::slice::Iter<'a, Header>;
+    type IntoIter = impl Iterator<Item = Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.headers.iter()
+    }
+}
+
+impl IntoIterator for Headers {
+    type Item = Header;
+    type IntoIter = impl Iterator<Item = Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.headers.into_iter()
     }
 }
 

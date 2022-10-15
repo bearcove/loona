@@ -1,4 +1,5 @@
 #![feature(thread_local)]
+#![feature(type_alias_impl_trait)]
 
 pub mod bufpool;
 pub mod parse;

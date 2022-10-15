@@ -73,18 +73,20 @@ impl IoChunk {
     }
 }
 
-impl<T> IoChunkable for T
-where
-    T: AsRef<&'static [u8]>,
-{
+impl IoChunkable for &'static [u8] {
     fn next_chunk(&self, offset: u32) -> Option<IoChunk> {
-        let this = self.as_ref();
-        assert_eq!(offset, 0);
-        if this.is_empty() {
+        let slice = &self[offset as usize..];
+        if slice.is_empty() {
             None
         } else {
-            Some(IoChunk::Static(this))
+            Some(IoChunk::Static(slice))
         }
+    }
+}
+
+impl IoChunkable for &'static str {
+    fn next_chunk(&self, offset: u32) -> Option<IoChunk> {
+        IoChunkable::next_chunk(&self.as_bytes(), offset)
     }
 }
 
@@ -104,11 +106,25 @@ impl IoChunkList {
         self.chunks.iter().map(|c| c.len()).sum()
     }
 
+    pub fn num_chunks(&self) -> usize {
+        self.chunks.len()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.chunks.is_empty() || self.len() == 0
     }
 
+    pub fn clear(&mut self) {
+        self.chunks.clear();
+    }
+
     pub fn into_vec(self) -> Vec<IoChunk> {
         self.chunks
+    }
+}
+
+impl From<Vec<IoChunk>> for IoChunkList {
+    fn from(chunks: Vec<IoChunk>) -> Self {
+        Self { chunks }
     }
 }

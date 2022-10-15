@@ -80,3 +80,25 @@ pub(crate) async fn write_all(stream: &TcpStream, buf: AggBuf) -> eyre::Result<A
 
     Ok(buf.split())
 }
+
+/// Write the filled part of a buffer to the given [TcpStream], returning a
+/// buffer re-using the remaining space.
+pub(crate) async fn write_all_list(
+    stream: &TcpStream,
+    list: IoChunkList,
+) -> eyre::Result<IoChunkList> {
+    let len = list.len();
+    let num_chunks = list.num_chunks();
+    let list = list.into_vec();
+    debug!("writing {len} bytes in {num_chunks} chunks");
+
+    let (res, mut list) = stream.writev(list).await;
+    let n = res?;
+    debug!("wrote {n}/{len}");
+    if n < len {
+        unimplemented!();
+    }
+
+    list.clear();
+    Ok(list.into())
+}
