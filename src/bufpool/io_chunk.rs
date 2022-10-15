@@ -1,3 +1,5 @@
+//! Types for performing vectored I/O.
+
 use tokio_uring::buf::IoBuf;
 
 use super::Buf;
@@ -76,8 +78,13 @@ where
     T: AsRef<&'static [u8]>,
 {
     fn next_chunk(&self, offset: u32) -> Option<IoChunk> {
+        let this = self.as_ref();
         assert_eq!(offset, 0);
-        Some(IoChunk::Static(self.as_ref()))
+        if this.is_empty() {
+            None
+        } else {
+            Some(IoChunk::Static(this))
+        }
     }
 }
 
@@ -87,8 +94,18 @@ pub struct IoChunkList {
 }
 
 impl IoChunkList {
+    /// Add a chunkable to the list (this may result in multiple chunks)
     pub fn push(&mut self, chunkable: impl IoChunkable) {
         chunkable.append_to(&mut self.chunks);
+    }
+
+    /// Returns total length
+    pub fn len(&self) -> usize {
+        self.chunks.iter().map(|c| c.len()).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.chunks.is_empty() || self.len() == 0
     }
 
     pub fn into_vec(self) -> Vec<IoChunk> {
