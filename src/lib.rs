@@ -1,7 +1,11 @@
 #![feature(thread_local)]
 
 use eyre::Context;
-use parse::{aggregate::AggregateBuf, h1::Request};
+use nom::IResult;
+use parse::{
+    aggregate::{AggregateBuf, AggregateSlice},
+    h1::Request,
+};
 use std::{net::SocketAddr, rc::Rc};
 use tokio_uring::net::TcpStream;
 use tracing::debug;
@@ -15,7 +19,8 @@ pub use tokio_uring;
 
 use crate::parse::h1;
 
-const MAX_HEADERS_LEN: u32 = 64 * 1024;
+/// maximum HTTP/1.1 header length (includes request-line/response-line etc.)
+const MAX_HEADER_LEN: u32 = 64 * 1024;
 
 /// A connection driver maintains per-connection state and steers requests
 pub trait ConnectionDriver {
@@ -44,7 +49,7 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
 
     loop {
         let req;
-        (dos_buf, req) = match read_req_header(&dos, dos_buf).await {
+        (dos_buf, req) = match parse(h1::request, &dos, dos_buf, MAX_HEADER_LEN).await {
             Ok(t) => t,
             Err(e) => {
                 if let Some(se) = e.downcast_ref::<SemanticError>() {
@@ -107,23 +112,28 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
     }
 }
 
-async fn read_req_header(
-    dos: &TcpStream,
+async fn parse<Parser, Output>(
+    parser: Parser,
+    stream: &TcpStream,
     mut buf: AggregateBuf,
-) -> eyre::Result<(AggregateBuf, h1::Request)> {
+    max_len: u32,
+) -> eyre::Result<(AggregateBuf, Output)>
+where
+    Parser: Fn(AggregateSlice) -> IResult<AggregateSlice, Output>,
+{
     loop {
-        if buf.write().capacity() >= MAX_HEADERS_LEN {
+        if buf.write().capacity() >= max_len {
             return Err(SemanticError::HeadersTooLong.into());
         }
         buf.write().grow_if_needed()?;
 
-        let (res, buf_s) = dos.read(buf.write_slice()).await;
+        let (res, buf_s) = stream.read(buf.write_slice()).await;
         res.wrap_err("reading request headers from downstream")?;
         buf = buf_s.into_inner();
         debug!("reading headers ({} bytes so far)", buf.read().len());
         let slice = buf.read().slice(0..buf.read().len());
 
-        let (rest, req) = match h1::request(slice) {
+        let (rest, req) = match parser(slice) {
             Ok(t) => t,
             Err(err) => {
                 if err.is_incomplete() {
