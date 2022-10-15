@@ -9,7 +9,10 @@ use tracing::debug;
 use crate::{
     bufpool::aggregate::AggregateBuf,
     parse::h1,
-    proto::{errors::SemanticError, util::read_and_parse},
+    proto::{
+        errors::SemanticError,
+        util::{read_and_parse, write_all},
+    },
     types::{ConnectionDriver, Headers, Request, RequestDriver, Response},
 };
 
@@ -207,19 +210,6 @@ fn encode_response(res: &Response, buf: &AggregateBuf) -> eyre::Result<()> {
     buf.put("\r\n")?;
 
     Ok(())
-}
-
-async fn write_all(stream: &TcpStream, buf: AggregateBuf) -> eyre::Result<AggregateBuf> {
-    let slice = buf.read().read_slice();
-
-    let mut offset = 0;
-    while let Some(slice) = slice.next_slice(offset) {
-        offset += slice.len() as u32;
-        let (res, _) = stream.write_all(slice).await;
-        res?;
-    }
-
-    Ok(buf.split())
 }
 
 fn debug_print_req(req: &Request) {

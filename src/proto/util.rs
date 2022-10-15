@@ -60,3 +60,18 @@ where
         return Ok(Some((buf.split_at(rest), req)));
     }
 }
+
+/// Write the filled part of a buffer to the given [TcpStream], returning a
+/// buffer re-using the remaining space.
+pub(crate) async fn write_all(stream: &TcpStream, buf: AggregateBuf) -> eyre::Result<AggregateBuf> {
+    let slice = buf.read().read_slice();
+
+    let mut offset = 0;
+    while let Some(slice) = slice.next_slice(offset) {
+        offset += slice.len() as u32;
+        let (res, _) = stream.write_all(slice).await;
+        res?;
+    }
+
+    Ok(buf.split())
+}
