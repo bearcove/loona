@@ -13,14 +13,13 @@ harness = false
 [dependencies]
 eyre = "0.6.8"
 futures = "0.3.24"
-httparse = "1.8.0"
 memmap2 = "0.5.7"
 nom = "7.1.1"
 smallvec = { version = "1.10.0", features = ["const_generics", "const_new", "union", "debugger_visualizer"] }
 thiserror = "1.0.37"
 tokio = { version = "1.21.2", features = ["full"] }
-# this includes a fix for accept
-tokio-uring = { git = "https://github.com/tokio-rs/tokio-uring", rev = "a42af77" }
+# `tcp-stream-writev` branch
+tokio-uring = { git = "https://github.com/fasterthanlime/tokio-uring", rev = "f80c1a6b12417a16f06d3329ec65d7ec28620390" }
 tracing = "0.1.37"
 
 [dev-dependencies]
@@ -31,6 +30,7 @@ hyper = { version = "0.14.20", features = ["client", "server", "http1", "tcp", "
 pretty_assertions = "1.3.0"
 tokio-stream = "0.1.11"
 tracing-subscriber = "0.3.16"
+httparse = "1.8.0"
 
 [profile.dev.package."*"]
 opt-level = 2

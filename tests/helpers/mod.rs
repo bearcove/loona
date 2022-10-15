@@ -46,7 +46,7 @@ pub(crate) fn tcp_serve_h1_once(
     let proxy_fut = async move {
         let (stream, remote_addr) = ln.accept().await?;
         debug!("Accepted connection from {remote_addr}");
-        hring::serve_h1(conn_dv, stream).await?;
+        hring::proto::h1::proxy(conn_dv, stream).await?;
         debug!("Done serving h1 connection, initiating graceful shutdown");
         drop(tx);
         Ok(())
