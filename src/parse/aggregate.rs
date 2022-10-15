@@ -225,7 +225,7 @@ impl AggregateBuf {
         AggregateWriteSlice {
             buf: self,
             ptr,
-            len,
+            len: len as _,
             pos: 0,
         }
     }
@@ -235,15 +235,23 @@ impl AggregateBuf {
 pub struct AggregateWriteSlice {
     buf: AggregateBuf,
     ptr: *mut u8,
-    pos: usize,
-    len: usize,
+    pos: u32,
+    len: u32,
 }
 
 impl AggregateWriteSlice {
     pub fn into_inner(self) -> AggregateBuf {
-        debug!("into_inner, self.pos = {}", self.pos);
-        self.buf.inner.borrow_mut().len += self.pos as u32;
+        self.buf.inner.borrow_mut().len += self.pos;
         self.buf
+    }
+
+    /// Limit how many bytes can be read. If the slice was slower
+    /// in the first place, don't do anything.
+    pub fn limit(mut self, len: u64) -> Self {
+        if len < self.len as u64 {
+            self.len = len as u32;
+        }
+        self
     }
 }
 
@@ -253,11 +261,11 @@ unsafe impl tokio_uring::buf::IoBuf for AggregateWriteSlice {
     }
 
     fn bytes_init(&self) -> usize {
-        self.pos
+        self.pos as _
     }
 
     fn bytes_total(&self) -> usize {
-        self.len
+        self.len as _
     }
 }
 
@@ -267,8 +275,7 @@ unsafe impl tokio_uring::buf::IoBufMut for AggregateWriteSlice {
     }
 
     unsafe fn set_init(&mut self, pos: usize) {
-        debug!("set init: {} -> {}", self.pos, pos);
-        self.pos = pos
+        self.pos = pos as _
     }
 }
 
@@ -352,7 +359,8 @@ impl AggregateBufInner {
     }
 
     /// Writes a slice into the buffer, growing it if needed.
-    pub fn put(&mut self, mut s: &[u8]) -> Result<(), bufpool::Error> {
+    pub fn put(&mut self, s: impl AsRef<[u8]>) -> Result<(), bufpool::Error> {
+        let mut s = s.as_ref();
         while !s.is_empty() {
             self.grow_if_needed()?;
 
@@ -524,7 +532,7 @@ impl AggregateSlice {
     }
 
     /// Returns true if this slice equals `slice`, ignoring ASCII case
-    pub fn eq_ignore_ascii_case(self, slice: impl AsRef<[u8]>) -> bool {
+    pub fn eq_ignore_ascii_case(&self, slice: impl AsRef<[u8]>) -> bool {
         let slice = slice.as_ref();
 
         if self.len() != slice.len() {

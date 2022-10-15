@@ -31,6 +31,7 @@ use crate::helpers::tcp_serve_h1_once;
 // 204 with body?
 // retry / replay
 // re-use upstream connection
+// connection close
 
 #[test]
 fn header_too_large() {

@@ -15,7 +15,7 @@ use super::aggregate::AggregateSlice;
 
 const CRLF: &[u8] = b"\r\n";
 
-type Headers = SmallVec<[Header; 32]>;
+pub type Headers = SmallVec<[Header; 32]>;
 
 /// An HTTP request
 pub struct Request {
