@@ -67,8 +67,9 @@ pub fn request(i: AggregateSlice) -> IResult<AggregateSlice, Request> {
 // Looks like `HTTP/1.1 200 OK\r\n` or `HTTP/1.1 404 Not Found\r\n`, then headers
 pub fn response(i: AggregateSlice) -> IResult<AggregateSlice, Response> {
     let (i, version) = http_version(i)?;
+    let (i, _) = take_while1(|c| c == b' ')(i)?;
     let (i, code) = u16_text(i)?;
-    let (i, _) = take_while1_and_consume(i, |c| c == b' ')?;
+    let (i, _) = take_while1(|c| c == b' ')(i)?;
     let (i, reason) = terminated(take_until(CRLF), tag(CRLF))(i)?;
     let (i, headers) = headers(i)?;
 

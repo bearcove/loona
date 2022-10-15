@@ -4,7 +4,7 @@ use eyre::Context;
 use nom::IResult;
 use parse::{
     aggregate::{AggregateBuf, AggregateSlice},
-    h1::Request,
+    h1::{Request, Response},
 };
 use std::{net::SocketAddr, rc::Rc};
 use tokio_uring::net::TcpStream;
@@ -48,8 +48,8 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
     let mut dos_buf = AggregateBuf::default();
 
     loop {
-        let req;
-        (dos_buf, req) = match parse(h1::request, &dos, dos_buf, MAX_HEADER_LEN).await {
+        let dos_req;
+        (dos_buf, dos_req) = match parse(h1::request, &dos, dos_buf, MAX_HEADER_LEN).await {
             Ok(t) => t,
             Err(e) => {
                 if let Some(se) = e.downcast_ref::<SemanticError>() {
@@ -61,13 +61,11 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
                 return Ok(());
             }
         };
+        debug_print_req(&dos_req);
 
-        debug!(method = %req.method.to_string_lossy(), path = %req.path.to_string_lossy(), version = %req.version, "got request");
-        for h in &req.headers {
-            debug!(name = %h.name.to_string_lossy(), value = %h.value.to_string_lossy(), "got header");
-        }
-
-        let req_dv = conn_dv.steer_request(&req).wrap_err("steering request")?;
+        let req_dv = conn_dv
+            .steer_request(&dos_req)
+            .wrap_err("steering request")?;
 
         let ups_addr = req_dv.upstream_addr()?;
 
@@ -77,36 +75,15 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
 
         debug!("writing request header");
         let ups_buf = AggregateBuf::default();
-        {
-            let mut ups_buf = ups_buf.write();
-            ups_buf.put_agg(&req.method)?;
-            ups_buf.put(b" ")?;
-            ups_buf.put_agg(&req.path)?;
-            match req.version {
-                1 => ups_buf.put(b" HTTP/1.1\r\n")?,
-                _ => return Err(eyre::eyre!("unsupported HTTP version 1.{}", req.version)),
-            }
-            for header in &req.headers {
-                ups_buf.put_agg(&header.name)?;
-                ups_buf.put(b": ")?;
-                ups_buf.put_agg(&header.name)?;
-                ups_buf.put(b"\r\n")?;
-            }
-            ups_buf.put(b"\r\n")?;
-        }
-
-        {
-            let ups_req_header_slice = ups_buf.read().read_slice();
-
-            let mut offset = 0;
-            while let Some(slice) = ups_req_header_slice.next_slice(offset) {
-                offset += slice.len() as u32;
-                let (res, _) = ups.write_all(slice).await;
-                res.wrap_err("writing request header upstream")?;
-            }
-        }
+        encode_request(&dos_req, &ups_buf)?;
+        let ups_buf = write_all(&ups, ups_buf)
+            .await
+            .wrap_err("writing request headers")?;
 
         debug!("reading response headers from upstream");
+        let (ups_buf, ups_res) = parse(h1::response, &ups, ups_buf, MAX_HEADER_LEN).await?;
+
+        debug_print_res(&ups_res);
 
         todo!("the rest of the owl");
     }
@@ -140,12 +117,16 @@ where
                     debug!("incomplete request, need more data");
                     continue;
                 } else {
+                    if let nom::Err::Error(e) = &err {
+                        debug!(?err, "parsing error");
+                        debug!(input = %e.input.to_string_lossy(), "input was");
+                    }
                     return Err(eyre::eyre!("parsing error: {err}"));
                 }
             }
         };
 
-        return Ok((buf.split_keeping_rest(rest), req));
+        return Ok((buf.split_at(rest), req));
     }
 }
 
@@ -160,5 +141,51 @@ impl SemanticError {
         match self {
             Self::HeadersTooLong => b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n",
         }
+    }
+}
+
+fn encode_request(req: &Request, buf: &AggregateBuf) -> eyre::Result<()> {
+    let mut buf = buf.write();
+    buf.put_agg(&req.method)?;
+    buf.put(b" ")?;
+    buf.put_agg(&req.path)?;
+    match req.version {
+        1 => buf.put(b" HTTP/1.1\r\n")?,
+        _ => return Err(eyre::eyre!("unsupported HTTP version 1.{}", req.version)),
+    }
+    for header in &req.headers {
+        buf.put_agg(&header.name)?;
+        buf.put(b": ")?;
+        buf.put_agg(&header.value)?;
+        buf.put(b"\r\n")?;
+    }
+    buf.put(b"\r\n")?;
+    Ok(())
+}
+
+async fn write_all(stream: &TcpStream, buf: AggregateBuf) -> eyre::Result<AggregateBuf> {
+    let slice = buf.read().read_slice();
+
+    let mut offset = 0;
+    while let Some(slice) = slice.next_slice(offset) {
+        offset += slice.len() as u32;
+        let (res, _) = stream.write_all(slice).await;
+        res?;
+    }
+
+    Ok(buf.split())
+}
+
+fn debug_print_req(req: &Request) {
+    debug!(method = %req.method.to_string_lossy(), path = %req.path.to_string_lossy(), version = %req.version, "got request");
+    for h in &req.headers {
+        debug!(name = %h.name.to_string_lossy(), value = %h.value.to_string_lossy(), "got header");
+    }
+}
+
+fn debug_print_res(res: &Response) {
+    debug!(code = %res.code, reason = %res.reason.to_string_lossy(), version = %res.version, "got response");
+    for h in &res.headers {
+        debug!(name = %h.name.to_string_lossy(), value = %h.value.to_string_lossy(), "got header");
     }
 }

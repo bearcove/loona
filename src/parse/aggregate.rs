@@ -98,6 +98,16 @@ impl AggregateBuf {
         self.inner.borrow_mut()
     }
 
+    /// Split off at the end of the filled portion
+    pub fn split(self) -> Self {
+        let slice = {
+            let read = self.read();
+            let len = read.len();
+            self.read().slice(len..len)
+        };
+        self.split_at(slice)
+    }
+
     /// Split off at the start of the given slice, re-using the space in the
     /// given slice, and any unfilled space.
     ///
@@ -120,21 +130,16 @@ impl AggregateBuf {
     /// [..........BBBBBBBBBBBB...........]
     /// <-- off --><--- len --><-- avail-->
     /// ```
-    pub fn split_keeping_rest(self, rest: AggregateSlice) -> Self {
+    pub fn split_at(self, rest: AggregateSlice) -> Self {
         let inner = self.inner.borrow();
         let block_size = inner.block_size;
 
-        dbg2!("split_keeping_rest", inner.off, inner.len, inner.capacity(),);
+        dbg2!("split_at", inner.off, inner.len, inner.capacity(),);
 
         let abs_block_start = (inner.blocks.len() as u32 - 1) * block_size;
         let abs_filled_end = inner.len + inner.off;
         let abs_rest_start = rest.off + inner.off;
-        dbg2!(
-            "split_keeping_rest",
-            abs_block_start,
-            abs_filled_end,
-            abs_rest_start
-        );
+        dbg2!("split_at", abs_block_start, abs_filled_end, abs_rest_start);
 
         // we now have (1 block)
         //
@@ -422,6 +427,12 @@ impl AggregateBufRead<'_> {
 
         let (block_index, given) = self.borrow.contiguous_range(wanted);
         &self.borrow.blocks[block_index][given]
+    }
+
+    /// Returns the total capacity of the buffer
+    #[inline(always)]
+    pub fn capacity(&self) -> u32 {
+        self.borrow.capacity()
     }
 
     /// Returns the (filled) length of the buffer
@@ -983,7 +994,7 @@ mod tests {
             };
             assert_eq!(version.to_string_lossy(), "HTTP/1.1 200 OK");
 
-            buf = buf.split_keeping_rest(rest);
+            buf = buf.split_at(rest);
         }
     }
 }
