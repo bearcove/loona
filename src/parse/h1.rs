@@ -55,11 +55,10 @@ pub struct Header {
 
 // Looks like `GET /path HTTP/1.1\r\n`, then headers
 pub fn request(i: AggregateSlice) -> IResult<AggregateSlice, Request> {
-    let (i, method) = take_while1_and_consume(i, |c| c != b' ')?;
-    let (i, path) = take_while1_and_consume(i, |c| c != b' ')?;
-    let (i, version) = http_version(i)?;
-    let (i, _) = tag(CRLF)(i)?;
-    let (i, headers) = headers(i)?;
+    let (i, method) = take_until_and_consume(b" ")(i)?;
+    let (i, path) = take_until_and_consume(b" ")(i)?;
+    let (i, version) = terminated(http_version, tag(CRLF))(i)?;
+    let (i, headers) = headers_and_crlf(i)?;
 
     let request = Request {
         method,
@@ -72,12 +71,10 @@ pub fn request(i: AggregateSlice) -> IResult<AggregateSlice, Request> {
 
 // Looks like `HTTP/1.1 200 OK\r\n` or `HTTP/1.1 404 Not Found\r\n`, then headers
 pub fn response(i: AggregateSlice) -> IResult<AggregateSlice, Response> {
-    let (i, version) = http_version(i)?;
-    let (i, _) = take_while1(|c| c == b' ')(i)?;
-    let (i, code) = u16_text(i)?;
-    let (i, _) = take_while1(|c| c == b' ')(i)?;
+    let (i, version) = terminated(http_version, space1)(i)?;
+    let (i, code) = terminated(u16_text, space1)(i)?;
     let (i, reason) = terminated(take_until(CRLF), tag(CRLF))(i)?;
-    let (i, headers) = headers(i)?;
+    let (i, headers) = headers_and_crlf(i)?;
 
     let response = Response {
         version,
@@ -115,7 +112,7 @@ pub fn http_version(i: AggregateSlice) -> IResult<AggregateSlice, u8> {
     Ok((i, version))
 }
 
-pub fn headers(mut i: AggregateSlice) -> IResult<AggregateSlice, Headers> {
+pub fn headers_and_crlf(mut i: AggregateSlice) -> IResult<AggregateSlice, Headers> {
     let mut headers = Headers::default();
     loop {
         if let (i, Some(_)) = opt(tag(CRLF))(i.clone())? {
@@ -129,38 +126,23 @@ pub fn headers(mut i: AggregateSlice) -> IResult<AggregateSlice, Headers> {
     }
 }
 
-/// Parses a single header line
+/// Parse a single header line
 fn header(i: AggregateSlice) -> IResult<AggregateSlice, (AggregateSlice, AggregateSlice)> {
-    let (i, name) = terminated(take_until(&b":"[..]), tag(&b":"[..]))(i)?;
-    let (i, value) = preceded(ws, terminated(take_until(CRLF), tag(CRLF)))(i)?;
+    let (i, name) = take_until_and_consume(b":")(i)?;
+    let (i, value) = preceded(space1, take_until_and_consume(CRLF))(i)?;
 
     Ok((i, (name, value)))
 }
 
-/// Parses whitespace (not including newlines)
-fn ws(i: AggregateSlice) -> IResult<AggregateSlice, ()> {
+/// Parse at least one SP character
+fn space1(i: AggregateSlice) -> IResult<AggregateSlice, ()> {
     let (i, _) = take_while1(|c| c == b' ')(i)?;
     Ok((i, ()))
 }
 
-fn take_while1_and_consume(
-    i: AggregateSlice,
-    predicate: impl Fn(u8) -> bool,
-) -> IResult<AggregateSlice, AggregateSlice> {
-    // isn't actually redundant. passing it moves it
-    #[allow(clippy::redundant_closure)]
-    let (i, out) = take_while1(|c| predicate(c))(i)?;
-    let (i, _separator) = take_while1(|c| !predicate(c))(i)?;
-    Ok((i, out))
-}
-
-#[allow(dead_code)]
+/// Parse until the given tag, then skip the tag
 fn take_until_and_consume(
-    i: AggregateSlice,
     needle: &[u8],
-) -> IResult<AggregateSlice, AggregateSlice> {
-    let (i, out) = take_until(needle)(i)?;
-    let (i, _separator) = tag(needle)(i)?;
-
-    Ok((i, out))
+) -> impl FnMut(AggregateSlice) -> IResult<AggregateSlice, AggregateSlice> + '_ {
+    terminated(take_until(needle), tag(needle))
 }
