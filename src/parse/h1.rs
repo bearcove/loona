@@ -11,7 +11,7 @@ use nom::{
 };
 
 use crate::{
-    bufpool::aggregate::AggregateSlice,
+    bufpool::AggregateSlice,
     types::{Header, Headers, Request, Response},
 };
 

@@ -790,7 +790,7 @@ impl Iterator for AggregateSliceIter {
 
 #[cfg(test)]
 mod tests {
-    use crate::bufpool::aggregate::{AggregateBuf, AggregateBufInner, AggregateSlice};
+    use crate::bufpool::{AggregateBuf, AggregateBufInner, AggregateSlice};
     use nom::IResult;
     use pretty_assertions::assert_eq;
 

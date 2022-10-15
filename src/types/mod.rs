@@ -1,10 +1,10 @@
-use crate::bufpool::aggregate::AggregateSlice;
-
 mod headers;
 pub use headers::*;
 
 mod driver;
 pub use driver::*;
+
+use crate::bufpool::AggregateSlice;
 
 /// An HTTP request
 pub struct Request {

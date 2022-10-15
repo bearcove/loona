@@ -1,4 +1,5 @@
-pub mod aggregate;
+mod aggregate;
+pub use aggregate::*;
 
 use std::{
     cell::{RefCell, RefMut},

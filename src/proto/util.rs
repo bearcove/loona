@@ -4,7 +4,7 @@ use tokio_uring::net::TcpStream;
 use tracing::debug;
 
 use crate::{
-    bufpool::aggregate::{AggregateBuf, AggregateSlice},
+    bufpool::{AggregateBuf, AggregateSlice},
     proto::errors::SemanticError,
 };
 

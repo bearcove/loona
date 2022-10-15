@@ -2,7 +2,7 @@
 
 use smallvec::SmallVec;
 
-use crate::bufpool::aggregate::AggregateSlice;
+use crate::bufpool::AggregateSlice;
 
 #[derive(Default)]
 pub struct Headers {
