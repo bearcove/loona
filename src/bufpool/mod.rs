@@ -1,6 +1,9 @@
 mod agg;
 pub use agg::*;
 
+mod io_chunk;
+pub use io_chunk::*;
+
 use std::{
     cell::{RefCell, RefMut},
     collections::VecDeque,

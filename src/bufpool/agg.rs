@@ -11,7 +11,9 @@ use nom::{
 };
 use smallvec::SmallVec;
 
-use crate::bufpool::{self, Buf, BufMut};
+use crate::bufpool::{self, BufMut};
+
+use super::{IoChunk, IoChunkable};
 
 macro_rules! dbg2 {
     ($($arg:tt)*) => {
@@ -475,9 +477,9 @@ impl fmt::Debug for AggSlice {
     }
 }
 
-impl AggSlice {
+impl IoChunkable for AggSlice {
     /// Returns next contiguous slice
-    pub fn next_slice(&self, offset: u32) -> Option<Buf> {
+    fn next_chunk(&self, offset: u32) -> Option<IoChunk> {
         if offset == self.len {
             return None;
         }
@@ -487,9 +489,11 @@ impl AggSlice {
 
         // FIXME: use try_into?
         let range = (range.start as u16)..(range.end as u16);
-        Some(parent.blocks[block_index].freeze_slice(range))
+        Some(parent.blocks[block_index].freeze_slice(range).into())
     }
+}
 
+impl AggSlice {
     /// Returns an iterator over the bytes in this slice
     #[inline]
     pub fn iter(&self) -> AggSliceIter {

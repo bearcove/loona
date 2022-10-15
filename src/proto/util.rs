@@ -4,7 +4,7 @@ use tokio_uring::net::TcpStream;
 use tracing::debug;
 
 use crate::{
-    bufpool::{AggBuf, AggSlice},
+    bufpool::{AggBuf, AggSlice, IoChunkable},
     proto::errors::SemanticError,
 };
 
@@ -67,7 +67,7 @@ pub(crate) async fn write_all(stream: &TcpStream, buf: AggBuf) -> eyre::Result<A
     let slice = buf.read().read_slice();
 
     let mut offset = 0;
-    while let Some(slice) = slice.next_slice(offset) {
+    while let Some(slice) = slice.next_chunk(offset) {
         offset += slice.len() as u32;
         let (res, _) = stream.write_all(slice).await;
         res?;
