@@ -72,7 +72,7 @@ pub async fn proxy(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::
         let mut list = IoChunkList::default();
         encode_request(dos_req, &mut list)?;
         debug!("encoded...");
-        let _ = write_all_list(&ups, list)
+        let mut list = write_all_list(&ups, list)
             .await
             .wrap_err("writing request headers upstream")?;
 
@@ -112,17 +112,16 @@ pub async fn proxy(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::
         // at this point, `dos_buf` has the start of the request body,
         // and `ups_buf` has the start of the response body
 
-        debug!("writing response headers downstream");
-        let resh_buf = AggBuf::default();
-        encode_response(&ups_res, &resh_buf)?;
+        let ups_res_clen = ups_res.headers.content_len().unwrap_or_default();
 
-        _ = write_all(&dos, resh_buf)
+        debug!("writing response headers downstream");
+        encode_response(ups_res, &mut list)?;
+
+        _ = write_all_list(&dos, list)
             .await
             .wrap_err("writing response headers to downstream");
 
         // now let's proxy bodies!
-        let ups_res_clen = ups_res.headers.content_len().unwrap_or_default();
-
         let to_dos = copy(ups_buf, ups_res_clen, &ups, &dos);
         let to_ups = copy(dos_buf, dos_req_clen, &dos, &ups);
 
@@ -189,27 +188,24 @@ fn encode_request(req: Request, list: &mut IoChunkList) -> eyre::Result<()> {
     Ok(())
 }
 
-fn encode_response(res: &Response, buf: &AggBuf) -> eyre::Result<()> {
-    let mut buf = buf.write();
+fn encode_response(res: Response, list: &mut IoChunkList) -> eyre::Result<()> {
     match res.version {
-        1 => buf.put(b"HTTP/1.1 ")?,
+        1 => list.push(&b"HTTP/1.1 "[..]),
         _ => return Err(eyre::eyre!("unsupported HTTP version 1.{}", res.version)),
     }
-    // TODO: implement `std::fmt::Write` for `AggBuf`?
     // FIXME: wasteful
     let code = res.code.to_string();
-    buf.put(code)?;
-    buf.put(" ")?;
-    buf.put_agg(&res.reason)?;
-    buf.put("\r\n")?;
-    for header in &res.headers {
-        buf.put_agg(&header.name)?;
-        buf.put(": ")?;
-        buf.put_agg(&header.value)?;
-        buf.put("\r\n")?;
+    list.push(code.into_bytes());
+    list.push(" ");
+    list.push(res.reason);
+    list.push("\r\n");
+    for header in res.headers {
+        list.push(header.name);
+        list.push(": ");
+        list.push(header.value);
+        list.push("\r\n");
     }
-    buf.put("\r\n")?;
-
+    list.push("\r\n");
     Ok(())
 }
 

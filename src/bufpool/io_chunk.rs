@@ -6,7 +6,8 @@ use super::Buf;
 
 pub enum IoChunk {
     Static(&'static [u8]),
-    Slice(Buf),
+    Vec(Vec<u8>),
+    Buf(Buf),
 }
 
 impl From<&'static [u8]> for IoChunk {
@@ -15,32 +16,41 @@ impl From<&'static [u8]> for IoChunk {
     }
 }
 
+impl From<Vec<u8>> for IoChunk {
+    fn from(vec: Vec<u8>) -> Self {
+        IoChunk::Vec(vec)
+    }
+}
+
 impl From<Buf> for IoChunk {
     fn from(buf: Buf) -> Self {
-        IoChunk::Slice(buf)
+        IoChunk::Buf(buf)
+    }
+}
+
+impl IoChunk {
+    #[inline(always)]
+    pub fn as_io_buf(&self) -> &dyn IoBuf {
+        match self {
+            IoChunk::Static(slice) => slice,
+            IoChunk::Vec(vec) => vec,
+            IoChunk::Buf(buf) => buf,
+        }
     }
 }
 
 unsafe impl IoBuf for IoChunk {
+    #[inline(always)]
     fn stable_ptr(&self) -> *const u8 {
-        match self {
-            IoChunk::Static(s) => IoBuf::stable_ptr(s),
-            IoChunk::Slice(s) => IoBuf::stable_ptr(s),
-        }
+        IoBuf::stable_ptr(self.as_io_buf())
     }
 
     fn bytes_init(&self) -> usize {
-        match self {
-            IoChunk::Static(s) => IoBuf::bytes_init(s),
-            IoChunk::Slice(s) => IoBuf::bytes_init(s),
-        }
+        IoBuf::bytes_init(self.as_io_buf())
     }
 
     fn bytes_total(&self) -> usize {
-        match self {
-            IoChunk::Static(s) => IoBuf::bytes_total(s),
-            IoChunk::Slice(s) => IoBuf::bytes_total(s),
-        }
+        IoBuf::bytes_total(self.as_io_buf())
     }
 }
 
@@ -63,7 +73,8 @@ impl IoChunk {
     pub fn len(&self) -> usize {
         match self {
             IoChunk::Static(slice) => slice.len(),
-            IoChunk::Slice(buf) => buf.len(),
+            IoChunk::Vec(vec) => vec.len(),
+            IoChunk::Buf(buf) => buf.len(),
         }
     }
 
@@ -75,11 +86,10 @@ impl IoChunk {
 
 impl IoChunkable for &'static [u8] {
     fn next_chunk(&self, offset: u32) -> Option<IoChunk> {
-        let slice = &self[offset as usize..];
-        if slice.is_empty() {
-            None
+        if offset == 0 {
+            Some(IoChunk::Static(self))
         } else {
-            Some(IoChunk::Static(slice))
+            None
         }
     }
 }
@@ -87,6 +97,17 @@ impl IoChunkable for &'static [u8] {
 impl IoChunkable for &'static str {
     fn next_chunk(&self, offset: u32) -> Option<IoChunk> {
         IoChunkable::next_chunk(&self.as_bytes(), offset)
+    }
+}
+
+impl IoChunkable for Vec<u8> {
+    fn next_chunk(&self, offset: u32) -> Option<IoChunk> {
+        if offset == 0 {
+            // FIXME: ooh that's bad, shouldn't need to clone here
+            Some(IoChunk::Vec(self.clone()))
+        } else {
+            None
+        }
     }
 }
 
