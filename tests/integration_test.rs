@@ -225,7 +225,7 @@ fn read_streaming_body() {
 
             // FIXME: this should be 200 and should stream the body back.
             // for now we don't support chunked transfer encoding.
-            assert_eq!(res.code, Some(500));
+            assert_eq!(res.code, Some(501));
             // assert_eq!(res.code, Some(200));
 
             _ = buf.split();

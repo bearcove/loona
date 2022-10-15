@@ -63,6 +63,15 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
         };
         debug_print_req(&dos_req);
 
+        if is_chunked_transfer_encoding(&dos_req.headers) {
+            let (res, _) = dos
+                .write_all(SemanticError::NoChunked.as_http_response())
+                .await;
+            res.wrap_err("writing error response downstream")?;
+
+            return Ok(());
+        }
+
         let req_dv = conn_dv
             .steer_request(&dos_req)
             .wrap_err("steering request")?;
@@ -83,6 +92,15 @@ pub async fn serve_h1(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyr
         debug!("reading response headers from upstream");
         let (mut ups_buf, ups_res) = parse(h1::response, &ups, ups_buf, MAX_HEADER_LEN).await?;
         debug_print_res(&ups_res);
+
+        if is_chunked_transfer_encoding(&ups_res.headers) {
+            let (res, _) = dos
+                .write_all(SemanticError::NoChunked.as_http_response())
+                .await;
+            res.wrap_err("writing error response downstream")?;
+
+            return Ok(());
+        }
 
         // at this point, `dos_buf` has the start of the request body,
         // and `ups_buf` has the start of the response body
@@ -193,12 +211,16 @@ where
 enum SemanticError {
     #[error("the headers are too long")]
     HeadersTooLong,
+
+    #[error("chunked transfer encoding is not supported")]
+    NoChunked,
 }
 
 impl SemanticError {
     fn as_http_response(&self) -> &'static [u8] {
         match self {
             Self::HeadersTooLong => b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n",
+            Self::NoChunked => b"HTTP/1.1 501 Chunked Transfer Encoding Not Implemented\r\n\r\n",
         }
     }
 }
@@ -295,11 +317,22 @@ fn get_content_len(headers: &Headers) -> u64 {
     content_len
 }
 
-fn has_connection_close(headers: &Headers) -> bool {
+fn has_header_kv(headers: &Headers, k: impl AsRef<[u8]>, v: impl AsRef<[u8]>) -> bool {
+    let k = k.as_ref();
+    let v = v.as_ref();
+
     for h in headers {
-        if h.name.eq_ignore_ascii_case("connection") && h.value.eq_ignore_ascii_case("close") {
+        if h.name.eq_ignore_ascii_case(k) && h.value.eq_ignore_ascii_case(v) {
             return true;
         }
     }
     false
+}
+
+fn has_connection_close(headers: &Headers) -> bool {
+    has_header_kv(headers, "connection", "close")
+}
+
+fn is_chunked_transfer_encoding(headers: &Headers) -> bool {
+    has_header_kv(headers, "transfer-encoding", "chunked")
 }
