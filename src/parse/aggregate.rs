@@ -1,14 +1,17 @@
 use std::{
     cell::{RefCell, RefMut},
     fmt,
+    iter::Enumerate,
     ops::Range,
     rc::Rc,
 };
 
-use nom::CompareResult;
+use nom::{
+    Compare, CompareResult, FindSubstring, InputIter, InputLength, InputTake, InputTakeAtPosition,
+};
 use smallvec::SmallVec;
 
-use crate::bufpool::{self, BufMut};
+use crate::bufpool::{self, Buf, BufMut};
 
 macro_rules! dbg2 {
     ($($arg:tt)*) => {
@@ -23,7 +26,24 @@ macro_rules! dbg2 {
 /// An "aggregate buffer", uses one or more [BufMut]s for storage. Allows
 /// writing to uninitialized data, and borrowing ref-counted [AggregateSlice] of
 /// initialized data.
-#[derive(Default)]
+///
+/// ```text
+///     +-------------------------------+---------------------------------+
+///     |             block 0           |            block 1              |
+///     +-------------------------------+---------------------------------+
+///     |                  |                 |                            |
+///     |<----- off ------>|<----------------+- capacity ---------------->|
+///     |                  |                 |                            |
+///     | used by previous |<----- len ----->|<---------- avail --------->|
+///     | bufs and slices. |                 |                            |
+///                        |   filled and    |     can be written to      |
+///                        |    readable     |                            |
+/// ```
+///
+/// A non-zero `off` indicates that this [AggregateBuf] was split from another
+/// one, re-using `avail` bytes.
+///
+/// [AggregateSlice] offsets are relative to the global offset.
 pub struct AggregateBuf {
     inner: Rc<RefCell<AggregateBufInner>>,
 }
@@ -52,66 +72,220 @@ pub struct AggregateBufRead<'a> {
     borrow: std::cell::Ref<'a, AggregateBufInner>,
 }
 
-impl AggregateBuf {
-    /// Create a new aggregate buffer backed by one buffer.
-    pub fn new() -> Result<Self, bufpool::Error> {
-        let inner = AggregateBufInner::new()?;
-        Ok(Self {
+impl Default for AggregateBuf {
+    /// Create an empty [AggregateBuf].
+    ///
+    /// [AggregateBuf::grow_if_needed] must be called before writing to it.
+    fn default() -> Self {
+        let inner = AggregateBufInner::new();
+        Self {
             inner: Rc::new(RefCell::new(inner)),
-        })
+        }
     }
+}
 
+impl AggregateBuf {
+    /// Borrow this aggregate buffer immutably
     pub fn read(&self) -> AggregateBufRead<'_> {
         let handle = &self.inner;
         let borrow = handle.borrow();
         AggregateBufRead { handle, borrow }
     }
 
+    /// Borrow this aggregate buffer mutably
     pub fn write(&self) -> RefMut<AggregateBufInner> {
         self.inner.borrow_mut()
     }
 
-    /// Split off a new [AggregateBuf] from this one, re-using any unfilled
-    /// space.
-    pub fn split(self) -> Result<Self, bufpool::Error> {
-        // Safety: we might have a bunch of [AggregateSlice] out there. They're
-        // immutable references to the _filled_ part of `self`, so it's okay.
+    /// Split off at the end of the filled portion
+    pub fn split(self) -> Self {
+        let slice = {
+            let read = self.read();
+            let len = read.len();
+            self.read().slice(len..len)
+        };
+        self.split_at(slice)
+    }
 
+    /// Split off at the start of the given slice, re-using the space in the
+    /// given slice, and any unfilled space.
+    ///
+    /// ```text
+    /// Before/after (1 block)
+    ///
+    ///                                               <-- rest -->
+    /// [.............AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBB...........]
+    /// <--- off ----><-------------------- len -----------------><-- avail-->
+    ///
+    /// [.............................................BBBBBBBBBBBB...........]
+    /// <------------------- off --------------------><--- len --><-- avail-->
+    ///
+    /// Before/after (2+ blocks)
+    ///
+    ///                                               <-- rest -->
+    /// [.............AAAAAAAAAAAAAAAAAAAA][AAAAAAAAAABBBBBBBBBBBB...........]
+    /// <--- off ----><-------------------- len -----------------><-- avail-->
+    ///
+    /// [..........BBBBBBBBBBBB...........]
+    /// <-- off --><--- len --><-- avail-->
+    /// ```
+    pub fn split_at(self, rest: AggregateSlice) -> Self {
         let inner = self.inner.borrow();
-        let reusable = inner.capacity() - inner.len;
-        if reusable == 0 {
-            return Self::new();
-        }
+        let block_size = inner.block_size;
 
-        dbg2!(reusable, inner.block_size);
+        dbg2!("split_at", inner.off, inner.len, inner.capacity(),);
 
-        // we can re-use the last block
-        let global_off = inner.block_size - reusable;
+        let abs_block_start = (inner.blocks.len() as u32 - 1) * block_size;
+        let abs_filled_end = inner.len + inner.off;
+        let abs_rest_start = rest.off + inner.off;
+        dbg2!("split_at", abs_block_start, abs_filled_end, abs_rest_start);
+
+        // we now have (1 block)
+        //
+        // [.............AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBB...........]
+        // |                                             |          |
+        // +- abs_block_start                            |          + abs_filled_end
+        //                                               + abs_rest_start
+        //
+        // or (2+ blocks)
+        //
+        // [.............AAAAAAAAAAAAAAAAAAAA][AAAAAAAAAABBBBBBBBBBBB...........]
+        //                                    |          |          |
+        //                    abs_block_start +          |          + abs_filled_end
+        //                                               + abs_rest_start
+
+        assert!(
+            abs_block_start <= abs_rest_start,
+            "rest must start into last block"
+        );
+        assert!(
+            abs_rest_start <= abs_filled_end,
+            "rest must start before end of filled part"
+        );
+
+        // let's clone get that block and make everything relative to its start
         let reused_block = inner.blocks.iter().last().unwrap().dangerous_clone();
+
+        let rel_filled_end = abs_filled_end - abs_block_start;
+        let rel_rest_start = abs_rest_start - abs_block_start;
+
+        // we now have (1 block)
+        //
+        // <------------------ offset ------------------><--- len --><-- avail-->
+        // [.............AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBB...........]
+        //                                               |          |
+        //                                               |          + rel_filled_end
+        //                                               + rel_rest_start
+        //
+        // or (2+ blocks)
+        //
+        // <- offset -><-- len --><-- avail-->
+        // [AAAAAAAAAABBBBBBBBBBBB...........]
+        //            |          |
+        //            |          + rel_filled_end
+        //            + rel_rest_start
+
+        if rel_rest_start == inner.block_size {
+            // there's nothing to re-use here, just return an empty buffer
+            return Default::default();
+        }
 
         let mut new_inner = AggregateBufInner {
             blocks: Default::default(),
             block_size: inner.block_size,
-            off: global_off,
-            len: 0,
+            off: rel_rest_start,
+            len: rel_filled_end - rel_rest_start,
         };
         new_inner.blocks.push(reused_block);
-        Ok(Self {
+        Self {
             inner: Rc::new(RefCell::new(new_inner)),
-        })
+        }
+    }
+
+    /// Return a write slice appropriate for a io_uring read.
+    ///
+    /// This panics if the write_slice would be empty, to avoid
+    /// misuse / no-op reads.
+    pub fn write_slice(self) -> AggregateWriteSlice {
+        let ptr;
+        let len;
+
+        {
+            let mut inner = self.inner.borrow_mut();
+            let (block_index, block_range) = inner.contiguous_range(inner.len..inner.capacity());
+            ptr = unsafe {
+                inner.blocks[block_index]
+                    .as_mut_ptr()
+                    .add(block_range.start)
+            };
+            len = block_range.len();
+        }
+
+        AggregateWriteSlice {
+            buf: self,
+            ptr,
+            len: len as _,
+            pos: 0,
+        }
+    }
+}
+
+/// A write slice of an [AggregateBuf] suitable for an io_uring read/write
+pub struct AggregateWriteSlice {
+    buf: AggregateBuf,
+    ptr: *mut u8,
+    pos: u32,
+    len: u32,
+}
+
+impl AggregateWriteSlice {
+    pub fn into_inner(self) -> AggregateBuf {
+        self.buf.inner.borrow_mut().len += self.pos;
+        self.buf
+    }
+
+    /// Limit how many bytes can be read. If the slice was slower
+    /// in the first place, don't do anything.
+    pub fn limit(mut self, len: u64) -> Self {
+        if len < self.len as u64 {
+            self.len = len as u32;
+        }
+        self
+    }
+}
+
+unsafe impl tokio_uring::buf::IoBuf for AggregateWriteSlice {
+    fn stable_ptr(&self) -> *const u8 {
+        self.ptr
+    }
+
+    fn bytes_init(&self) -> usize {
+        self.pos as _
+    }
+
+    fn bytes_total(&self) -> usize {
+        self.len as _
+    }
+}
+
+unsafe impl tokio_uring::buf::IoBufMut for AggregateWriteSlice {
+    fn stable_mut_ptr(&mut self) -> *mut u8 {
+        self.ptr
+    }
+
+    unsafe fn set_init(&mut self, pos: usize) {
+        self.pos = pos as _
     }
 }
 
 impl AggregateBufInner {
-    fn new() -> Result<Self, bufpool::Error> {
-        let mut s = Self {
+    fn new() -> Self {
+        Self {
             blocks: Default::default(),
             block_size: crate::bufpool::BUF_SIZE as _,
             off: 0,
             len: 0,
-        };
-        s.blocks.push(BufMut::alloc()?);
-        Ok(s)
+        }
     }
 
     /// Returns the size of each buffer in the pool
@@ -141,6 +315,7 @@ impl AggregateBufInner {
     /// Returns a block index and a slice into it, given a slice into the
     /// aggregate buffer. Doesn't check for the `filled` region
     fn contiguous_range(&self, wanted: Range<u32>) -> (usize, Range<usize>) {
+        dbg2!("contiguous_range", &wanted);
         let (start, end) = (wanted.start, wanted.end);
         assert!(start <= end);
 
@@ -158,22 +333,13 @@ impl AggregateBufInner {
         debug_assert!(block_index < self.blocks.len());
 
         let block_offset = start % self.block_size;
+        dbg2!("contiguous_range", block_index, block_offset);
         let avail = self.block_size - block_offset;
         let given = std::cmp::min(avail, wanted);
+        dbg2!("contiguous_range", avail, given);
 
         let block_offset = block_offset as usize;
         let given = given as usize;
-
-        dbg2!(
-            "contiguous_range",
-            start,
-            end,
-            self.block_size,
-            block_index,
-            block_offset,
-            avail,
-            given
-        );
 
         (block_index, block_offset..block_offset + given)
     }
@@ -191,7 +357,9 @@ impl AggregateBufInner {
         Ok(())
     }
 
-    pub fn put(&mut self, mut s: &[u8]) -> Result<(), bufpool::Error> {
+    /// Writes a slice into the buffer, growing it if needed.
+    pub fn put(&mut self, s: impl AsRef<[u8]>) -> Result<(), bufpool::Error> {
+        let mut s = s.as_ref();
         while !s.is_empty() {
             self.grow_if_needed()?;
 
@@ -207,9 +375,19 @@ impl AggregateBufInner {
         Ok(())
     }
 
+    /// Writes an [AggregateSlice] into this buffer, growing it if needed.
+    pub fn put_agg(&mut self, s: &AggregateSlice) -> Result<(), bufpool::Error> {
+        // TODO: this is very, very inefficient
+        self.put(&s.to_vec())
+    }
+
     /// Gives a mutable slice that can be written to.
     /// Must call `advance` after writing to the returned slice.
     pub fn unfilled_mut(&mut self) -> &mut [u8] {
+        if self.blocks.is_empty() {
+            return &mut [];
+        }
+
         let (block_index, range) = self.contiguous_range(self.len()..self.capacity());
         &mut self.blocks[block_index][range]
     }
@@ -226,6 +404,11 @@ impl AggregateBufInner {
 }
 
 impl AggregateBufRead<'_> {
+    /// Return a slice for the whole length of this buffer
+    pub fn read_slice(&self) -> AggregateSlice {
+        self.slice(0..self.len())
+    }
+
     /// Take a slice out of the filled portion of this buffer. Panics if
     /// it is outside the filled portion.
     pub fn slice(&self, range: Range<u32>) -> AggregateSlice {
@@ -251,6 +434,24 @@ impl AggregateBufRead<'_> {
 
         let (block_index, given) = self.borrow.contiguous_range(wanted);
         &self.borrow.blocks[block_index][given]
+    }
+
+    /// Returns the total capacity of the buffer
+    #[inline(always)]
+    pub fn capacity(&self) -> u32 {
+        self.borrow.capacity()
+    }
+
+    /// Returns the (filled) length of the buffer
+    #[inline(always)]
+    pub fn len(&self) -> u32 {
+        self.borrow.len()
+    }
+
+    /// Return true if this aggregate buf is empty
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.borrow.is_empty()
     }
 }
 
@@ -285,17 +486,38 @@ impl fmt::Debug for AggregateSlice {
 }
 
 impl AggregateSlice {
+    /// Returns next contiguous slice
+    pub fn next_slice(&self, offset: u32) -> Option<Buf> {
+        let r = self.parent.read();
+        if offset == self.len {
+            return None;
+        }
+        let (block_index, range) = r
+            .borrow
+            .contiguous_range(self.off + offset..self.off + self.len);
+
+        // FIXME: use try_into?
+        let range = (range.start as u16)..(range.end as u16);
+        Some(r.borrow.blocks[block_index].freeze_slice(range))
+    }
+
     /// Returns an iterator over the bytes in this slice
-    pub fn iter(&self) -> AggregateSliceIter<'_> {
+    #[inline]
+    pub fn iter(&self) -> AggregateSliceIter {
         AggregateSliceIter {
-            slice: self,
+            slice: self.clone(),
             pos: 0,
         }
     }
 
-    /// Returns as a vector. This allocates.
+    /// Returns as a vector. This allocates a lot.
     pub fn to_vec(&self) -> Vec<u8> {
         self.iter().collect()
+    }
+
+    /// Returns as a string. This allocates a lot.
+    pub fn to_string_lossy(&self) -> String {
+        String::from_utf8_lossy(&self.to_vec()).to_string()
     }
 
     /// Returns the length of this slice
@@ -307,15 +529,45 @@ impl AggregateSlice {
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
+
+    /// Returns true if this slice equals `slice`, ignoring ASCII case
+    pub fn eq_ignore_ascii_case(&self, slice: impl AsRef<[u8]>) -> bool {
+        let slice = slice.as_ref();
+
+        if self.len() != slice.len() {
+            return false;
+        }
+
+        // FIXME: this is very naive and could be optimized
+        self.iter()
+            .zip(slice.iter())
+            .all(|(l, r)| l.eq_ignore_ascii_case(r))
+    }
 }
 
-impl nom::InputLength for AggregateSlice {
+impl<T> PartialEq<T> for AggregateSlice
+where
+    T: AsRef<[u8]>,
+{
+    fn eq(&self, slice: &T) -> bool {
+        let slice = slice.as_ref();
+
+        if self.len() != slice.len() {
+            return false;
+        }
+
+        // FIXME: this is very naive and could be optimized
+        self.iter().eq(slice.iter().copied())
+    }
+}
+
+impl InputLength for AggregateSlice {
     fn input_len(&self) -> usize {
         self.len as _
     }
 }
 
-impl nom::InputTake for AggregateSlice {
+impl InputTake for AggregateSlice {
     fn take(&self, count: usize) -> Self {
         let count: u32 = count.try_into().unwrap();
         if count > self.len {
@@ -337,26 +589,25 @@ impl nom::InputTake for AggregateSlice {
             panic!("take_split: count > self.len");
         }
 
-        (
-            Self {
-                parent: AggregateBuf {
-                    inner: self.parent.inner.clone(),
-                },
-                off: self.off,
-                len: count,
+        let prefix = Self {
+            parent: AggregateBuf {
+                inner: self.parent.inner.clone(),
             },
-            Self {
-                parent: AggregateBuf {
-                    inner: self.parent.inner.clone(),
-                },
-                off: self.off + count,
-                len: self.len - count,
+            off: self.off,
+            len: count,
+        };
+        let suffix = Self {
+            parent: AggregateBuf {
+                inner: self.parent.inner.clone(),
             },
-        )
+            off: self.off + count,
+            len: self.len - count,
+        };
+        (suffix, prefix)
     }
 }
 
-impl nom::Compare<&[u8]> for AggregateSlice {
+impl Compare<&[u8]> for AggregateSlice {
     #[inline(always)]
     fn compare(&self, t: &[u8]) -> CompareResult {
         let pos = self.iter().zip(t.iter()).position(|(a, b)| a != *b);
@@ -389,6 +640,127 @@ impl nom::Compare<&[u8]> for AggregateSlice {
     }
 }
 
+impl InputTakeAtPosition for AggregateSlice {
+    type Item = u8;
+
+    fn split_at_position<P, E: nom::error::ParseError<Self>>(
+        &self,
+        predicate: P,
+    ) -> nom::IResult<Self, Self, E>
+    where
+        P: Fn(Self::Item) -> bool,
+    {
+        match self.iter().position(predicate) {
+            Some(i) => Ok(self.clone().take_split(i)),
+            None => Err(nom::Err::Incomplete(nom::Needed::new(1))),
+        }
+    }
+
+    fn split_at_position1<P, E: nom::error::ParseError<Self>>(
+        &self,
+        predicate: P,
+        e: nom::error::ErrorKind,
+    ) -> nom::IResult<Self, Self, E>
+    where
+        P: Fn(Self::Item) -> bool,
+    {
+        match self.iter().position(predicate) {
+            Some(0) => Err(nom::Err::Error(E::from_error_kind(self.clone(), e))),
+            Some(i) => Ok(self.take_split(i)),
+            None => Err(nom::Err::Incomplete(nom::Needed::new(1))),
+        }
+    }
+
+    fn split_at_position_complete<P, E: nom::error::ParseError<Self>>(
+        &self,
+        predicate: P,
+    ) -> nom::IResult<Self, Self, E>
+    where
+        P: Fn(Self::Item) -> bool,
+    {
+        match self.iter().position(predicate) {
+            Some(i) => Ok(self.take_split(i)),
+            None => Ok(self.take_split(self.input_len())),
+        }
+    }
+
+    fn split_at_position1_complete<P, E: nom::error::ParseError<Self>>(
+        &self,
+        predicate: P,
+        e: nom::error::ErrorKind,
+    ) -> nom::IResult<Self, Self, E>
+    where
+        P: Fn(Self::Item) -> bool,
+    {
+        match self.iter().position(predicate) {
+            Some(0) => Err(nom::Err::Error(E::from_error_kind(self.clone(), e))),
+            Some(i) => Ok(self.take_split(i)),
+            None => {
+                if self.is_empty() {
+                    Err(nom::Err::Error(E::from_error_kind(self.clone(), e)))
+                } else {
+                    Ok(self.take_split(self.input_len()))
+                }
+            }
+        }
+    }
+}
+
+impl FindSubstring<&[u8]> for AggregateSlice {
+    fn find_substring(&self, substr: &[u8]) -> Option<usize> {
+        let mut offset = None;
+        let mut curr_substr = substr;
+        for (i, c) in self.iter().enumerate() {
+            if c == curr_substr[0] {
+                if offset.is_none() {
+                    offset = Some(i);
+                }
+                curr_substr = &curr_substr[1..];
+                if curr_substr.is_empty() {
+                    return offset;
+                }
+            } else {
+                curr_substr = substr;
+            }
+        }
+
+        None
+    }
+}
+
+impl InputIter for AggregateSlice {
+    type Item = u8;
+    type Iter = Enumerate<AggregateSliceIter>;
+    type IterElem = AggregateSliceIter;
+
+    #[inline]
+    fn iter_indices(&self) -> Self::Iter {
+        self.iter().enumerate()
+    }
+
+    #[inline]
+    fn iter_elements(&self) -> Self::IterElem {
+        self.iter()
+    }
+
+    #[inline]
+    fn position<P>(&self, predicate: P) -> Option<usize>
+    where
+        P: Fn(Self::Item) -> bool,
+    {
+        self.iter().position(predicate)
+    }
+
+    #[inline]
+    fn slice_index(&self, count: usize) -> Result<usize, nom::Needed> {
+        if self.len() >= count {
+            Ok(count)
+        } else {
+            Err(nom::Needed::new(count - self.len()))
+        }
+    }
+}
+
 fn lowercase_byte(c: u8) -> u8 {
     match c {
         b'A'..=b'Z' => c - b'A' + b'a',
@@ -396,12 +768,12 @@ fn lowercase_byte(c: u8) -> u8 {
     }
 }
 
-pub struct AggregateSliceIter<'a> {
-    slice: &'a AggregateSlice,
+pub struct AggregateSliceIter {
+    slice: AggregateSlice,
     pos: u32,
 }
 
-impl Iterator for AggregateSliceIter<'_> {
+impl Iterator for AggregateSliceIter {
     type Item = u8;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -441,14 +813,24 @@ mod tests {
     }
 
     #[test]
+    fn agg_slice_size() {
+        assert_eq!(std::mem::size_of::<AggregateSlice>(), 16);
+    }
+
+    #[test]
     fn agg_fill() {
-        let buf = AggregateBuf::new().unwrap();
+        let buf: AggregateBuf = Default::default();
 
         let block_size;
         let agg_len;
         {
             let mut buf = buf.write();
             block_size = buf.block_size();
+
+            {
+                println!("allocating first block");
+                buf.grow_if_needed().unwrap();
+            }
 
             {
                 println!("filling first block");
@@ -517,12 +899,13 @@ mod tests {
     fn agg_nom_traits() {
         use nom::{Compare, InputLength, InputTake};
 
-        let buf = AggregateBuf::new().unwrap();
+        let buf: AggregateBuf = Default::default();
         let hello = "hello";
         let world = "world";
 
         {
             let mut buf = buf.write();
+            buf.grow_if_needed().unwrap();
 
             {
                 let dst = buf.unfilled_mut();
@@ -550,8 +933,7 @@ mod tests {
         assert_eq!(slice.input_len(), hello.len() + world.len());
 
         eprintln!("to_vec + compare owned");
-        let owned = slice.to_vec();
-        assert_eq!(String::from_utf8_lossy(&owned[..]), "helloworld");
+        assert_eq!(slice.to_string_lossy(), "helloworld");
 
         assert_eq!(slice.compare(b"that's not it"), nom::CompareResult::Error);
         assert_eq!(slice.compare(b"hello"), nom::CompareResult::Ok);
@@ -564,11 +946,14 @@ mod tests {
 
         {
             let hello_slice = slice.take(5);
+            dbg2!(hello_slice.to_string_lossy());
             assert_eq!(hello_slice.compare(b"hello"), nom::CompareResult::Ok);
         }
 
         {
-            let (hello_slice, world_slice) = slice.take_split(5);
+            let (world_slice, hello_slice) = slice.take_split(5);
+            dbg2!(hello_slice.to_string_lossy());
+            dbg2!(world_slice.to_string_lossy());
             assert_eq!(hello_slice.compare(b"hello"), nom::CompareResult::Ok);
             assert_eq!(world_slice.compare(b"world"), nom::CompareResult::Ok);
         }
@@ -579,20 +964,44 @@ mod tests {
     #[test]
     fn agg_nom_sample() {
         fn parse(i: AggregateSlice) -> IResult<AggregateSlice, AggregateSlice> {
-            nom::bytes::streaming::tag(&b"HTTP/1.1"[..])(i)
+            nom::bytes::streaming::tag(&b"HTTP/1.1 200 OK"[..])(i)
         }
 
-        let mut buf = AggregateBuf::new().unwrap();
+        let mut buf: AggregateBuf = Default::default();
 
-        for _ in 0..300 {
-            let input = "HTTP/1.1 200 OK";
-            buf.write().put(input.as_bytes()).unwrap();
+        let input = b"HTTP/1.1 200 OK".repeat(1000);
+        let mut pending = &input[..];
 
-            let slice = buf.read().slice(0..input.len() as u32);
-            let (version, _rest) = parse(slice).unwrap();
-            assert_eq!(std::str::from_utf8(&version.to_vec()).unwrap(), "HTTP/1.1");
+        loop {
+            let slice = buf.read().slice(0..buf.read().len() as u32);
+            let (rest, version) = match parse(slice) {
+                Ok(t) => t,
+                Err(e) => {
+                    if e.is_incomplete() {
+                        {
+                            if pending.is_empty() {
+                                println!("ran out of input");
+                                break;
+                            }
 
-            buf = buf.split().unwrap();
+                            let mut buf = buf.write();
+                            buf.grow_if_needed().unwrap();
+                            let unfilled = buf.unfilled_mut();
+                            let n = std::cmp::min(unfilled.len(), pending.len());
+                            unfilled[..n].copy_from_slice(&pending[..n]);
+                            pending = &pending[n..];
+                            buf.advance(n as _);
+                            println!("advanced by {n}, {} remaining", pending.len());
+                        }
+
+                        continue;
+                    }
+                    panic!("parsing error: {e}");
+                }
+            };
+            assert_eq!(version.to_string_lossy(), "HTTP/1.1 200 OK");
+
+            buf = buf.split_at(rest);
         }
     }
 }
