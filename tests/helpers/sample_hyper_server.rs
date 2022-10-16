@@ -8,6 +8,10 @@ use tracing::debug;
 
 pub(crate) struct TestService;
 
+pub fn big_body() -> String {
+    "this is a big chunk".repeat(256).repeat(128)
+}
+
 impl Service<Request<Body>> for TestService {
     type Response = Response<Body>;
     type Error = Infallible;
