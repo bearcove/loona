@@ -2,7 +2,6 @@
 //! is https://www.rfc-editor.org/rfc/rfc9110
 
 use eyre::Context;
-use nom::InputTake;
 use std::rc::Rc;
 use tokio_uring::net::TcpStream;
 use tracing::debug;
