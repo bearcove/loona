@@ -214,6 +214,12 @@ impl AggBuf {
 
         {
             let mut inner = self.inner.borrow_mut();
+            if inner.blocks.is_empty() {
+                panic!(
+                    "holding AggBuf wrong: please call grow_if_needed before calling write_slice"
+                );
+            }
+
             let (block_index, block_range) = inner.contiguous_range(inner.len..inner.capacity());
             ptr = unsafe {
                 inner.blocks[block_index]

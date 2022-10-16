@@ -159,6 +159,8 @@ async fn copy(
             break;
         }
 
+        buf.write().grow_if_needed()?;
+
         let (res, slice);
         (res, slice) = src.read(buf.write_slice().limit(remain as _)).await;
         res?;
