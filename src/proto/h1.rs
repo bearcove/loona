@@ -20,9 +20,11 @@ use crate::{
 const MAX_HEADER_LEN: u32 = 64 * 1024;
 
 /// Proxy incoming HTTP/1.1 requests to some upstream.
-pub async fn proxy(conn_dv: Rc<impl ConnectionDriver>, dos: TcpStream) -> eyre::Result<()> {
-    let mut dos_buf = AggBuf::default();
-
+pub async fn proxy(
+    conn_dv: Rc<impl ConnectionDriver>,
+    dos: TcpStream,
+    mut dos_buf: AggBuf,
+) -> eyre::Result<()> {
     loop {
         let dos_req;
         (dos_buf, dos_req) = match read_and_parse(h1::request, &dos, dos_buf, MAX_HEADER_LEN).await
@@ -156,6 +158,8 @@ async fn copy(
         if remain == 0 {
             break;
         }
+
+        buf.write().grow_if_needed()?;
 
         let (res, slice);
         (res, slice) = src.read(buf.write_slice().limit(remain as _)).await;
