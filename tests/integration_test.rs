@@ -3,6 +3,7 @@
 mod helpers;
 
 use bytes::BytesMut;
+use futures::TryStreamExt;
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
 use std::{net::SocketAddr, time::Duration};
@@ -197,44 +198,38 @@ fn proxy_http_status() {
 #[test]
 fn read_streaming_body() {
     async fn client(ln_addr: SocketAddr) -> eyre::Result<()> {
-        let mut socket = TcpStream::connect(ln_addr).await?;
+        let socket = TcpStream::connect(ln_addr).await?;
         socket.set_nodelay(true)?;
 
-        let mut buf = BytesMut::with_capacity(256);
+        let (mut send_req, conn) = hyper::client::conn::handshake(socket).await?;
+        tokio::spawn(conn);
 
         debug!("Sending request headers");
-        socket
-            .write_all(b"GET /stream-big-body HTTP/1.1\r\n\r\n")
+        let res = send_req
+            .send_request(
+                hyper::Request::builder()
+                    .uri("/stream-big-body")
+                    .body(hyper::Body::empty())
+                    .unwrap(),
+            )
             .await?;
 
-        socket.flush().await?;
-
-        debug!("Reading response...");
-        'read_response: loop {
-            buf.reserve(256);
-            socket.read_buf(&mut buf).await?;
-            debug!("After read, got {} bytes", buf.len());
-
-            let mut headers = [EMPTY_HEADER; 16];
-            let mut res = httparse::Response::new(&mut headers[..]);
-            let _body_offset = match res.parse(&buf[..])? {
-                Status::Complete(off) => off,
-                Status::Partial => continue 'read_response,
-            };
-            debug!("Got a complete response");
-
-            // FIXME: this should be 200 and should stream the body back.
-            // for now we don't support chunked transfer encoding.
-            assert_eq!(res.code, Some(501));
-            // assert_eq!(res.code, Some(200));
-
-            _ = buf.split();
-            break 'read_response;
-        }
+        debug!("Got response: {res:#?}");
 
         debug!("Now must read body");
+        let mut body = res.into_body();
 
-        debug!("Done with client altogether");
+        let bb_expect = helpers::sample_hyper_server::big_body();
+        let mut bb_actual = String::new();
+
+        while let Some(chunk) = body.try_next().await? {
+            debug!("Got a chunk, {} bytes", chunk.len());
+            bb_actual += std::str::from_utf8(&chunk[..])?;
+        }
+
+        assert_eq!(bb_expect.len(), bb_actual.len());
+        assert_eq!(bb_expect, bb_actual);
+
         Ok(())
     }
 
