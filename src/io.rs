@@ -21,11 +21,11 @@ pub trait WriteOwned {
             buf = slice.into_inner();
             let n = match res {
                 Ok(n) => n,
-                Err(e) => return Err((e, buf)),
+                Err(e) => return (Err(e), buf),
             };
             written += n;
         }
-        Ok(((), buf))
+        (Ok(()), buf)
     }
 }
 
