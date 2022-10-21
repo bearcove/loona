@@ -2,6 +2,13 @@
 name = "hring"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/hapsoc/hring"
+documentation = "https://docs.rs/hring"
+readme = "README.md"
+description = """
+An HTTP implementation on top of io_uring
+"""
 
 [lib]
 bench = false
