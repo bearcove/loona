@@ -857,7 +857,7 @@ mod tests {
                 assert_eq!(len, block_size as usize);
                 slice.fill(2);
                 buf.advance(len as _);
-                assert_eq!(buf.len(), block_size * 2);
+                assert_eq!(buf.len(), block_size as u32 * 2);
             }
 
             {
@@ -970,7 +970,7 @@ mod tests {
         let mut pending = &input[..];
 
         loop {
-            let slice = buf.read().slice(0..buf.read().len());
+            let slice = buf.read().slice(0..buf.read().len() as u32);
             let (rest, version) = match parse(slice) {
                 Ok(t) => t,
                 Err(e) => {
