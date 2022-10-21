@@ -78,28 +78,38 @@ pub struct ChanReaderSend {
     inner: Rc<ChanReaderInner>,
 }
 
-#[derive(Default)]
 struct ChanReaderInner {
     notify: tokio::sync::Notify,
     guarded: RefCell<ChanReaderGuarded>,
 }
 
-#[derive(Default)]
 struct ChanReaderGuarded {
+    state: ChanReaderState,
     pos: usize,
     buf: Vec<u8>,
-    closed: bool,
 }
 
-impl ChanReaderGuarded {
-    fn is_empty(&self) -> bool {
-        self.pos == self.buf.len()
-    }
+enum ChanReaderState {
+    // Data may still come in
+    Live,
+
+    // [ChanReaderSend] was dropped, no more data is coming
+    Eof,
+
+    // [ChanReaderSend::rest] was called
+    Reset,
 }
 
 impl ChanReader {
     pub fn new() -> (ChanReaderSend, Self) {
-        let inner: Rc<ChanReaderInner> = Default::default();
+        let inner = Rc::new(ChanReaderInner {
+            notify: Default::default(),
+            guarded: RefCell::new(ChanReaderGuarded {
+                state: ChanReaderState::Live,
+                pos: 0,
+                buf: Vec::new(),
+            }),
+        });
         (
             ChanReaderSend {
                 inner: inner.clone(),
@@ -110,19 +120,41 @@ impl ChanReader {
 }
 
 impl ChanReaderSend {
-    pub async fn send(&self, buf: impl Into<Vec<u8>>) -> Result<(), std::io::Error> {
-        let buf = buf.into();
+    /// Sever this connection abnormally - read will eventually return [std::io::ErrorKind::ConnectionReset]
+    pub fn reset(self) {
+        let mut guarded = self.inner.guarded.borrow_mut();
+        guarded.state = ChanReaderState::Reset;
+        // let it drop, which will notify waiters
+    }
+
+    /// Send a chunk of data. Readers will not be able to read _more_ than the
+    /// length of this chunk in a single call, but may read less (if their buffer
+    /// is too small).
+    pub async fn send(&self, next_buf: impl Into<Vec<u8>>) -> Result<(), std::io::Error> {
+        let next_buf = next_buf.into();
+
         loop {
             {
                 let mut guarded = self.inner.guarded.borrow_mut();
-                if guarded.is_empty() {
-                    guarded.pos = 0;
-                    guarded.buf = buf;
-                    self.inner.notify.notify_waiters();
-                    return Ok(());
+                match guarded.state {
+                    ChanReaderState::Live => {
+                        if guarded.pos == guarded.buf.len() {
+                            guarded.pos = 0;
+                            guarded.buf = next_buf;
+                            self.inner.notify.notify_waiters();
+                            return Ok(());
+                        } else {
+                            // wait for read
+                        }
+                    }
+
+                    // can't send after dropping
+                    ChanReaderState::Eof => unreachable!(),
+
+                    // can't send after calling abort
+                    ChanReaderState::Reset => unreachable!(),
                 }
             }
-
             self.inner.notify.notified().await
         }
     }
@@ -130,8 +162,11 @@ impl ChanReaderSend {
 
 impl Drop for ChanReaderSend {
     fn drop(&mut self) {
-        self.inner.guarded.borrow_mut().closed = true;
-        self.inner.notify.notify_waiters()
+        let mut guarded = self.inner.guarded.borrow_mut();
+        if let ChanReaderState::Live = guarded.state {
+            guarded.state = ChanReaderState::Eof;
+        }
+        self.inner.notify.notify_waiters();
     }
 }
 
