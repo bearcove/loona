@@ -1,6 +1,5 @@
 use std::{cell::RefCell, rc::Rc};
 
-use tokio::sync::broadcast;
 use tokio_uring::{
     buf::{IoBuf, IoBufMut},
     net::TcpStream,
@@ -14,7 +13,25 @@ pub trait ReadOwned {
 pub trait WriteOwned {
     async fn write<B: IoBuf>(&self, buf: B) -> BufResult<usize, B>;
 
-    async fn writev<B: IoBuf>(&self, list: Vec<B>) -> BufResult<usize, Vec<B>>;
+    async fn writev<B: IoBuf>(&self, list: Vec<B>) -> BufResult<usize, Vec<B>> {
+        let mut out_list = Vec::with_capacity(list.len());
+        let mut list = list.into_iter();
+        let mut total = 0;
+
+        while let Some(buf) = list.next() {
+            let (res, buf) = self.write(buf).await;
+            out_list.push(buf);
+            match res {
+                Ok(n) => total += n,
+                Err(e) => {
+                    out_list.extend(list);
+                    return (Err(e), out_list);
+                }
+            }
+        }
+
+        (Ok(total), out_list)
+    }
 
     async fn write_all<B: IoBuf>(&self, mut buf: B) -> BufResult<(), B> {
         let mut written = 0;
@@ -51,89 +68,181 @@ impl WriteOwned for TcpStream {
     }
 }
 
-pub struct ChanReadOwned {
-    tx: broadcast::Sender<()>,
-    buffered: Rc<RefCell<Buffered>>,
+/// Allows sending `Vec<u8>` chunks, which can be read through its [ReadOwned]
+/// implementation.
+pub struct ChanReader {
+    inner: Rc<ChanReaderInner>,
 }
 
-pub struct ChanReadOwnedSender {
-    tx: broadcast::Sender<()>,
-    buffered: Rc<RefCell<Buffered>>,
+pub struct ChanReaderSend {
+    inner: Rc<ChanReaderInner>,
 }
 
 #[derive(Default)]
-struct Buffered {
-    pos: usize,
-    buf: Vec<u8>,
+struct ChanReaderInner {
+    notify: tokio::sync::Notify,
+    guarded: RefCell<ChanReaderGuarded>,
 }
 
-impl Buffered {
+#[derive(Default)]
+struct ChanReaderGuarded {
+    pos: usize,
+    buf: Vec<u8>,
+    closed: bool,
+}
+
+impl ChanReaderGuarded {
     fn is_empty(&self) -> bool {
         self.pos == self.buf.len()
     }
 }
 
-impl ChanReadOwned {
-    pub fn new() -> (Self, ChanReadOwnedSender) {
-        let (tx, _) = broadcast::channel(1);
-        let buffered = Rc::new(RefCell::new(Default::default()));
+impl ChanReader {
+    pub fn new() -> (ChanReaderSend, Self) {
+        let inner: Rc<ChanReaderInner> = Default::default();
         (
-            Self {
-                tx: tx.clone(),
-                buffered: buffered.clone(),
+            ChanReaderSend {
+                inner: inner.clone(),
             },
-            ChanReadOwnedSender { tx, buffered },
+            Self { inner },
         )
     }
 }
 
-impl ChanReadOwnedSender {
-    pub async fn send(&mut self, buf: Vec<u8>) {
+impl ChanReaderSend {
+    pub async fn send(&self, buf: impl Into<Vec<u8>>) -> Result<(), std::io::Error> {
+        let buf = buf.into();
         loop {
             {
-                let mut buffered = self.buffered.borrow_mut();
-                if buffered.is_empty() {
-                    buffered.pos = 0;
-                    buffered.buf = buf;
-                    _ = self.tx.send(());
-                    return;
+                let mut guarded = self.inner.guarded.borrow_mut();
+                if guarded.is_empty() {
+                    guarded.pos = 0;
+                    guarded.buf = buf;
+                    self.inner.notify.notify_waiters();
+                    return Ok(());
                 }
             }
 
-            let mut rx = self.tx.subscribe();
-            if rx.recv().await.is_ok() {
-                continue;
-            }
+            self.inner.notify.notified().await
         }
     }
 }
 
-impl ReadOwned for ChanReadOwned {
+impl Drop for ChanReaderSend {
+    fn drop(&mut self) {
+        self.inner.guarded.borrow_mut().closed = true;
+        self.inner.notify.notify_waiters()
+    }
+}
+
+impl ReadOwned for ChanReader {
     async fn read<B: IoBufMut>(&self, mut buf: B) -> BufResult<usize, B> {
         let out =
             unsafe { std::slice::from_raw_parts_mut(buf.stable_mut_ptr(), buf.bytes_total()) };
 
         loop {
             {
-                let mut current = self.buffered.borrow_mut();
-                let current = &mut current;
-                let remain = current.buf.len() - current.pos;
+                let mut guarded = self.inner.guarded.borrow_mut();
+                let remain = guarded.buf.len() - guarded.pos;
 
                 if remain > 0 {
                     let n = std::cmp::min(remain, out.len());
-                    out[..n].copy_from_slice(&current.buf[current.pos..current.pos + n]);
-                    current.pos += n;
+                    out[..n].copy_from_slice(&guarded.buf[guarded.pos..guarded.pos + n]);
+                    guarded.pos += n;
 
-                    _ = self.tx.send(());
+                    self.inner.notify.notify_waiters();
                     return (Ok(n), buf);
+                }
+
+                if guarded.closed {
+                    return (Ok(0), buf);
                 }
             }
 
-            let mut rx = self.tx.subscribe();
-            match rx.recv().await {
-                Ok(_) => continue,
-                Err(_) => return (Ok(0), buf),
-            }
+            self.inner.notify.notified().await;
         }
+    }
+}
+
+/// Unites a [ReadOwned] and a [WriteOwned] into a single [ReadWriteOwned] type.
+pub struct ReadWritePair<R, W>(R, W)
+where
+    R: ReadOwned,
+    W: WriteOwned;
+
+impl ReadOwned for ReadWritePair<TcpStream, TcpStream> {
+    async fn read<B: IoBufMut>(&self, buf: B) -> BufResult<usize, B> {
+        self.0.read(buf).await
+    }
+}
+
+impl WriteOwned for ReadWritePair<TcpStream, TcpStream> {
+    async fn write<B: IoBuf>(&self, buf: B) -> BufResult<usize, B> {
+        self.1.write(buf).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::RefCell, rc::Rc};
+
+    use super::{ChanReader, ReadOwned};
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_chan_reader() {
+        tokio_uring::start(async move {
+            let (send, cr) = ChanReader::new();
+            let wrote_three = Rc::new(RefCell::new(false));
+
+            tokio_uring::spawn({
+                let wrote_three = wrote_three.clone();
+                async move {
+                    send.send("one").await.unwrap();
+                    send.send("two").await.unwrap();
+                    send.send("three").await.unwrap();
+                    *wrote_three.borrow_mut() = true;
+                    send.send("splitread").await.unwrap();
+                }
+            });
+
+            {
+                let buf = vec![0u8; 256];
+                let (res, buf) = cr.read(buf).await;
+                let n = res.unwrap();
+                assert_eq!(&buf[..n], b"one");
+            }
+
+            assert!(!*wrote_three.borrow());
+
+            {
+                let buf = vec![0u8; 256];
+                let (res, buf) = cr.read(buf).await;
+                let n = res.unwrap();
+                assert_eq!(&buf[..n], b"two");
+            }
+
+            tokio::task::yield_now().await;
+            assert!(*wrote_three.borrow());
+
+            {
+                let buf = vec![0u8; 256];
+                let (res, buf) = cr.read(buf).await;
+                let n = res.unwrap();
+                assert_eq!(&buf[..n], b"three");
+            }
+
+            {
+                let buf = vec![0u8; 5];
+                let (res, buf) = cr.read(buf).await;
+                let n = res.unwrap();
+                assert_eq!(&buf[..n], b"split");
+
+                let buf = vec![0u8; 256];
+                let (res, buf) = cr.read(buf).await;
+                let n = res.unwrap();
+                assert_eq!(&buf[..n], b"read");
+            }
+        })
     }
 }
