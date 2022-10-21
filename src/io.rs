@@ -243,6 +243,13 @@ mod tests {
                 let n = res.unwrap();
                 assert_eq!(&buf[..n], b"read");
             }
+
+            {
+                let buf = vec![0u8; 0];
+                let (res, _) = cr.read(buf).await;
+                let n = res.unwrap();
+                assert_eq!(n, 0, "reached EOF");
+            }
         })
     }
 }
