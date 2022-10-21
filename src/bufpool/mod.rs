@@ -111,7 +111,7 @@ impl BufPool {
 
             let mut free = VecDeque::with_capacity(self.num_buf as usize);
             for i in 0..self.num_buf {
-                free.push_back(i as u32);
+                free.push_back(i);
             }
             let ref_counts = vec![0; self.num_buf as usize];
 

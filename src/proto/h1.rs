@@ -8,6 +8,7 @@ use tracing::debug;
 
 use crate::{
     bufpool::{AggBuf, IoChunkList},
+    io::{ReadOwned, ReadWriteOwned, WriteOwned},
     parse::h1,
     proto::{
         errors::SemanticError,
@@ -22,7 +23,7 @@ const MAX_HEADER_LEN: u32 = 64 * 1024;
 /// Proxy incoming HTTP/1.1 requests to some upstream.
 pub async fn proxy(
     conn_dv: Rc<impl ConnectionDriver>,
-    dos: TcpStream,
+    dos: impl ReadWriteOwned,
     mut dos_buf: AggBuf,
 ) -> eyre::Result<()> {
     loop {
@@ -144,8 +145,8 @@ pub async fn proxy(
 async fn copy(
     mut buf: AggBuf,
     max_len: u64,
-    src: &TcpStream,
-    dst: &TcpStream,
+    src: &impl ReadOwned,
+    dst: &impl WriteOwned,
 ) -> eyre::Result<AggBuf> {
     let mut remain = max_len;
     while remain > 0 {
@@ -170,7 +171,11 @@ async fn copy(
     Ok(buf)
 }
 
-async fn copy_chunked(mut buf: AggBuf, src: &TcpStream, dst: &TcpStream) -> eyre::Result<AggBuf> {
+async fn copy_chunked(
+    mut buf: AggBuf,
+    src: &impl ReadOwned,
+    dst: &impl WriteOwned,
+) -> eyre::Result<AggBuf> {
     const MAX_CHUNK_LENGTH: u32 = 1024 * 1024;
 
     loop {

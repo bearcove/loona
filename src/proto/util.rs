@@ -1,17 +1,17 @@
 use eyre::Context;
 use nom::IResult;
-use tokio_uring::net::TcpStream;
 use tracing::debug;
 
 use crate::{
     bufpool::{AggBuf, AggSlice, IoChunkList},
+    io::{ReadOwned, WriteOwned},
     proto::errors::SemanticError,
 };
 
 /// Returns `None` on EOF, error if partially parsed message.
 pub(crate) async fn read_and_parse<Parser, Output>(
     parser: Parser,
-    stream: &TcpStream,
+    stream: &impl ReadOwned,
     mut buf: AggBuf,
     max_len: u32,
 ) -> eyre::Result<Option<(AggBuf, Output)>>
@@ -70,7 +70,7 @@ where
 
 /// Write the filled part of a buffer to the given [TcpStream], returning a
 /// buffer re-using the remaining space.
-pub(crate) async fn write_all(stream: &TcpStream, buf: AggBuf) -> eyre::Result<AggBuf> {
+pub(crate) async fn write_all(stream: &impl WriteOwned, buf: AggBuf) -> eyre::Result<AggBuf> {
     let slice = buf.read().read_slice();
 
     let mut list = IoChunkList::default();
@@ -91,7 +91,7 @@ pub(crate) async fn write_all(stream: &TcpStream, buf: AggBuf) -> eyre::Result<A
 /// Write the filled part of a buffer to the given [TcpStream], returning a
 /// buffer re-using the remaining space.
 pub(crate) async fn write_all_list(
-    stream: &TcpStream,
+    stream: &impl WriteOwned,
     list: IoChunkList,
 ) -> eyre::Result<IoChunkList> {
     let len = list.len();
