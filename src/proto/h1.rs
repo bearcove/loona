@@ -580,57 +580,63 @@ where
             }
         }
     };
-    // TODO: spawning is almost definitely not the right thing to do here.
-    // I don't think we ever want to spawn anything.
-    let send_body_jh = tokio_uring::spawn(send_body_fut);
 
-    let ups_buf = AggBuf::default();
-    let (ups_buf, res) =
-        match read_and_parse(h1::response, transport.as_ref(), ups_buf, MAX_HEADER_LEN).await {
-            Ok(t) => match t {
-                Some(t) => t,
-                None => {
-                    return Err(eyre::eyre!(
-                        "server went away before sending response headers"
-                    ));
-                }
-            },
-            Err(e) => {
-                // TODO: return error instead?
-                return Err(eyre::eyre!(
-                    "error reading response headers from server: {e:?}"
-                ));
-            }
-        };
-    debug_print_res(&res);
+    let recv_res_fut = {
+        let transport = transport.clone();
+        async move {
+            let ups_buf = AggBuf::default();
+            let (ups_buf, res) =
+                match read_and_parse(h1::response, transport.as_ref(), ups_buf, MAX_HEADER_LEN)
+                    .await
+                {
+                    Ok(t) => match t {
+                        Some(t) => t,
+                        None => {
+                            return Err(eyre::eyre!(
+                                "server went away before sending response headers"
+                            ));
+                        }
+                    },
+                    Err(e) => {
+                        // TODO: return error instead?
+                        return Err(eyre::eyre!(
+                            "error reading response headers from server: {e:?}"
+                        ));
+                    }
+                };
+            debug_print_res(&res);
 
-    // TODO: handle informational responses
+            // TODO: handle informational responses
 
-    let chunked = res.headers.is_chunked_transfer_encoding();
-    // TODO: handle 204/304 separately
-    let content_len = res.headers.content_length().unwrap_or_default();
+            let chunked = res.headers.is_chunked_transfer_encoding();
+            // TODO: handle 204/304 separately
+            let content_len = res.headers.content_length().unwrap_or_default();
 
-    let res_body = H1Body {
-        transport: transport.clone(),
-        buf: ups_buf,
-        kind: if chunked {
-            H1BodyKind::Chunked
-        } else if content_len > 0 {
-            H1BodyKind::ContentLength(content_len)
-        } else {
-            H1BodyKind::Empty
-        },
-        read: 0,
-        eof: false,
+            let res_body = H1Body {
+                transport: transport.clone(),
+                buf: ups_buf,
+                kind: if chunked {
+                    H1BodyKind::Chunked
+                } else if content_len > 0 {
+                    H1BodyKind::ContentLength(content_len)
+                } else {
+                    H1BodyKind::Empty
+                },
+                read: 0,
+                eof: false,
+            };
+
+            let conn_close = res.headers.is_connection_close();
+
+            let (res_body, ret) = driver.on_final_response(res, res_body).await?;
+            // TODO: re-use buffer for pooled connections?
+            drop(res_body);
+
+            Ok((ret, conn_close))
+        }
     };
 
-    let conn_close = res.headers.is_connection_close();
-
-    let (res_body, ret) = driver.on_final_response(res, res_body).await?;
-    // TODO: re-use buffer for pooled connections?
-    drop(res_body);
-
-    let req_body = send_body_jh.await??;
+    let (req_body, (ret, conn_close)) = tokio::try_join!(send_body_fut, recv_res_fut)?;
 
     let transport = if conn_close { None } else { Some(transport) };
     Ok((transport, req_body, ret))
