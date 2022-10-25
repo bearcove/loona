@@ -44,7 +44,6 @@ pub trait ServerDriver {
         respond: Responder<T, ExpectResponseHeaders>,
     ) -> eyre::Result<(B, Responder<T, ResponseDone>)>
     where
-        // FIXME: lift the 'static restriction by not spawning send req body
         T: WriteOwned,
         B: Body;
 }
