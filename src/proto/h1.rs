@@ -512,11 +512,11 @@ where
 pub struct ClientConf {}
 
 pub trait ClientDriver {
-    fn on_informational_response(&self, res: Response) -> eyre::Result<()>;
+    async fn on_informational_response(&self, res: Response) -> eyre::Result<()>;
     async fn on_final_response<B>(&self, res: Response, body: B) -> eyre::Result<B>
     where
         B: Body;
-    fn on_request_body_error(&self, err: eyre::Report);
+    async fn on_request_body_error(&self, err: eyre::Report);
 }
 
 /// Perform an HTTP/1.1 request against an HTTP/1.1 server

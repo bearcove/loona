@@ -9,8 +9,8 @@ use futures::TryStreamExt;
 use hring::{
     bufpool::AggBuf,
     io::{ChanRead, ChanWrite, ReadWritePair},
-    proto::h1::{self, ServerConf},
-    types::{Headers, Response},
+    proto::h1::{self, ClientDriver, ServerConf},
+    types::{Headers, Request, Response},
 };
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
@@ -344,6 +344,79 @@ fn serve_api() {
         drop(tx);
 
         tokio::time::timeout(Duration::from_secs(5), serve_fut).await???;
+
+        Ok(())
+    })
+}
+
+#[test]
+fn request_api() {
+    helpers::run(async move {
+        let (tx, read) = ChanRead::new();
+        let (mut rx, write) = ChanWrite::new();
+        let transport = ReadWritePair(read, write);
+
+        let mut buf = AggBuf::default();
+
+        buf.write().put(b"GET")?;
+        let method = buf.read().read_slice();
+        buf = buf.split();
+
+        buf.write().put(b"/")?;
+        let path = buf.read().read_slice();
+        buf = buf.split();
+
+        _ = buf;
+
+        let req = Request {
+            method,
+            path,
+            version: 1,
+            headers: Headers::default(),
+        };
+
+        struct TestDriver {}
+
+        impl ClientDriver for TestDriver {
+            async fn on_informational_response(&self, res: Response) -> eyre::Result<()> {
+                todo!("got informational response!")
+            }
+
+            async fn on_final_response<B>(&self, res: Response, body: B) -> eyre::Result<B>
+            where
+                B: h1::Body,
+            {
+                todo!("got final response!")
+            }
+
+            async fn on_request_body_error(&self, err: eyre::Report) {
+                panic!("got request body error: {err:?}")
+            }
+        }
+
+        let driver = TestDriver {};
+        let request_fut = tokio_uring::spawn(h1::request(transport, req, (), driver));
+
+        let mut req_buf = BytesMut::new();
+        while let Some(chunk) = rx.recv().await {
+            debug!("Got a chunk:\n{:?}", chunk.hex_dump());
+            req_buf.extend_from_slice(&chunk[..]);
+
+            let mut headers = [EMPTY_HEADER; 16];
+            let mut req = httparse::Request::new(&mut headers[..]);
+            let body_offset = match req.parse(&req_buf[..])? {
+                Status::Complete(off) => off,
+                Status::Partial => {
+                    debug!("partial response, continuing");
+                    continue;
+                }
+            };
+
+            debug!("Got a complete request: {req:?}");
+            debug!("body_offset: {body_offset}");
+        }
+
+        tokio::time::timeout(Duration::from_secs(5), request_fut).await???;
 
         Ok(())
     })

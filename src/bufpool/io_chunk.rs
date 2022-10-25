@@ -58,6 +58,11 @@ pub trait IoChunkable {
     /// Returns the total length of all chunks
     fn len(&self) -> usize;
 
+    /// Returns true if the chunkable is empty
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Returns next chunk that can be written
     fn next_chunk(&self, offset: u32) -> Option<IoChunk>;
 
