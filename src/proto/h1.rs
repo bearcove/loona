@@ -412,13 +412,17 @@ where
     /// Errors out if the response status is not 1xx
     pub async fn write_interim_response(
         self,
+        res: Response,
     ) -> eyre::Result<H1Responder<T, ExpectResponseHeaders>> {
         todo!();
     }
 
     /// Send the final response headers
     /// Errors out if the response status is < 200
-    pub async fn write_final_response(self) -> eyre::Result<H1Responder<T, ExpectResponseBody>> {
+    pub async fn write_final_response(
+        self,
+        res: Response,
+    ) -> eyre::Result<H1Responder<T, ExpectResponseBody>> {
         todo!();
     }
 }

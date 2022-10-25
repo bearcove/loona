@@ -1,11 +1,13 @@
 use std::{cell::RefCell, rc::Rc};
 
+use pretty_hex::PrettyHex;
 use tokio::sync::mpsc;
 use tokio_uring::{
     buf::{IoBuf, IoBufMut},
     net::TcpStream,
     BufResult,
 };
+use tracing::trace;
 
 pub trait ReadOwned {
     async fn read<B: IoBufMut>(&self, buf: B) -> BufResult<usize, B>;
@@ -133,6 +135,7 @@ impl ChanReadSend {
     /// is too small).
     pub async fn send(&self, next_buf: impl Into<Vec<u8>>) -> Result<(), std::io::Error> {
         let next_buf = next_buf.into();
+        trace!("Sending {}", next_buf.hex_dump());
 
         loop {
             {
@@ -140,6 +143,7 @@ impl ChanReadSend {
                 match guarded.state {
                     ChanReadState::Live => {
                         if guarded.pos == guarded.buf.len() {
+                            trace!("Writing + notifying waiters {}", next_buf.hex_dump());
                             guarded.pos = 0;
                             guarded.buf = next_buf;
                             self.inner.notify.notify_waiters();
@@ -173,6 +177,7 @@ impl Drop for ChanReadSend {
 
 impl ReadOwned for ChanRead {
     async fn read<B: IoBufMut>(&self, mut buf: B) -> BufResult<usize, B> {
+        trace!("Reading {} bytes", buf.bytes_total());
         let out =
             unsafe { std::slice::from_raw_parts_mut(buf.stable_mut_ptr(), buf.bytes_total()) };
 
@@ -182,11 +187,20 @@ impl ReadOwned for ChanRead {
                 let remain = guarded.buf.len() - guarded.pos;
 
                 if remain > 0 {
+                    trace!("{remain} bytes remain");
+
                     let n = std::cmp::min(remain, out.len());
+                    trace!("reading {n} bytes");
+
                     out[..n].copy_from_slice(&guarded.buf[guarded.pos..guarded.pos + n]);
                     guarded.pos += n;
 
+                    trace!("notifying waiters and returning {}", out[..n].hex_dump());
                     self.inner.notify.notify_waiters();
+
+                    unsafe {
+                        buf.set_init(n);
+                    }
                     return (Ok(n), buf);
                 }
 
@@ -241,6 +255,7 @@ where
     W: WriteOwned,
 {
     async fn read<B: IoBufMut>(&self, buf: B) -> BufResult<usize, B> {
+        trace!("pair, reading {} bytes", buf.bytes_total());
         self.0.read(buf).await
     }
 }

@@ -22,6 +22,7 @@ eyre = "0.6.8"
 futures = "0.3.24"
 memmap2 = "0.5.7"
 nom = "7.1.1"
+pretty-hex = "0.3.0"
 smallvec = { version = "1.10.0", features = ["const_generics", "const_new", "union", "debugger_visualizer"] }
 thiserror = "1.0.37"
 tokio = { version = "1.21.2", features = ["full"] }

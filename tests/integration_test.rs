@@ -10,9 +10,11 @@ use hring::{
     bufpool::AggBuf,
     io::{ChanRead, ChanWrite, ReadWritePair},
     proto::h1::{self, ServerConf},
+    types::{Headers, Response},
 };
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
+use pretty_hex::PrettyHex;
 use std::{net::SocketAddr, rc::Rc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -268,18 +270,56 @@ fn serve_api() {
             where
                 T: hring::io::WriteOwned,
             {
-                todo!()
+                let mut buf = AggBuf::default();
+
+                buf.write().put(b"Continue")?;
+                let reason = buf.read().read_slice();
+                buf = buf.split();
+
+                let res = res
+                    .write_interim_response(Response {
+                        code: 101,
+                        headers: Headers::default(),
+                        reason,
+                        version: 1,
+                    })
+                    .await?;
+
+                buf.write().put(b"OK")?;
+                let reason = buf.read().read_slice();
+                buf = buf.split();
+
+                let res = res
+                    .write_final_response(Response {
+                        code: 200,
+                        headers: Headers::default(),
+                        reason,
+                        version: 1,
+                    })
+                    .await?;
+
+                let res = res.finish_body(None).await?;
+
+                Ok((req_body, res))
             }
         }
 
-        let (rx, write) = ChanWrite::new();
         let (tx, read) = ChanRead::new();
+        let (mut rx, write) = ChanWrite::new();
         let transport = ReadWritePair(read, write);
         let client_buf = AggBuf::default();
         let driver = TestDriver {};
 
-        let serve_fut = h1::serve(transport, conf, client_buf, driver);
-        tokio::time::timeout(Duration::from_secs(1), serve_fut).await??;
+        let serve_fut = tokio_uring::spawn(h1::serve(transport, conf, client_buf, driver));
+
+        tx.send("GET / HTTP/1.1\r\n\r\n").await?;
+        while let Some(chunk) = rx.recv().await {
+            debug!("Got a chunk: {}", chunk.hex_dump());
+        }
+
+        tokio::time::timeout(Duration::from_secs(5), serve_fut).await???;
+
+        _ = tx;
 
         Ok(())
     })
