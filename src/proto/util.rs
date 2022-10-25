@@ -70,26 +70,6 @@ where
 
 /// Write the filled part of a buffer to the given [TcpStream], returning a
 /// buffer re-using the remaining space.
-pub(crate) async fn write_all(stream: &impl WriteOwned, buf: AggBuf) -> eyre::Result<AggBuf> {
-    let slice = buf.read().read_slice();
-
-    let mut list = IoChunkList::default();
-    list.push(slice);
-    let len = list.len();
-    let list = list.into_vec();
-
-    let (res, _list) = stream.writev(list).await;
-    let n = res?;
-    debug!("wrote {n}/{len}");
-    if n < len {
-        unimplemented!();
-    }
-
-    Ok(buf.split())
-}
-
-/// Write the filled part of a buffer to the given [TcpStream], returning a
-/// buffer re-using the remaining space.
 pub(crate) async fn write_all_list(
     stream: &impl WriteOwned,
     list: IoChunkList,
