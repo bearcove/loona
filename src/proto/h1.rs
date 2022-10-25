@@ -290,20 +290,19 @@ impl Default for ServerConf {
     }
 }
 
-pub struct Server<T>
-where
-    T: ReadWriteOwned,
-{
-    transport: T,
-    settings: Rc<ServerConf>,
-    buf: AggBuf,
-}
-
 pub trait ServerDriver {
-    async fn handle<B>(&self, req: Request, body: B) -> eyre::Result<B>;
+    async fn handle<T, B>(
+        &self,
+        req: Request,
+        req_body: B,
+        res_handle: H1ResponseHandle<T, ExpectResponseHeaders>,
+    ) -> eyre::Result<(B, H1ResponseHandle<T, ResponseDone>)>
+    where
+        T: WriteOwned;
 }
 
 pub async fn serve(
+    // TODO: split read/write halves? so we don't have to handle `Rc` ourselves
     transport: impl ReadWriteOwned,
     conf: Rc<ServerConf>,
     mut client_buf: AggBuf,
@@ -339,7 +338,7 @@ pub async fn serve(
         let connection_close = req.headers.is_connection_close();
         let content_len = req.headers.content_len().unwrap_or_default();
 
-        let mut req_body = H1Body {
+        let req_body = H1Body {
             transport: transport.clone(),
             buf: client_buf,
             kind: if chunked {
@@ -353,10 +352,15 @@ pub async fn serve(
             eof: false,
         };
 
-        driver
-            .handle(req, &mut req_body)
+        let res_handle = H1ResponseHandle::new(transport.clone());
+
+        let (req_body, res_handle) = driver
+            .handle(req, req_body, res_handle)
             .await
             .wrap_err("handling request")?;
+
+        // TODO: handle connection close this way?
+        _ = res_handle;
 
         if !req_body.eof() {
             return Err(eyre::eyre!(
@@ -369,6 +373,41 @@ pub async fn serve(
         if connection_close {
             debug!("connection close requested by downstream");
             return Ok(());
+        }
+    }
+}
+
+pub trait ResponseState {}
+
+pub struct ExpectResponseHeaders;
+impl ResponseState for ExpectResponseHeaders {}
+
+pub struct ExpectResponseBody;
+impl ResponseState for ExpectResponseBody {}
+
+pub struct ExpectResponseTrailers;
+impl ResponseState for ExpectResponseTrailers {}
+
+pub struct ResponseDone;
+impl ResponseState for ResponseDone {}
+
+pub struct H1ResponseHandle<T, S>
+where
+    S: ResponseState,
+    T: WriteOwned,
+{
+    state: S,
+    transport: Rc<T>,
+}
+
+impl<T> H1ResponseHandle<T, ExpectResponseHeaders>
+where
+    T: WriteOwned,
+{
+    fn new(transport: Rc<T>) -> Self {
+        Self {
+            state: ExpectResponseHeaders,
+            transport,
         }
     }
 }
