@@ -40,9 +40,9 @@ pub trait ServerDriver {
     async fn handle<T, B>(
         &self,
         req: Request,
-        req_body: B,
+        req_body: &mut B,
         respond: Responder<T, ExpectResponseHeaders>,
-    ) -> eyre::Result<(B, Responder<T, ResponseDone>)>
+    ) -> eyre::Result<Responder<T, ResponseDone>>
     where
         T: WriteOwned,
         B: Body;
@@ -98,7 +98,7 @@ pub async fn serve(
         let connection_close = req.headers.is_connection_close();
         let content_len = req.headers.content_length().unwrap_or_default();
 
-        let req_body = H1Body {
+        let mut req_body = H1Body {
             transport: transport.clone(),
             buf: Some(client_buf),
             kind: if chunked {
@@ -114,13 +114,13 @@ pub async fn serve(
 
         let res_handle = Responder::new(transport.clone());
 
-        let (mut req_body, res_handle) = driver
-            .handle(req, req_body, res_handle)
+        let resp = driver
+            .handle(req, &mut req_body, res_handle)
             .await
             .wrap_err("handling request")?;
 
         // TODO: if we sent `connection: close` we should close now
-        _ = res_handle;
+        _ = resp;
 
         if !req_body.eof() {
             return Err(eyre::eyre!(

@@ -52,9 +52,9 @@ fn serve_api() {
             async fn handle<T, B>(
                 &self,
                 _req: hring::Request,
-                req_body: B,
+                _req_body: &mut B,
                 res: h1::Responder<T, h1::ExpectResponseHeaders>,
-            ) -> eyre::Result<(B, h1::Responder<T, h1::ResponseDone>)>
+            ) -> eyre::Result<h1::Responder<T, h1::ResponseDone>>
             where
                 T: WriteOwned,
             {
@@ -90,7 +90,7 @@ fn serve_api() {
 
                 let res = res.finish_body(None).await?;
 
-                Ok((req_body, res))
+                Ok(res)
             }
         }
 
@@ -344,9 +344,9 @@ fn proxy_verbose() {
                 async fn handle<T, B>(
                     &self,
                     req: hring::Request,
-                    mut req_body: B,
+                    req_body: &mut B,
                     respond: h1::Responder<T, h1::ExpectResponseHeaders>,
-                ) -> eyre::Result<(B, h1::Responder<T, h1::ResponseDone>)>
+                ) -> eyre::Result<h1::Responder<T, h1::ResponseDone>>
                 where
                     T: WriteOwned,
                     B: Body,
@@ -366,15 +366,14 @@ fn proxy_verbose() {
 
                     let driver = CDriver { respond };
 
-                    let (transport, res) =
-                        h1::request(transport, req, &mut req_body, driver).await?;
+                    let (transport, res) = h1::request(transport, req, req_body, driver).await?;
 
                     if let Some(transport) = transport {
                         let mut pool = self.pool.borrow_mut();
                         pool.push(transport);
                     }
 
-                    Ok((req_body, res))
+                    Ok(res)
                 }
             }
 
