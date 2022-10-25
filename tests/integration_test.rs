@@ -7,12 +7,8 @@ mod helpers;
 use bytes::BytesMut;
 use futures_util::FutureExt;
 use hring::{
-    bufpool::{AggBuf, IoChunkList},
-    io::{ChanRead, ChanWrite, ReadWritePair, WriteOwned},
-    proto::h1::{
-        self, Body, ClientDriver, ExpectResponseHeaders, H1Responder, ResponseDone, ServerConf,
-    },
-    types::{Headers, Request, Response},
+    h1, AggBuf, Body, BodyChunk, ChanRead, ChanWrite, Headers, IoChunk, IoChunkList, ReadWritePair,
+    Request, Response, WriteOwned,
 };
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
@@ -47,7 +43,7 @@ use tracing::debug;
 #[test]
 fn serve_api() {
     helpers::run(async move {
-        let conf = ServerConf::default();
+        let conf = h1::ServerConf::default();
         let conf = Rc::new(conf);
 
         struct TestDriver {}
@@ -55,10 +51,10 @@ fn serve_api() {
         impl h1::ServerDriver for TestDriver {
             async fn handle<T, B>(
                 &self,
-                _req: hring::types::Request,
+                _req: hring::Request,
                 req_body: B,
-                res: h1::H1Responder<T, h1::ExpectResponseHeaders>,
-            ) -> eyre::Result<(B, h1::H1Responder<T, h1::ResponseDone>)>
+                res: h1::Responder<T, h1::ExpectResponseHeaders>,
+            ) -> eyre::Result<(B, h1::Responder<T, h1::ResponseDone>)>
             where
                 T: WriteOwned,
             {
@@ -172,7 +168,7 @@ fn request_api() {
 
         struct TestDriver {}
 
-        impl ClientDriver for TestDriver {
+        impl h1::ClientDriver for TestDriver {
             type Return = ();
 
             async fn on_informational_response(&self, _res: Response) -> eyre::Result<()> {
@@ -185,7 +181,7 @@ fn request_api() {
                 mut body: B,
             ) -> eyre::Result<(B, Self::Return)>
             where
-                B: h1::Body,
+                B: Body,
             {
                 debug!(
                     "got final response! content length = {:?}, is chunked = {}",
@@ -197,13 +193,13 @@ fn request_api() {
                     let chunk;
                     (body, chunk) = body.next_chunk().await?;
                     match chunk {
-                        h1::BodyChunk::Buf(b) => {
+                        BodyChunk::Buf(b) => {
                             debug!("got a chunk: {:?}", b.to_vec().hex_dump());
                         }
-                        h1::BodyChunk::AggSlice(s) => {
+                        BodyChunk::AggSlice(s) => {
                             debug!("got a chunk: {:?}", s.to_vec().hex_dump());
                         }
-                        h1::BodyChunk::Eof => {
+                        BodyChunk::Eof => {
                             break;
                         }
                     }
@@ -332,7 +328,7 @@ fn proxy_verbose() {
         let ln_addr = ln.local_addr()?;
 
         let proxy_fut = async move {
-            let conf = ServerConf::default();
+            let conf = h1::ServerConf::default();
             let conf = Rc::new(conf);
 
             type TransportPool = Rc<RefCell<Vec<Rc<tokio_uring::net::TcpStream>>>>;
@@ -345,10 +341,10 @@ fn proxy_verbose() {
             impl h1::ServerDriver for SDriver {
                 async fn handle<T, B>(
                     &self,
-                    req: hring::types::Request,
+                    req: hring::Request,
                     req_body: B,
-                    respond: h1::H1Responder<T, h1::ExpectResponseHeaders>,
-                ) -> eyre::Result<(B, h1::H1Responder<T, h1::ResponseDone>)>
+                    respond: h1::Responder<T, h1::ExpectResponseHeaders>,
+                ) -> eyre::Result<(B, h1::Responder<T, h1::ResponseDone>)>
                 where
                     T: WriteOwned,
                     B: Body,
@@ -384,14 +380,14 @@ fn proxy_verbose() {
             where
                 T: WriteOwned,
             {
-                respond: H1Responder<T, ExpectResponseHeaders>,
+                respond: h1::Responder<T, h1::ExpectResponseHeaders>,
             }
 
             impl<T> h1::ClientDriver for CDriver<T>
             where
                 T: WriteOwned,
             {
-                type Return = H1Responder<T, ResponseDone>;
+                type Return = h1::Responder<T, h1::ResponseDone>;
 
                 async fn on_informational_response(&self, _res: Response) -> eyre::Result<()> {
                     todo!()
@@ -403,7 +399,7 @@ fn proxy_verbose() {
                     mut body: B,
                 ) -> eyre::Result<(B, Self::Return)>
                 where
-                    B: h1::Body,
+                    B: Body,
                 {
                     let respond = self.respond;
                     let mut respond = respond.write_final_response(res).await?;
@@ -413,24 +409,24 @@ fn proxy_verbose() {
                         (body, chunk) = body.next_chunk().await?;
 
                         match chunk {
-                            h1::BodyChunk::Buf(buf) => {
+                            BodyChunk::Buf(buf) => {
                                 respond = respond.write_body_chunk(buf).await?;
                             }
-                            h1::BodyChunk::AggSlice(slice) => {
+                            BodyChunk::AggSlice(slice) => {
                                 let mut list = IoChunkList::default();
                                 list.push(slice);
                                 let chunks = list.into_vec();
                                 for chunk in chunks {
                                     match chunk {
-                                        hring::bufpool::IoChunk::Static(_) => unreachable!(),
-                                        hring::bufpool::IoChunk::Vec(_) => unreachable!(),
-                                        hring::bufpool::IoChunk::Buf(buf) => {
+                                        IoChunk::Static(_) => unreachable!(),
+                                        IoChunk::Vec(_) => unreachable!(),
+                                        IoChunk::Buf(buf) => {
                                             respond = respond.write_body_chunk(buf).await?;
                                         }
                                     }
                                 }
                             }
-                            h1::BodyChunk::Eof => {
+                            BodyChunk::Eof => {
                                 // should we do something here in case of
                                 // content-length mismatches or something?
                                 break;
