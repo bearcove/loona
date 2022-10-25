@@ -37,15 +37,14 @@ impl Default for ServerConf {
 }
 
 pub trait ServerDriver {
-    async fn handle<T, B>(
+    async fn handle<T>(
         &self,
         req: Request,
-        req_body: &mut B,
+        req_body: &mut impl Body,
         respond: Responder<T, ExpectResponseHeaders>,
     ) -> eyre::Result<Responder<T, ResponseDone>>
     where
-        T: WriteOwned,
-        B: Body;
+        T: WriteOwned;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

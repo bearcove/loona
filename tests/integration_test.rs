@@ -49,10 +49,10 @@ fn serve_api() {
         struct TestDriver {}
 
         impl h1::ServerDriver for TestDriver {
-            async fn handle<T, B>(
+            async fn handle<T>(
                 &self,
                 _req: hring::Request,
-                _req_body: &mut B,
+                _req_body: &mut impl Body,
                 res: h1::Responder<T, h1::ExpectResponseHeaders>,
             ) -> eyre::Result<h1::Responder<T, h1::ResponseDone>>
             where
@@ -341,15 +341,14 @@ fn proxy_verbose() {
             }
 
             impl h1::ServerDriver for SDriver {
-                async fn handle<T, B>(
+                async fn handle<T>(
                     &self,
                     req: hring::Request,
-                    req_body: &mut B,
+                    req_body: &mut impl Body,
                     respond: h1::Responder<T, h1::ExpectResponseHeaders>,
                 ) -> eyre::Result<h1::Responder<T, h1::ResponseDone>>
                 where
                     T: WriteOwned,
-                    B: Body,
                 {
                     let transport = {
                         let mut pool = self.pool.borrow_mut();
