@@ -18,7 +18,14 @@ use httparse::{Status, EMPTY_HEADER};
 use hyper::service::make_service_fn;
 use pretty_assertions::assert_eq;
 use pretty_hex::PrettyHex;
-use std::{cell::RefCell, convert::Infallible, net::SocketAddr, rc::Rc, time::Duration};
+use std::{
+    cell::RefCell,
+    convert::Infallible,
+    net::SocketAddr,
+    os::fd::{AsRawFd, FromRawFd},
+    rc::Rc,
+    time::Duration,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -526,6 +533,7 @@ fn proxy_verbose() {
         };
 
         let ln = tokio_uring::net::TcpListener::bind("[::]:0".parse()?)?;
+        let ln_fd = ln.as_raw_fd();
         let ln_addr = ln.local_addr()?;
 
         let proxy_fut = async move {
@@ -666,6 +674,13 @@ fn proxy_verbose() {
                     },
                     _ = &mut rx => {
                         debug!("Shutting down proxy");
+
+                        tokio_uring::spawn(async move {
+                            debug!("Shutting down listener to avoid tokio_uring hanging on shutdown");
+                            unsafe { std::net::TcpStream::from_raw_fd(ln_fd) }.shutdown(std::net::Shutdown::Both).unwrap();
+                        });
+                        std::mem::forget(ln);
+
                         break;
                     }
                 }
