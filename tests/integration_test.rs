@@ -1,15 +1,23 @@
+#![allow(incomplete_features)]
 #![feature(type_alias_impl_trait)]
+#![feature(async_fn_in_trait)]
 
 mod helpers;
 
 use bytes::BytesMut;
 use futures::TryStreamExt;
+use hring::{
+    bufpool::AggBuf,
+    io::{ChanRead, ChanWrite, ReadWritePair},
+    proto::h1::{self, ServerConf},
+};
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
-use std::{net::SocketAddr, time::Duration};
+use std::{net::SocketAddr, rc::Rc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
+    sync::mpsc,
 };
 use tracing::debug;
 
@@ -238,6 +246,41 @@ fn read_streaming_body() {
         let client_fut = client(server_addr);
 
         tokio::try_join!(server_fut, client_fut)?;
+        Ok(())
+    })
+}
+
+#[test]
+fn serve_api() {
+    helpers::run(async move {
+        let conf = ServerConf::default();
+        let conf = Rc::new(conf);
+
+        struct TestDriver {}
+
+        impl h1::ServerDriver for TestDriver {
+            async fn handle<T, B>(
+                &self,
+                req: hring::types::Request,
+                req_body: B,
+                res: h1::H1Responder<T, h1::ExpectResponseHeaders>,
+            ) -> eyre::Result<(B, h1::H1Responder<T, h1::ResponseDone>)>
+            where
+                T: hring::io::WriteOwned,
+            {
+                todo!()
+            }
+        }
+
+        let (rx, write) = ChanWrite::new();
+        let (tx, read) = ChanRead::new();
+        let transport = ReadWritePair(read, write);
+        let client_buf = AggBuf::default();
+        let driver = TestDriver {};
+
+        let serve_fut = h1::serve(transport, conf, client_buf, driver);
+        tokio::time::timeout(Duration::from_secs(1), serve_fut).await??;
+
         Ok(())
     })
 }

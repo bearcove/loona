@@ -1,5 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
+use tokio::sync::mpsc;
 use tokio_uring::{
     buf::{IoBuf, IoBufMut},
     net::TcpStream,
@@ -70,26 +71,26 @@ impl WriteOwned for TcpStream {
 
 /// Allows sending `Vec<u8>` chunks, which can be read through its [ReadOwned]
 /// implementation.
-pub struct ChanReader {
-    inner: Rc<ChanReaderInner>,
+pub struct ChanRead {
+    inner: Rc<ChanReadInner>,
 }
 
-pub struct ChanReaderSend {
-    inner: Rc<ChanReaderInner>,
+pub struct ChanReadSend {
+    inner: Rc<ChanReadInner>,
 }
 
-struct ChanReaderInner {
+struct ChanReadInner {
     notify: tokio::sync::Notify,
-    guarded: RefCell<ChanReaderGuarded>,
+    guarded: RefCell<ChanReadGuarded>,
 }
 
-struct ChanReaderGuarded {
-    state: ChanReaderState,
+struct ChanReadGuarded {
+    state: ChanReadState,
     pos: usize,
     buf: Vec<u8>,
 }
 
-enum ChanReaderState {
+enum ChanReadState {
     // Data may still come in
     Live,
 
@@ -100,18 +101,18 @@ enum ChanReaderState {
     Reset,
 }
 
-impl ChanReader {
-    pub fn new() -> (ChanReaderSend, Self) {
-        let inner = Rc::new(ChanReaderInner {
+impl ChanRead {
+    pub fn new() -> (ChanReadSend, Self) {
+        let inner = Rc::new(ChanReadInner {
             notify: Default::default(),
-            guarded: RefCell::new(ChanReaderGuarded {
-                state: ChanReaderState::Live,
+            guarded: RefCell::new(ChanReadGuarded {
+                state: ChanReadState::Live,
                 pos: 0,
                 buf: Vec::new(),
             }),
         });
         (
-            ChanReaderSend {
+            ChanReadSend {
                 inner: inner.clone(),
             },
             Self { inner },
@@ -119,11 +120,11 @@ impl ChanReader {
     }
 }
 
-impl ChanReaderSend {
+impl ChanReadSend {
     /// Sever this connection abnormally - read will eventually return [std::io::ErrorKind::ConnectionReset]
     pub fn reset(self) {
         let mut guarded = self.inner.guarded.borrow_mut();
-        guarded.state = ChanReaderState::Reset;
+        guarded.state = ChanReadState::Reset;
         // let it drop, which will notify waiters
     }
 
@@ -137,7 +138,7 @@ impl ChanReaderSend {
             {
                 let mut guarded = self.inner.guarded.borrow_mut();
                 match guarded.state {
-                    ChanReaderState::Live => {
+                    ChanReadState::Live => {
                         if guarded.pos == guarded.buf.len() {
                             guarded.pos = 0;
                             guarded.buf = next_buf;
@@ -149,10 +150,10 @@ impl ChanReaderSend {
                     }
 
                     // can't send after dropping
-                    ChanReaderState::Eof => unreachable!(),
+                    ChanReadState::Eof => unreachable!(),
 
                     // can't send after calling abort
-                    ChanReaderState::Reset => unreachable!(),
+                    ChanReadState::Reset => unreachable!(),
                 }
             }
             self.inner.notify.notified().await
@@ -160,17 +161,17 @@ impl ChanReaderSend {
     }
 }
 
-impl Drop for ChanReaderSend {
+impl Drop for ChanReadSend {
     fn drop(&mut self) {
         let mut guarded = self.inner.guarded.borrow_mut();
-        if let ChanReaderState::Live = guarded.state {
-            guarded.state = ChanReaderState::Eof;
+        if let ChanReadState::Live = guarded.state {
+            guarded.state = ChanReadState::Eof;
         }
         self.inner.notify.notify_waiters();
     }
 }
 
-impl ReadOwned for ChanReader {
+impl ReadOwned for ChanRead {
     async fn read<B: IoBufMut>(&self, mut buf: B) -> BufResult<usize, B> {
         let out =
             unsafe { std::slice::from_raw_parts_mut(buf.stable_mut_ptr(), buf.bytes_total()) };
@@ -190,13 +191,13 @@ impl ReadOwned for ChanReader {
                 }
 
                 match guarded.state {
-                    ChanReaderState::Live => {
+                    ChanReadState::Live => {
                         // muffin
                     }
-                    ChanReaderState::Eof => {
+                    ChanReadState::Eof => {
                         return (Ok(0), buf);
                     }
-                    ChanReaderState::Reset => {
+                    ChanReadState::Reset => {
                         return (Err(std::io::ErrorKind::ConnectionReset.into()), buf);
                     }
                 }
@@ -207,19 +208,48 @@ impl ReadOwned for ChanReader {
     }
 }
 
+pub struct ChanWrite {
+    tx: mpsc::Sender<Vec<u8>>,
+}
+
+impl ChanWrite {
+    pub fn new() -> (mpsc::Receiver<Vec<u8>>, Self) {
+        let (tx, rx) = mpsc::channel(1);
+        (rx, Self { tx })
+    }
+}
+
+impl WriteOwned for ChanWrite {
+    async fn write<B: IoBuf>(&self, buf: B) -> BufResult<usize, B> {
+        let slice = unsafe { std::slice::from_raw_parts(buf.stable_ptr(), buf.bytes_init()) };
+        match self.tx.send(slice.to_vec()).await {
+            Ok(()) => (Ok(buf.bytes_init()), buf),
+            Err(_) => (Err(std::io::ErrorKind::BrokenPipe.into()), buf),
+        }
+    }
+}
+
 /// Unites a [ReadOwned] and a [WriteOwned] into a single [ReadWriteOwned] type.
-pub struct ReadWritePair<R, W>(R, W)
+pub struct ReadWritePair<R, W>(pub R, pub W)
 where
     R: ReadOwned,
     W: WriteOwned;
 
-impl ReadOwned for ReadWritePair<TcpStream, TcpStream> {
+impl<R, W> ReadOwned for ReadWritePair<R, W>
+where
+    R: ReadOwned,
+    W: WriteOwned,
+{
     async fn read<B: IoBufMut>(&self, buf: B) -> BufResult<usize, B> {
         self.0.read(buf).await
     }
 }
 
-impl WriteOwned for ReadWritePair<TcpStream, TcpStream> {
+impl<R, W> WriteOwned for ReadWritePair<R, W>
+where
+    R: ReadOwned,
+    W: WriteOwned,
+{
     async fn write<B: IoBuf>(&self, buf: B) -> BufResult<usize, B> {
         self.1.write(buf).await
     }
@@ -229,13 +259,13 @@ impl WriteOwned for ReadWritePair<TcpStream, TcpStream> {
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
-    use super::{ChanReader, ReadOwned};
+    use super::{ChanRead, ReadOwned};
     use pretty_assertions::assert_eq;
 
     #[test]
     fn test_chan_reader() {
         tokio_uring::start(async move {
-            let (send, cr) = ChanReader::new();
+            let (send, cr) = ChanRead::new();
             let wrote_three = Rc::new(RefCell::new(false));
 
             tokio_uring::spawn({
@@ -294,7 +324,7 @@ mod tests {
                 assert_eq!(n, 0, "reached EOF");
             }
 
-            let (send, cr) = ChanReader::new();
+            let (send, cr) = ChanRead::new();
 
             tokio_uring::spawn({
                 async move {
