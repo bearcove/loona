@@ -262,7 +262,7 @@ fn serve_api() {
         impl h1::ServerDriver for TestDriver {
             async fn handle<T, B>(
                 &self,
-                req: hring::types::Request,
+                _req: hring::types::Request,
                 req_body: B,
                 res: h1::H1Responder<T, h1::ExpectResponseHeaders>,
             ) -> eyre::Result<(B, h1::H1Responder<T, h1::ResponseDone>)>
@@ -287,6 +287,8 @@ fn serve_api() {
                 buf.write().put(b"OK")?;
                 let reason = buf.read().read_slice();
                 buf = buf.split();
+
+                _ = buf;
 
                 let res = res
                     .write_final_response(Response {
@@ -378,11 +380,11 @@ fn request_api() {
         struct TestDriver {}
 
         impl ClientDriver for TestDriver {
-            async fn on_informational_response(&self, res: Response) -> eyre::Result<()> {
+            async fn on_informational_response(&self, _res: Response) -> eyre::Result<()> {
                 todo!("got informational response!")
             }
 
-            async fn on_final_response<B>(&self, res: Response, body: B) -> eyre::Result<B>
+            async fn on_final_response<B>(&self, _res: Response, _body: B) -> eyre::Result<B>
             where
                 B: h1::Body,
             {
@@ -407,14 +409,25 @@ fn request_api() {
             let body_offset = match req.parse(&req_buf[..])? {
                 Status::Complete(off) => off,
                 Status::Partial => {
-                    debug!("partial response, continuing");
+                    debug!("partial request, continuing");
                     continue;
                 }
             };
 
             debug!("Got a complete request: {req:?}");
             debug!("body_offset: {body_offset}");
+
+            break;
         }
+
+        let body = "Hi there";
+        let body_len = body.len();
+        tx.send(format!(
+            "HTTP/1.1 200 OK\r\ncontent-length: {body_len}\r\n\r\n"
+        ))
+        .await?;
+        tx.send(body).await?;
+        drop(tx);
 
         tokio::time::timeout(Duration::from_secs(5), request_fut).await???;
 

@@ -306,13 +306,22 @@ pub trait ServerDriver {
         T: WriteOwned;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServeOutcome {
+    ClientRequestedConnectionClose,
+    ServerRequestedConnectionClose,
+    ClientClosedConnectionBetweenRequests,
+    // TODO: return buffer there so we can see what they did write?
+    ClientDidntSpeakHttp11,
+}
+
 pub async fn serve(
     // TODO: split read/write halves? so we don't have to handle `Rc` ourselves
     transport: impl ReadWriteOwned,
     conf: Rc<ServerConf>,
     mut client_buf: AggBuf,
     driver: impl ServerDriver,
-) -> eyre::Result<()> {
+) -> eyre::Result<ServeOutcome> {
     let transport = Rc::new(transport);
 
     loop {
@@ -329,7 +338,7 @@ pub async fn serve(
                 Some(t) => t,
                 None => {
                     debug!("client went away before sending request headers");
-                    return Ok(());
+                    return Ok(ServeOutcome::ClientClosedConnectionBetweenRequests);
                 }
             },
             Err(e) => {
@@ -339,7 +348,7 @@ pub async fn serve(
                 }
 
                 debug!(?e, "error reading request header from downstream");
-                return Ok(());
+                return Ok(ServeOutcome::ClientDidntSpeakHttp11);
             }
         };
         debug_print_req(&req);
@@ -369,7 +378,7 @@ pub async fn serve(
             .await
             .wrap_err("handling request")?;
 
-        // TODO: handle connection close this way?
+        // TODO: if we sent `connection: close` we should close now
         _ = res_handle;
 
         if !req_body.eof() {
@@ -381,8 +390,8 @@ pub async fn serve(
         client_buf = req_body.buf;
 
         if connection_close {
-            debug!("connection close requested by downstream");
-            return Ok(());
+            debug!("client requested connection close");
+            return Ok(ServeOutcome::ClientRequestedConnectionClose);
         }
     }
 }
@@ -403,6 +412,7 @@ where
     S: ResponseState,
     T: WriteOwned,
 {
+    #[allow(dead_code)]
     state: S,
     transport: Rc<T>,
 }
@@ -475,6 +485,7 @@ where
         self,
         chunk: Buf,
     ) -> eyre::Result<H1Responder<T, ExpectResponseBody>> {
+        _ = chunk;
         todo!();
     }
 

@@ -135,7 +135,7 @@ impl ChanReadSend {
     /// is too small).
     pub async fn send(&self, next_buf: impl Into<Vec<u8>>) -> Result<(), std::io::Error> {
         let next_buf = next_buf.into();
-        trace!("Sending {}", next_buf.hex_dump());
+        trace!("Sending {:?}", next_buf.hex_dump());
 
         loop {
             {
@@ -143,7 +143,7 @@ impl ChanReadSend {
                 match guarded.state {
                     ChanReadState::Live => {
                         if guarded.pos == guarded.buf.len() {
-                            trace!("Writing + notifying waiters {}", next_buf.hex_dump());
+                            trace!("Writing + notifying waiters {:?}", next_buf.hex_dump());
                             guarded.pos = 0;
                             guarded.buf = next_buf;
                             self.inner.notify.notify_waiters();
