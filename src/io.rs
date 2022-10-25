@@ -189,8 +189,16 @@ impl ReadOwned for ChanReader {
                     return (Ok(n), buf);
                 }
 
-                if guarded.closed {
-                    return (Ok(0), buf);
+                match guarded.state {
+                    ChanReaderState::Live => {
+                        // muffin
+                    }
+                    ChanReaderState::Eof => {
+                        return (Ok(0), buf);
+                    }
+                    ChanReaderState::Reset => {
+                        return (Err(std::io::ErrorKind::ConnectionReset.into()), buf);
+                    }
                 }
             }
 
@@ -284,6 +292,44 @@ mod tests {
                 let (res, _) = cr.read(buf).await;
                 let n = res.unwrap();
                 assert_eq!(n, 0, "reached EOF");
+            }
+
+            let (send, cr) = ChanReader::new();
+
+            tokio_uring::spawn({
+                async move {
+                    send.send("two-part").await.unwrap();
+                    send.reset();
+                }
+            });
+
+            for _ in 0..5 {
+                tokio::task::yield_now().await;
+            }
+
+            {
+                let buf = vec![0u8; 4];
+                let (res, buf) = cr.read(buf).await;
+                let n = res.unwrap();
+                assert_eq!(&buf[..n], b"two-");
+            }
+
+            {
+                let buf = vec![0u8; 4];
+                let (res, buf) = cr.read(buf).await;
+                let n = res.unwrap();
+                assert_eq!(&buf[..n], b"part");
+            }
+
+            {
+                let buf = vec![0u8; 0];
+                let (res, _) = cr.read(buf).await;
+                let err = res.unwrap_err();
+                assert_eq!(
+                    err.kind(),
+                    std::io::ErrorKind::ConnectionReset,
+                    "reached EOF"
+                );
             }
         })
     }
