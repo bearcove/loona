@@ -7,7 +7,7 @@ mod helpers;
 use bytes::BytesMut;
 use futures::{FutureExt, TryStreamExt};
 use hring::{
-    bufpool::AggBuf,
+    bufpool::{AggBuf, IoChunkList},
     io::{ChanRead, ChanWrite, ReadWritePair, WriteOwned},
     proto::h1::{
         self, Body, ClientDriver, ExpectResponseHeaders, H1Responder, ResponseDone, ServerConf,
@@ -490,7 +490,7 @@ fn proxy_verbose() {
                     Status::Complete(off) => off,
                     Status::Partial => continue 'read_response,
                 };
-                debug!("Got a complete response");
+                debug!("Client got a complete response");
                 assert_eq!(res.code, Some(status));
 
                 _ = buf.split();
@@ -534,7 +534,7 @@ fn proxy_verbose() {
                     &self,
                     req: hring::types::Request,
                     req_body: B,
-                    res: h1::H1Responder<T, h1::ExpectResponseHeaders>,
+                    respond: h1::H1Responder<T, h1::ExpectResponseHeaders>,
                 ) -> eyre::Result<(B, h1::H1Responder<T, h1::ResponseDone>)>
                 where
                     T: WriteOwned + 'static,
@@ -542,7 +542,7 @@ fn proxy_verbose() {
                 {
                     let transport =
                         tokio_uring::net::TcpStream::connect(self.upstream_addr).await?;
-                    let driver = CDriver { res };
+                    let driver = CDriver { respond };
 
                     let (req_body, res) = h1::request(transport, req, req_body, driver).await?;
                     Ok((req_body, res))
@@ -553,7 +553,7 @@ fn proxy_verbose() {
             where
                 T: WriteOwned,
             {
-                res: H1Responder<T, ExpectResponseHeaders>,
+                respond: H1Responder<T, ExpectResponseHeaders>,
             }
 
             impl<T> h1::ClientDriver for CDriver<T>
@@ -562,19 +562,54 @@ fn proxy_verbose() {
             {
                 type Return = H1Responder<T, ResponseDone>;
 
-                async fn on_informational_response(&self, res: Response) -> eyre::Result<()> {
+                async fn on_informational_response(&self, _res: Response) -> eyre::Result<()> {
                     todo!()
                 }
 
                 async fn on_final_response<B>(
                     self,
                     res: Response,
-                    body: B,
+                    mut body: B,
                 ) -> eyre::Result<(B, Self::Return)>
                 where
                     B: h1::Body,
                 {
-                    todo!()
+                    let respond = self.respond;
+                    let mut respond = respond.write_final_response(res).await?;
+
+                    loop {
+                        let chunk;
+                        (body, chunk) = body.next_chunk().await?;
+
+                        match chunk {
+                            h1::BodyChunk::Buf(buf) => {
+                                respond = respond.write_body_chunk(buf).await?;
+                            }
+                            h1::BodyChunk::AggSlice(slice) => {
+                                let mut list = IoChunkList::default();
+                                list.push(slice);
+                                let chunks = list.into_vec();
+                                for chunk in chunks {
+                                    match chunk {
+                                        hring::bufpool::IoChunk::Static(_) => unreachable!(),
+                                        hring::bufpool::IoChunk::Vec(_) => unreachable!(),
+                                        hring::bufpool::IoChunk::Buf(buf) => {
+                                            respond = respond.write_body_chunk(buf).await?;
+                                        }
+                                    }
+                                }
+                            }
+                            h1::BodyChunk::Eof => {
+                                // should we do something here in case of
+                                // content-length mismatches or something?
+                                break;
+                            }
+                        }
+                    }
+
+                    let respond = respond.finish_body(None).await?;
+
+                    Ok((body, respond))
                 }
             }
 

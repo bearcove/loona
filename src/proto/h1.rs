@@ -300,7 +300,7 @@ pub trait ServerDriver {
         &self,
         req: Request,
         req_body: B,
-        res: H1Responder<T, ExpectResponseHeaders>,
+        respond: H1Responder<T, ExpectResponseHeaders>,
     ) -> eyre::Result<(B, H1Responder<T, ResponseDone>)>
     where
         // FIXME: lift the 'static restriction by not spawning send req body
