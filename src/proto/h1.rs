@@ -303,7 +303,9 @@ pub trait ServerDriver {
         res: H1Responder<T, ExpectResponseHeaders>,
     ) -> eyre::Result<(B, H1Responder<T, ResponseDone>)>
     where
-        T: WriteOwned;
+        // FIXME: lift the 'static restriction by not spawning send req body
+        T: WriteOwned + 'static,
+        B: Body + 'static;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -317,7 +319,8 @@ pub enum ServeOutcome {
 
 pub async fn serve(
     // TODO: split read/write halves? so we don't have to handle `Rc` ourselves
-    transport: impl ReadWriteOwned,
+    // TODO: life 'static requirement
+    transport: impl ReadWriteOwned + 'static,
     conf: Rc<ServerConf>,
     mut client_buf: AggBuf,
     driver: impl ServerDriver,
@@ -523,22 +526,27 @@ where
 pub struct ClientConf {}
 
 pub trait ClientDriver {
+    type Return;
+
     async fn on_informational_response(&self, res: Response) -> eyre::Result<()>;
-    async fn on_final_response<B>(&self, res: Response, body: B) -> eyre::Result<B>
+    async fn on_final_response<B>(self, res: Response, body: B) -> eyre::Result<(B, Self::Return)>
     where
         B: Body;
-    async fn on_request_body_error(&self, err: eyre::Report);
+    // async fn on_request_body_error(&self, err: eyre::Report);
 }
 
 /// Perform an HTTP/1.1 request against an HTTP/1.1 server
-pub async fn request(
+pub async fn request<B, D>(
     transport: impl ReadWriteOwned + 'static,
     req: Request,
-    body: impl Body + 'static,
-    driver: impl ClientDriver + 'static,
-) -> eyre::Result<()> {
+    body: B,
+    driver: D,
+) -> eyre::Result<(B, D::Return)>
+where
+    B: Body + 'static,
+    D: ClientDriver + 'static,
+{
     let transport = Rc::new(transport);
-    let driver = Rc::new(driver);
 
     // TODO: set content-length if body isn't empty / missing
     let mode = if body.content_len().is_none() {
@@ -557,15 +565,20 @@ pub async fn request(
 
     let send_body_fut = {
         let transport = transport.clone();
-        let driver = driver.clone();
         async move {
-            if let Err(err) = write_h1_body(transport, body, mode).await {
-                driver.on_request_body_error(err);
+            match write_h1_body(transport, body, mode).await {
+                Err(err) => {
+                    // TODO: find way to report this error to the driver without
+                    // spawning, without ref-counting the driver, etc.
+                    panic!("error writing request body: {err:?}");
+                }
+                Ok(body) => Ok::<_, eyre::Report>(body),
             }
         }
     };
-    // TODO: is spawning the right thing to do here? shouldn't we try_join instead?
-    tokio_uring::spawn(send_body_fut);
+    // TODO: spawning is almost definitely not the right thing to do here.
+    // I don't think we ever want to spawn anything.
+    let send_body_jh = tokio_uring::spawn(send_body_fut);
 
     let ups_buf = AggBuf::default();
     let (ups_buf, res) =
@@ -573,14 +586,16 @@ pub async fn request(
             Ok(t) => match t {
                 Some(t) => t,
                 None => {
-                    // TODO: reply with 502 or something
-                    debug!("server went away before sending response headers");
-                    return Ok(());
+                    return Err(eyre::eyre!(
+                        "server went away before sending response headers"
+                    ));
                 }
             },
             Err(e) => {
-                debug!(?e, "error reading request header from downstream");
-                return Ok(());
+                // TODO: return error instead?
+                return Err(eyre::eyre!(
+                    "error reading response headers from server: {e:?}"
+                ));
             }
         };
     debug_print_res(&res);
@@ -605,11 +620,13 @@ pub async fn request(
         eof: false,
     };
 
-    let res_body = driver.on_final_response(res, res_body).await?;
+    let (res_body, ret) = driver.on_final_response(res, res_body).await?;
     // TODO: re-use buffer for pooled connections?
     drop(res_body);
 
-    Ok(())
+    let req_body = send_body_jh.await??;
+
+    Ok((req_body, ret))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -618,11 +635,14 @@ enum BodyWriteMode {
     ContentLength,
 }
 
-async fn write_h1_body(
+async fn write_h1_body<B>(
     transport: Rc<impl WriteOwned>,
-    mut body: impl Body,
+    mut body: B,
     mode: BodyWriteMode,
-) -> eyre::Result<()> {
+) -> eyre::Result<B>
+where
+    B: Body,
+{
     loop {
         let chunk;
         (body, chunk) = body.next_chunk().await?;
@@ -640,7 +660,7 @@ async fn write_h1_body(
         }
     }
 
-    Ok(())
+    Ok(body)
 }
 
 async fn write_h1_body_chunk(

@@ -8,8 +8,10 @@ use bytes::BytesMut;
 use futures::TryStreamExt;
 use hring::{
     bufpool::AggBuf,
-    io::{ChanRead, ChanWrite, ReadWritePair},
-    proto::h1::{self, ClientDriver, ServerConf},
+    io::{ChanRead, ChanWrite, ReadWritePair, WriteOwned},
+    proto::h1::{
+        self, Body, ClientDriver, ExpectResponseHeaders, H1Responder, ResponseDone, ServerConf,
+    },
     types::{Headers, Request, Response},
 };
 use httparse::{Status, EMPTY_HEADER};
@@ -267,7 +269,7 @@ fn serve_api() {
                 res: h1::H1Responder<T, h1::ExpectResponseHeaders>,
             ) -> eyre::Result<(B, h1::H1Responder<T, h1::ResponseDone>)>
             where
-                T: hring::io::WriteOwned,
+                T: WriteOwned,
             {
                 let mut buf = AggBuf::default();
 
@@ -380,11 +382,17 @@ fn request_api() {
         struct TestDriver {}
 
         impl ClientDriver for TestDriver {
+            type Return = ();
+
             async fn on_informational_response(&self, _res: Response) -> eyre::Result<()> {
                 todo!("got informational response!")
             }
 
-            async fn on_final_response<B>(&self, res: Response, mut body: B) -> eyre::Result<B>
+            async fn on_final_response<B>(
+                self,
+                res: Response,
+                mut body: B,
+            ) -> eyre::Result<(B, Self::Return)>
             where
                 B: h1::Body,
             {
@@ -410,11 +418,7 @@ fn request_api() {
                     }
                 }
 
-                Ok(body)
-            }
-
-            async fn on_request_body_error(&self, err: eyre::Report) {
-                panic!("got request body error: {err:?}")
+                Ok((body, ()))
             }
         }
 
@@ -455,4 +459,69 @@ fn request_api() {
 
         Ok(())
     })
+}
+
+#[test]
+fn proxy_verbose() {
+    helpers::run(async move {
+        let (server_addr, server_fut) = tcp_serve_h1_once()?;
+        let proxy_fut = async move {
+            let conf = ServerConf::default();
+            let conf = Rc::new(conf);
+
+            struct SDriver {
+                server_addr: SocketAddr,
+            }
+
+            impl h1::ServerDriver for SDriver {
+                async fn handle<T, B>(
+                    &self,
+                    req: hring::types::Request,
+                    req_body: B,
+                    res: h1::H1Responder<T, h1::ExpectResponseHeaders>,
+                ) -> eyre::Result<(B, h1::H1Responder<T, h1::ResponseDone>)>
+                where
+                    T: WriteOwned + 'static,
+                    B: Body + 'static,
+                {
+                    let transport = tokio_uring::net::TcpStream::connect(self.server_addr).await?;
+                    let driver = CDriver { res };
+
+                    let (req_body, res) = h1::request(transport, req, req_body, driver).await?;
+                    Ok((req_body, res))
+                }
+            }
+
+            struct CDriver<T>
+            where
+                T: WriteOwned,
+            {
+                res: H1Responder<T, ExpectResponseHeaders>,
+            }
+
+            impl<T> h1::ClientDriver for CDriver<T>
+            where
+                T: WriteOwned,
+            {
+                type Return = (H1Responder<T, ResponseDone>);
+
+                async fn on_informational_response(&self, res: Response) -> eyre::Result<()> {
+                    todo!()
+                }
+
+                async fn on_final_response<B>(
+                    self,
+                    res: Response,
+                    body: B,
+                ) -> eyre::Result<(B, Self::Return)>
+                where
+                    B: h1::Body,
+                {
+                    todo!()
+                }
+            }
+        };
+
+        Ok(())
+    });
 }
