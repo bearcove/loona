@@ -5,7 +5,7 @@
 mod helpers;
 
 use bytes::BytesMut;
-use futures::FutureExt;
+use futures_util::FutureExt;
 use hring::{
     bufpool::{AggBuf, IoChunkList},
     io::{ChanRead, ChanWrite, ReadWritePair, WriteOwned},
