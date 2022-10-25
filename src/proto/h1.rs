@@ -7,7 +7,7 @@ use tokio_uring::net::TcpStream;
 use tracing::debug;
 
 use crate::{
-    bufpool::{AggBuf, AggSlice, Buf, IoChunkList},
+    bufpool::{AggBuf, AggSlice, Buf, IoChunkList, IoChunkable},
     io::{ReadOwned, ReadWriteOwned, WriteOwned},
     parse::h1,
     proto::{
@@ -509,13 +509,133 @@ where
     }
 }
 
+pub struct ClientConf {}
+
+pub trait ClientDriver {
+    fn on_informational_response(&self, res: Response) -> eyre::Result<()>;
+    async fn on_final_response<B>(&self, res: Response, body: B) -> eyre::Result<B>
+    where
+        B: Body;
+    fn on_request_body_error(&self, err: eyre::Report);
+}
+
+/// Perform an HTTP/1.1 request against an HTTP/1.1 server
+pub async fn request(
+    transport: impl ReadWriteOwned + 'static,
+    req: Request,
+    body: impl Body + 'static,
+    driver: impl ClientDriver + 'static,
+) -> eyre::Result<()> {
+    let transport = Rc::new(transport);
+    let driver = Rc::new(driver);
+
+    // TODO: set content-length if body isn't empty / missing
+    let mode = if body.content_len().is_none() {
+        BodyWriteMode::Chunked
+    } else {
+        BodyWriteMode::ContentLength
+    };
+
+    let mut list = IoChunkList::default();
+    encode_request(req, &mut list)?;
+    _ = write_all_list(transport.as_ref(), list)
+        .await
+        .wrap_err("writing request headers")?;
+
+    // TODO: handle `expect: 100-continue` (don't start sending body until we get a 100 response)
+
+    let send_body_fut = {
+        let transport = transport.clone();
+        let driver = driver.clone();
+        async move {
+            if let Err(err) = write_h1_body(transport, body, mode).await {
+                driver.on_request_body_error(err);
+            }
+        }
+    };
+    // TODO: is spawning the right thing to do here? shouldn't we try_join instead?
+    tokio_uring::spawn(send_body_fut);
+
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BodyWriteMode {
+    Chunked,
+    ContentLength,
+}
+
+async fn write_h1_body(
+    transport: Rc<impl WriteOwned>,
+    mut body: impl Body,
+    mode: BodyWriteMode,
+) -> eyre::Result<()> {
+    loop {
+        let chunk;
+        (body, chunk) = body.next_chunk().await?;
+        match chunk {
+            BodyChunk::Buf(chunk) => write_h1_body_chunk(transport.as_ref(), chunk, mode).await?,
+            BodyChunk::AggSlice(chunk) => {
+                write_h1_body_chunk(transport.as_ref(), chunk, mode).await?
+            }
+            BodyChunk::Eof => {
+                // TODO: check that we've sent what we announced in terms of
+                // content length
+                write_h1_body_end(transport.as_ref(), mode).await?;
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn write_h1_body_chunk(
+    transport: &impl WriteOwned,
+    chunk: impl IoChunkable,
+    mode: BodyWriteMode,
+) -> eyre::Result<()> {
+    match mode {
+        BodyWriteMode::Chunked => {
+            let mut list = IoChunkList::default();
+            list.push(format!("{:x}\r\n", chunk.len()).into_bytes());
+            list.push(chunk);
+            list.push("\r\n");
+
+            let list = write_all_list(transport, list).await?;
+            drop(list);
+        }
+        BodyWriteMode::ContentLength => {
+            let mut list = IoChunkList::default();
+            list.push(chunk);
+            let list = write_all_list(transport, list).await?;
+            drop(list);
+        }
+    }
+    Ok(())
+}
+
+async fn write_h1_body_end(transport: &impl WriteOwned, mode: BodyWriteMode) -> eyre::Result<()> {
+    match mode {
+        BodyWriteMode::Chunked => {
+            let mut list = IoChunkList::default();
+            list.push("0\r\n\r\n");
+            _ = write_all_list(transport, list).await?;
+        }
+        BodyWriteMode::ContentLength => {
+            // nothing to do
+        }
+    }
+    Ok(())
+}
+
 pub enum BodyChunk {
     Buf(Buf),
     AggSlice(AggSlice),
     Eof,
 }
 
-trait Body
+pub trait Body
 where
     Self: Sized,
 {
@@ -625,5 +745,19 @@ where
             H1BodyKind::ContentLength(len) => self.read == len,
             H1BodyKind::Empty => true,
         }
+    }
+}
+
+impl Body for () {
+    fn content_len(&self) -> Option<u64> {
+        Some(0)
+    }
+
+    fn eof(&self) -> bool {
+        true
+    }
+
+    async fn next_chunk(self) -> eyre::Result<(Self, BodyChunk)> {
+        Ok((self, BodyChunk::Eof))
     }
 }

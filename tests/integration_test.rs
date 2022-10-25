@@ -4,7 +4,7 @@
 
 mod helpers;
 
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use futures::TryStreamExt;
 use hring::{
     bufpool::AggBuf,
@@ -19,7 +19,6 @@ use std::{net::SocketAddr, rc::Rc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    sync::mpsc,
 };
 use tracing::debug;
 
