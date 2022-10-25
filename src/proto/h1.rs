@@ -14,7 +14,7 @@ use crate::{
         errors::SemanticError,
         util::{read_and_parse, write_all, write_all_list},
     },
-    types::{ConnectionDriver, Request, RequestDriver, Response},
+    types::{ConnectionDriver, Headers, Request, RequestDriver, Response},
 };
 
 /// maximum HTTP/1.1 header length (includes request-line/response-line etc.)
@@ -295,8 +295,8 @@ pub trait ServerDriver {
         &self,
         req: Request,
         req_body: B,
-        res_handle: H1ResponseHandle<T, ExpectResponseHeaders>,
-    ) -> eyre::Result<(B, H1ResponseHandle<T, ResponseDone>)>
+        res: H1Responder<T, ExpectResponseHeaders>,
+    ) -> eyre::Result<(B, H1Responder<T, ResponseDone>)>
     where
         T: WriteOwned;
 }
@@ -352,7 +352,7 @@ pub async fn serve(
             eof: false,
         };
 
-        let res_handle = H1ResponseHandle::new(transport.clone());
+        let res_handle = H1Responder::new(transport.clone());
 
         let (req_body, res_handle) = driver
             .handle(req, req_body, res_handle)
@@ -385,13 +385,10 @@ impl ResponseState for ExpectResponseHeaders {}
 pub struct ExpectResponseBody;
 impl ResponseState for ExpectResponseBody {}
 
-pub struct ExpectResponseTrailers;
-impl ResponseState for ExpectResponseTrailers {}
-
 pub struct ResponseDone;
 impl ResponseState for ResponseDone {}
 
-pub struct H1ResponseHandle<T, S>
+pub struct H1Responder<T, S>
 where
     S: ResponseState,
     T: WriteOwned,
@@ -400,7 +397,7 @@ where
     transport: Rc<T>,
 }
 
-impl<T> H1ResponseHandle<T, ExpectResponseHeaders>
+impl<T> H1Responder<T, ExpectResponseHeaders>
 where
     T: WriteOwned,
 {
@@ -409,6 +406,45 @@ where
             state: ExpectResponseHeaders,
             transport,
         }
+    }
+
+    /// Send an informational status code, cf. https://httpwg.org/specs/rfc9110.html#status.1xx
+    /// Errors out if the response status is not 1xx
+    pub async fn write_interim_response(
+        self,
+    ) -> eyre::Result<H1Responder<T, ExpectResponseHeaders>> {
+        todo!();
+    }
+
+    /// Send the final response headers
+    /// Errors out if the response status is < 200
+    pub async fn write_final_response(self) -> eyre::Result<H1Responder<T, ExpectResponseBody>> {
+        todo!();
+    }
+}
+
+impl<T> H1Responder<T, ExpectResponseBody>
+where
+    T: WriteOwned,
+{
+    /// Send a response body chunk. Errors out if sending more than the
+    /// announced content-length.
+    pub async fn write_body_chunk(
+        self,
+        chunk: Buf,
+    ) -> eyre::Result<H1Responder<T, ExpectResponseBody>> {
+        todo!();
+    }
+
+    /// Finish the body, with optional trailers, cf. https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/TE
+    /// Errors out if the sent body doesn't match the announced content-length.
+    /// Errors out if trailers that weren't announced are being sent, or if the client
+    /// didn't explicitly announce it accepted trailers.
+    pub async fn finish_body(
+        self,
+        trailers: Option<Headers>,
+    ) -> eyre::Result<H1Responder<T, ResponseDone>> {
+        todo!();
     }
 }
 
