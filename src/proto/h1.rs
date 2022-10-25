@@ -7,7 +7,7 @@ use tokio_uring::net::TcpStream;
 use tracing::debug;
 
 use crate::{
-    bufpool::{AggBuf, IoChunkList},
+    bufpool::{AggBuf, AggSlice, Buf, IoChunkList},
     io::{ReadOwned, ReadWriteOwned, WriteOwned},
     parse::h1,
     proto::{
@@ -266,5 +266,228 @@ fn debug_print_res(res: &Response) {
     debug!(code = %res.code, reason = %res.reason.to_string_lossy(), version = %res.version, "got response");
     for h in &res.headers {
         debug!(name = %h.name.to_string_lossy(), value = %h.value.to_string_lossy(), "got header");
+    }
+}
+
+pub struct ServerConf {
+    /// Max length of the request line + HTTP headers
+    pub max_http_header_len: u32,
+
+    /// Max length of a single header record, e.g. `user-agent: foobar`
+    pub max_header_record_len: u32,
+
+    /// Max number of header records
+    pub max_header_records: u32,
+}
+
+impl Default for ServerConf {
+    fn default() -> Self {
+        Self {
+            max_http_header_len: 64 * 1024,
+            max_header_record_len: 4 * 1024,
+            max_header_records: 128,
+        }
+    }
+}
+
+pub struct Server<T>
+where
+    T: ReadWriteOwned,
+{
+    transport: T,
+    settings: Rc<ServerConf>,
+    buf: AggBuf,
+}
+
+pub trait ServerDriver {
+    async fn handle<B>(&self, req: Request, body: B) -> eyre::Result<B>;
+}
+
+pub async fn serve(
+    transport: impl ReadWriteOwned,
+    conf: Rc<ServerConf>,
+    mut client_buf: AggBuf,
+    driver: impl ServerDriver,
+) -> eyre::Result<()> {
+    let transport = Rc::new(transport);
+
+    loop {
+        let req;
+        (client_buf, req) =
+            match read_and_parse(h1::request, transport.as_ref(), client_buf, MAX_HEADER_LEN).await
+            {
+                Ok(t) => match t {
+                    Some(t) => t,
+                    None => {
+                        debug!("client went away before sending request headers");
+                        return Ok(());
+                    }
+                },
+                Err(e) => {
+                    if let Some(se) = e.downcast_ref::<SemanticError>() {
+                        let (res, _) = transport.write_all(se.as_http_response()).await;
+                        res.wrap_err("writing error response downstream")?;
+                    }
+
+                    debug!(?e, "error reading request header from downstream");
+                    return Ok(());
+                }
+            };
+        debug_print_req(&req);
+
+        let chunked = req.headers.is_chunked_transfer_encoding();
+        let connection_close = req.headers.is_connection_close();
+        let content_len = req.headers.content_len().unwrap_or_default();
+
+        let mut req_body = H1Body {
+            transport: transport.clone(),
+            buf: client_buf,
+            kind: if chunked {
+                H1BodyKind::Chunked
+            } else if content_len > 0 {
+                H1BodyKind::ContentLength(content_len)
+            } else {
+                H1BodyKind::Empty
+            },
+            read: 0,
+            eof: false,
+        };
+
+        driver
+            .handle(req, &mut req_body)
+            .await
+            .wrap_err("handling request")?;
+
+        if !req_body.eof() {
+            return Err(eyre::eyre!(
+                "request body not drained, have to close connection"
+            ));
+        }
+
+        client_buf = req_body.buf;
+
+        if connection_close {
+            debug!("connection close requested by downstream");
+            return Ok(());
+        }
+    }
+}
+
+pub enum BodyChunk {
+    Buf(Buf),
+    AggSlice(AggSlice),
+    Eof,
+}
+
+trait Body
+where
+    Self: Sized,
+{
+    fn content_len(&self) -> Option<u64>;
+    fn eof(&self) -> bool;
+    async fn next_chunk(self) -> eyre::Result<(Self, BodyChunk)>;
+}
+
+struct H1Body<T> {
+    transport: Rc<T>,
+    buf: AggBuf,
+    kind: H1BodyKind,
+    read: u64,
+    eof: bool,
+}
+
+enum H1BodyKind {
+    Chunked,
+    ContentLength(u64),
+    Empty,
+}
+
+impl<T> Body for H1Body<T>
+where
+    T: ReadOwned,
+{
+    fn content_len(&self) -> Option<u64> {
+        match self.kind {
+            H1BodyKind::Chunked => None,
+            H1BodyKind::ContentLength(len) => Some(len),
+            H1BodyKind::Empty => Some(0),
+        }
+    }
+
+    async fn next_chunk(mut self) -> eyre::Result<(Self, BodyChunk)> {
+        if self.eof {
+            return Ok((self, BodyChunk::Eof));
+        }
+
+        match self.kind {
+            H1BodyKind::Chunked => {
+                const MAX_CHUNK_LENGTH: u32 = 1024 * 1024;
+
+                debug!("reading chunk");
+                let chunk;
+                let mut buf = self.buf;
+                buf.write().grow_if_needed()?;
+
+                // TODO: this reads the whole chunk, but if we don't need to maintain
+                // chunk size, we don't need to buffer that far. we can just read
+                // whatever, skip the CRLF, know when we need to stop to read another
+                // chunk length, etc. this needs to be a state machine.
+                (buf, chunk) =
+                    match read_and_parse(h1::chunk, self.transport.as_ref(), buf, MAX_CHUNK_LENGTH)
+                        .await?
+                    {
+                        Some(t) => t,
+                        None => {
+                            return Err(eyre::eyre!("peer went away before sending final chunk"));
+                        }
+                    };
+                debug!("read {} byte chunk", chunk.len);
+
+                self.buf = buf;
+
+                if chunk.len == 0 {
+                    debug!("received 0-length chunk, that's EOF!");
+                    self.eof = true;
+                    Ok((self, BodyChunk::Eof))
+                } else {
+                    self.read += chunk.len;
+                    Ok((self, BodyChunk::AggSlice(chunk.data)))
+                }
+            }
+            H1BodyKind::ContentLength(len) => {
+                let remain = len - self.read;
+                if remain == 0 {
+                    self.eof = true;
+                    return Ok((self, BodyChunk::Eof));
+                }
+
+                let mut buf = self.buf;
+
+                buf.write().grow_if_needed()?;
+                let mut slice = buf.write_slice().limit(remain);
+                let res;
+                (res, slice) = self.transport.as_ref().read(slice).await;
+                buf = slice.into_inner();
+                let n = res?;
+
+                self.read += n as u64;
+                let slice = buf.read().slice(0..n as u32);
+                self.buf = buf.split();
+
+                Ok((self, BodyChunk::AggSlice(slice)))
+            }
+            H1BodyKind::Empty => {
+                self.eof = true;
+                Ok((self, BodyChunk::Eof))
+            }
+        }
+    }
+
+    fn eof(&self) -> bool {
+        if let H1BodyKind::ContentLength(len) = self.kind {
+            self.read == len
+        } else {
+            self.eof
+        }
     }
 }
