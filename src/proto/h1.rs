@@ -317,26 +317,31 @@ pub async fn serve(
 
     loop {
         let req;
-        (client_buf, req) =
-            match read_and_parse(h1::request, transport.as_ref(), client_buf, MAX_HEADER_LEN).await
-            {
-                Ok(t) => match t {
-                    Some(t) => t,
-                    None => {
-                        debug!("client went away before sending request headers");
-                        return Ok(());
-                    }
-                },
-                Err(e) => {
-                    if let Some(se) = e.downcast_ref::<SemanticError>() {
-                        let (res, _) = transport.write_all(se.as_http_response()).await;
-                        res.wrap_err("writing error response downstream")?;
-                    }
-
-                    debug!(?e, "error reading request header from downstream");
+        (client_buf, req) = match read_and_parse(
+            h1::request,
+            transport.as_ref(),
+            client_buf,
+            conf.max_http_header_len,
+        )
+        .await
+        {
+            Ok(t) => match t {
+                Some(t) => t,
+                None => {
+                    debug!("client went away before sending request headers");
                     return Ok(());
                 }
-            };
+            },
+            Err(e) => {
+                if let Some(se) = e.downcast_ref::<SemanticError>() {
+                    let (res, _) = transport.write_all(se.as_http_response()).await;
+                    res.wrap_err("writing error response downstream")?;
+                }
+
+                debug!(?e, "error reading request header from downstream");
+                return Ok(());
+            }
+        };
         debug_print_req(&req);
 
         let chunked = req.headers.is_chunked_transfer_encoding();
