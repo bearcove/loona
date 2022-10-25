@@ -245,13 +245,18 @@ fn encode_response(res: Response, list: &mut IoChunkList) -> eyre::Result<()> {
     list.push(" ");
     list.push(res.reason);
     list.push("\r\n");
-    for header in res.headers {
+    encode_headers(res.headers, list)?;
+    list.push("\r\n");
+    Ok(())
+}
+
+fn encode_headers(headers: Headers, list: &mut IoChunkList) -> eyre::Result<()> {
+    for header in headers {
         list.push(header.name);
         list.push(": ");
         list.push(header.value);
         list.push("\r\n");
     }
-    list.push("\r\n");
     Ok(())
 }
 
@@ -414,16 +419,44 @@ where
         self,
         res: Response,
     ) -> eyre::Result<H1Responder<T, ExpectResponseHeaders>> {
-        todo!();
+        if res.code >= 200 {
+            return Err(eyre::eyre!("interim response must have status code 1xx"));
+        }
+
+        let this = self.write_response_internal(res).await?;
+        Ok(this)
     }
 
     /// Send the final response headers
-    /// Errors out if the response status is < 200
+    /// Errors out if the response status is < 200.
+    /// Errors out if the client sent `expect: 100-continue`
     pub async fn write_final_response(
         self,
         res: Response,
     ) -> eyre::Result<H1Responder<T, ExpectResponseBody>> {
-        todo!();
+        if res.code < 200 {
+            return Err(eyre::eyre!("final response must have status code >= 200"));
+        }
+
+        let this = self.write_response_internal(res).await?;
+        Ok(H1Responder {
+            state: ExpectResponseBody,
+            transport: this.transport,
+        })
+    }
+
+    async fn write_response_internal(self, res: Response) -> eyre::Result<Self> {
+        let mut list = IoChunkList::default();
+        encode_response(res, &mut list)?;
+
+        let list = write_all_list(self.transport.as_ref(), list)
+            .await
+            .wrap_err("writing response headers upstream")?;
+
+        // TODO: can we re-use that list? pool it?
+        drop(list);
+
+        Ok(self)
     }
 }
 
@@ -443,12 +476,31 @@ where
     /// Finish the body, with optional trailers, cf. https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/TE
     /// Errors out if the sent body doesn't match the announced content-length.
     /// Errors out if trailers that weren't announced are being sent, or if the client
-    /// didn't explicitly announce it accepted trailers.
+    /// didn't explicitly announce it accepted trailers, or if the response is a 204,
+    /// 205 or 304, or if the body wasn't sent with chunked transfer encoding.
     pub async fn finish_body(
         self,
         trailers: Option<Headers>,
     ) -> eyre::Result<H1Responder<T, ResponseDone>> {
-        todo!();
+        if let Some(trailers) = trailers {
+            // TODO: check all preconditions
+            let mut list = IoChunkList::default();
+            encode_headers(trailers, &mut list)?;
+
+            let list = write_all_list(self.transport.as_ref(), list)
+                .await
+                .wrap_err("writing response headers upstream")?;
+
+            // TODO: can we re-use that list? pool it?
+            drop(list);
+        }
+
+        // TODO: check content-length side, write empty buf is doing chunked transfer encoding, etc.
+
+        Ok(H1Responder {
+            state: ResponseDone,
+            transport: self.transport,
+        })
     }
 }
 
@@ -563,10 +615,10 @@ where
     }
 
     fn eof(&self) -> bool {
-        if let H1BodyKind::ContentLength(len) = self.kind {
-            self.read == len
-        } else {
-            self.eof
+        match self.kind {
+            H1BodyKind::Chunked => self.eof,
+            H1BodyKind::ContentLength(len) => self.read == len,
+            H1BodyKind::Empty => true,
         }
     }
 }

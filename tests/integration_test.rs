@@ -4,7 +4,7 @@
 
 mod helpers;
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use futures::TryStreamExt;
 use hring::{
     bufpool::AggBuf,
@@ -309,17 +309,42 @@ fn serve_api() {
         let transport = ReadWritePair(read, write);
         let client_buf = AggBuf::default();
         let driver = TestDriver {};
-
         let serve_fut = tokio_uring::spawn(h1::serve(transport, conf, client_buf, driver));
 
         tx.send("GET / HTTP/1.1\r\n\r\n").await?;
+        let mut res_buf = BytesMut::new();
         while let Some(chunk) = rx.recv().await {
-            debug!("Got a chunk: {}", chunk.hex_dump());
+            debug!("Got a chunk:\n{:?}", chunk.hex_dump());
+            res_buf.extend_from_slice(&chunk[..]);
+
+            let mut headers = [EMPTY_HEADER; 16];
+            let mut res = httparse::Response::new(&mut headers[..]);
+            let body_offset = match res.parse(&res_buf[..])? {
+                Status::Complete(off) => off,
+                Status::Partial => {
+                    debug!("partial response, continuing");
+                    continue;
+                }
+            };
+
+            debug!("Got a complete response: {res:?}");
+
+            match res.code {
+                Some(101) => {
+                    assert_eq!(res.reason, Some("Continue"));
+                    res_buf = res_buf.split_off(body_offset);
+                }
+                Some(200) => {
+                    assert_eq!(res.reason, Some("OK"));
+                    break;
+                }
+                _ => panic!("unexpected response code {:?}", res.code),
+            }
         }
 
-        tokio::time::timeout(Duration::from_secs(5), serve_fut).await???;
+        drop(tx);
 
-        _ = tx;
+        tokio::time::timeout(Duration::from_secs(5), serve_fut).await???;
 
         Ok(())
     })
