@@ -536,18 +536,19 @@ pub trait ClientDriver {
 }
 
 /// Perform an HTTP/1.1 request against an HTTP/1.1 server
-pub async fn request<B, D>(
-    transport: impl ReadWriteOwned + 'static,
+///
+/// The transport will be returned unless the server requested connection close.
+pub async fn request<T, B, D>(
+    transport: Rc<T>,
     req: Request,
     body: B,
     driver: D,
-) -> eyre::Result<(B, D::Return)>
+) -> eyre::Result<(Option<Rc<T>>, B, D::Return)>
 where
+    T: ReadWriteOwned + 'static,
     B: Body + 'static,
     D: ClientDriver + 'static,
 {
-    let transport = Rc::new(transport);
-
     // TODO: set content-length if body isn't empty / missing
     let mode = if body.content_len().is_none() {
         BodyWriteMode::Chunked
@@ -572,7 +573,10 @@ where
                     // spawning, without ref-counting the driver, etc.
                     panic!("error writing request body: {err:?}");
                 }
-                Ok(body) => Ok::<_, eyre::Report>(body),
+                Ok(body) => {
+                    debug!("done writing request body");
+                    Ok::<_, eyre::Report>(body)
+                }
             }
         }
     };
@@ -620,13 +624,16 @@ where
         eof: false,
     };
 
+    let conn_close = res.headers.is_connection_close();
+
     let (res_body, ret) = driver.on_final_response(res, res_body).await?;
     // TODO: re-use buffer for pooled connections?
     drop(res_body);
 
     let req_body = send_body_jh.await??;
 
-    Ok((req_body, ret))
+    let transport = if conn_close { None } else { Some(transport) };
+    Ok((transport, req_body, ret))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

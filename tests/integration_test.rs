@@ -18,7 +18,7 @@ use httparse::{Status, EMPTY_HEADER};
 use hyper::service::make_service_fn;
 use pretty_assertions::assert_eq;
 use pretty_hex::PrettyHex;
-use std::{convert::Infallible, net::SocketAddr, rc::Rc, time::Duration};
+use std::{cell::RefCell, convert::Infallible, net::SocketAddr, rc::Rc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -424,7 +424,7 @@ fn request_api() {
         }
 
         let driver = TestDriver {};
-        let request_fut = tokio_uring::spawn(h1::request(transport, req, (), driver));
+        let request_fut = tokio_uring::spawn(h1::request(Rc::new(transport), req, (), driver));
 
         let mut req_buf = BytesMut::new();
         while let Some(chunk) = rx.recv().await {
@@ -464,7 +464,10 @@ fn request_api() {
 
 #[test]
 fn proxy_verbose() {
-    async fn client(ln_addr: SocketAddr) -> eyre::Result<()> {
+    async fn client(
+        ln_addr: SocketAddr,
+        _tx: tokio::sync::oneshot::Sender<()>,
+    ) -> eyre::Result<()> {
         let mut socket = TcpStream::connect(ln_addr).await?;
         socket.set_nodelay(true)?;
 
@@ -498,7 +501,7 @@ fn proxy_verbose() {
             }
         }
 
-        debug!("Done with client altogether");
+        debug!("Http client shutting down");
         Ok(())
     }
 
@@ -509,12 +512,16 @@ fn proxy_verbose() {
             }));
         let upstream_addr = upstream.local_addr();
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-        let upstream = upstream.with_graceful_shutdown(rx.map(|_| ()));
+        let mut rx = rx.shared();
+        let upstream = {
+            let rx = rx.clone();
+            upstream.with_graceful_shutdown(rx.map(|_| ()))
+        };
 
         let upstream_fut = async move {
-            debug!("Started h1 server");
+            debug!("Starting upstream...");
             upstream.await?;
-            debug!("Done with h1 server");
+            debug!("Upstream shutting down.");
             Ok::<_, eyre::Report>(())
         };
 
@@ -525,8 +532,11 @@ fn proxy_verbose() {
             let conf = ServerConf::default();
             let conf = Rc::new(conf);
 
+            type TransportPool = Rc<RefCell<Vec<Rc<tokio_uring::net::TcpStream>>>>;
+
             struct SDriver {
                 upstream_addr: SocketAddr,
+                pool: TransportPool,
             }
 
             impl h1::ServerDriver for SDriver {
@@ -540,11 +550,29 @@ fn proxy_verbose() {
                     T: WriteOwned + 'static,
                     B: Body + 'static,
                 {
-                    let transport =
-                        tokio_uring::net::TcpStream::connect(self.upstream_addr).await?;
+                    let transport = {
+                        let mut pool = self.pool.borrow_mut();
+                        pool.pop()
+                    };
+
+                    let transport = if let Some(transport) = transport {
+                        debug!("re-using existing transport!");
+                        transport
+                    } else {
+                        debug!("making new connection to upstream!");
+                        Rc::new(tokio_uring::net::TcpStream::connect(self.upstream_addr).await?)
+                    };
+
                     let driver = CDriver { respond };
 
-                    let (req_body, res) = h1::request(transport, req, req_body, driver).await?;
+                    let (transport, req_body, res) =
+                        h1::request(transport, req, req_body, driver).await?;
+
+                    if let Some(transport) = transport {
+                        let mut pool = self.pool.borrow_mut();
+                        pool.push(transport);
+                    }
+
                     Ok((req_body, res))
                 }
             }
@@ -613,20 +641,46 @@ fn proxy_verbose() {
                 }
             }
 
-            let (transport, remote_addr) = ln.accept().await?;
-            debug!("Accepted connection from {remote_addr}");
-            let client_buf = AggBuf::default();
-            let driver = SDriver { upstream_addr };
-            h1::serve(transport, conf, client_buf, driver).await?;
-            debug!("Done serving h1 connection, initiating graceful shutdown");
-            drop(tx);
+            let pool: TransportPool = Default::default();
+
+            loop {
+                tokio::select! {
+                    accept_res = ln.accept() => {
+                        let (transport, remote_addr) = accept_res?;
+                        debug!("Accepted connection from {remote_addr}");
+
+                        let pool = pool.clone();
+                        let conf = conf.clone();
+
+                        tokio_uring::spawn(async move {
+                            let client_buf = AggBuf::default();
+                            let driver = SDriver {
+                                upstream_addr,
+                                pool,
+                            };
+                            h1::serve(transport, conf, client_buf, driver)
+                                .await
+                                .unwrap();
+                            debug!("Done serving h1 connection");
+                        });
+                    },
+                    _ = &mut rx => {
+                        debug!("Shutting down proxy");
+                        break;
+                    }
+                }
+            }
+
+            debug!("Proxy server shutting down.");
+            drop(pool);
 
             Ok(())
         };
 
-        let client_fut = client(ln_addr);
+        let client_fut = client(ln_addr, tx);
 
         tokio::try_join!(upstream_fut, proxy_fut, client_fut)?;
+        debug!("Everything has been joined!");
 
         Ok(())
     });
