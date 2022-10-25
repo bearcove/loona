@@ -298,12 +298,10 @@ fn proxy_verbose() {
     helpers::run(async move {
         let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<SocketAddr>();
 
-        let mut cmd = Command::new("cargo");
-        cmd.arg("run");
-        cmd.arg("--release");
-        cmd.arg("--manifest-path");
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-        cmd.arg(format!("{manifest_dir}/hyper-testbed/Cargo.toml"));
+        let mut cmd = Command::new(format!(
+            "{manifest_dir}/hyper-testbed/target/release/hyper-testbed"
+        ));
         cmd.stdout(Stdio::piped());
         cmd.kill_on_drop(true);
 
