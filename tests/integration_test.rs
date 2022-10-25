@@ -485,7 +485,7 @@ fn proxy_verbose() {
         let client_fut = client(ln_addr, tx);
 
         tokio::try_join!(proxy_fut, client_fut)?;
-        debug!("Everything has been joined!");
+        debug!("Everything has been joined.");
 
         Ok(())
     });
