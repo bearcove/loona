@@ -172,14 +172,11 @@ fn request_api() {
                 todo!("got informational response!")
             }
 
-            async fn on_final_response<B>(
+            async fn on_final_response(
                 self,
                 res: Response,
-                mut body: B,
-            ) -> eyre::Result<(B, Self::Return)>
-            where
-                B: Body,
-            {
+                body: &mut impl Body,
+            ) -> eyre::Result<Self::Return> {
                 debug!(
                     "got final response! content length = {:?}, is chunked = {}",
                     res.headers.content_length(),
@@ -200,7 +197,7 @@ fn request_api() {
                     }
                 }
 
-                Ok((body, ()))
+                Ok(())
             }
         }
 
@@ -387,14 +384,11 @@ fn proxy_verbose() {
                     todo!()
                 }
 
-                async fn on_final_response<B>(
+                async fn on_final_response(
                     self,
                     res: Response,
-                    mut body: B,
-                ) -> eyre::Result<(B, Self::Return)>
-                where
-                    B: Body,
-                {
+                    body: &mut impl Body,
+                ) -> eyre::Result<Self::Return> {
                     let respond = self.respond;
                     let mut respond = respond.write_final_response(res).await?;
 
@@ -427,7 +421,7 @@ fn proxy_verbose() {
 
                     let respond = respond.finish_body(None).await?;
 
-                    Ok((body, respond))
+                    Ok(respond)
                 }
             }
 

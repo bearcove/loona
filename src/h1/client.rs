@@ -22,9 +22,11 @@ pub trait ClientDriver {
     type Return;
 
     async fn on_informational_response(&self, res: Response) -> eyre::Result<()>;
-    async fn on_final_response<B>(self, res: Response, body: B) -> eyre::Result<(B, Self::Return)>
-    where
-        B: Body;
+    async fn on_final_response(
+        self,
+        res: Response,
+        body: &mut impl Body,
+    ) -> eyre::Result<Self::Return>;
 }
 
 /// Perform an HTTP/1.1 request against an HTTP/1.1 server
@@ -108,7 +110,7 @@ where
             // TODO: handle 204/304 separately
             let content_len = res.headers.content_length().unwrap_or_default();
 
-            let res_body = H1Body {
+            let mut res_body = H1Body {
                 transport: transport.clone(),
                 buf: Some(ups_buf),
                 kind: if chunked {
@@ -124,9 +126,9 @@ where
 
             let conn_close = res.headers.is_connection_close();
 
-            let (res_body, ret) = driver.on_final_response(res, res_body).await?;
-            // TODO: re-use buffer for pooled connections?
-            drop(res_body);
+            let ret = driver.on_final_response(res, &mut res_body).await?;
+
+            // TODO: check that res_body is fully drained
 
             Ok((ret, conn_close))
         }
