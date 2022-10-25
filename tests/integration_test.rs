@@ -384,11 +384,33 @@ fn request_api() {
                 todo!("got informational response!")
             }
 
-            async fn on_final_response<B>(&self, _res: Response, _body: B) -> eyre::Result<B>
+            async fn on_final_response<B>(&self, res: Response, mut body: B) -> eyre::Result<B>
             where
                 B: h1::Body,
             {
-                todo!("got final response!")
+                debug!(
+                    "got final response! content length = {:?}, is chunked = {}",
+                    res.headers.content_length(),
+                    res.headers.is_chunked_transfer_encoding(),
+                );
+
+                loop {
+                    let chunk;
+                    (body, chunk) = body.next_chunk().await?;
+                    match chunk {
+                        h1::BodyChunk::Buf(b) => {
+                            debug!("got a chunk: {:?}", b.to_vec().hex_dump());
+                        }
+                        h1::BodyChunk::AggSlice(s) => {
+                            debug!("got a chunk: {:?}", s.to_vec().hex_dump());
+                        }
+                        h1::BodyChunk::Eof => {
+                            break;
+                        }
+                    }
+                }
+
+                Ok(body)
             }
 
             async fn on_request_body_error(&self, err: eyre::Report) {

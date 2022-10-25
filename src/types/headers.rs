@@ -47,7 +47,7 @@ impl Headers {
     }
 
     /// Returns the content-length header
-    pub fn content_len(&self) -> Option<u64> {
+    pub fn content_length(&self) -> Option<u64> {
         for h in self {
             if h.name.eq_ignore_ascii_case("content-length") {
                 // FIXME: this is really wasteful. maybe there's something to be

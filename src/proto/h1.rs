@@ -1,5 +1,5 @@
-//! As of June 2022, the authoritative document for HTTP/1.1
-//! is https://www.rfc-editor.org/rfc/rfc9110
+//! HTTP/1.1 https://www.rfc-editor.org/rfc/rfc9112.
+//! HTTP semantics https://www.rfc-editor.org/rfc/rfc9110
 
 use eyre::Context;
 use std::rc::Rc;
@@ -51,7 +51,7 @@ pub async fn proxy(
 
         let dos_chunked = dos_req.headers.is_chunked_transfer_encoding();
         let connection_close = dos_req.headers.is_connection_close();
-        let dos_req_clen = dos_req.headers.content_len().unwrap_or_default();
+        let dos_req_clen = dos_req.headers.content_length().unwrap_or_default();
 
         let req_dv = conn_dv
             .steer_request(&dos_req)
@@ -100,7 +100,7 @@ pub async fn proxy(
         // at this point, `dos_buf` has the start of the request body,
         // and `ups_buf` has the start of the response body
 
-        let ups_res_clen = ups_res.headers.content_len().unwrap_or_default();
+        let ups_res_clen = ups_res.headers.content_length().unwrap_or_default();
 
         debug!("writing response headers downstream");
         encode_response(ups_res, &mut list)?;
@@ -355,7 +355,7 @@ pub async fn serve(
 
         let chunked = req.headers.is_chunked_transfer_encoding();
         let connection_close = req.headers.is_connection_close();
-        let content_len = req.headers.content_len().unwrap_or_default();
+        let content_len = req.headers.content_length().unwrap_or_default();
 
         let req_body = H1Body {
             transport: transport.clone(),
@@ -566,6 +566,48 @@ pub async fn request(
     };
     // TODO: is spawning the right thing to do here? shouldn't we try_join instead?
     tokio_uring::spawn(send_body_fut);
+
+    let ups_buf = AggBuf::default();
+    let (ups_buf, res) =
+        match read_and_parse(h1::response, transport.as_ref(), ups_buf, MAX_HEADER_LEN).await {
+            Ok(t) => match t {
+                Some(t) => t,
+                None => {
+                    // TODO: reply with 502 or something
+                    debug!("server went away before sending response headers");
+                    return Ok(());
+                }
+            },
+            Err(e) => {
+                debug!(?e, "error reading request header from downstream");
+                return Ok(());
+            }
+        };
+    debug_print_res(&res);
+
+    // TODO: handle informational responses
+
+    let chunked = res.headers.is_chunked_transfer_encoding();
+    // TODO: handle 204/304 separately
+    let content_len = res.headers.content_length().unwrap_or_default();
+
+    let res_body = H1Body {
+        transport: transport.clone(),
+        buf: ups_buf,
+        kind: if chunked {
+            H1BodyKind::Chunked
+        } else if content_len > 0 {
+            H1BodyKind::ContentLength(content_len)
+        } else {
+            H1BodyKind::Empty
+        },
+        read: 0,
+        eof: false,
+    };
+
+    let res_body = driver.on_final_response(res, res_body).await?;
+    // TODO: re-use buffer for pooled connections?
+    drop(res_body);
 
     Ok(())
 }
