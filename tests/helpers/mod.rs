@@ -16,7 +16,7 @@ pub(crate) fn run(test: impl Future<Output = eyre::Result<()>>) {
         color_eyre::install().unwrap();
 
         if let Err(e) = test.await {
-            panic!("Error: {}", e);
+            panic!("Error: {e}");
         }
     });
 }
