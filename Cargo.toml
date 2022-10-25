@@ -22,11 +22,12 @@ eyre = "0.6.8"
 futures = "0.3.24"
 memmap2 = "0.5.7"
 nom = "7.1.1"
+pretty-hex = "0.3.0"
 smallvec = { version = "1.10.0", features = ["const_generics", "const_new", "union", "debugger_visualizer"] }
 thiserror = "1.0.37"
 tokio = { version = "1.21.2", features = ["full"] }
-# `tcp-stream-writev` branch
-tokio-uring = { git = "https://github.com/fasterthanlime/tokio-uring", rev = "f80c1a6b12417a16f06d3329ec65d7ec28620390" }
+# `as-raw-fd` branch
+tokio-uring = { git = "https://github.com/fasterthanlime/tokio-uring", rev = "428529a3037e6c36680cfdfa3305c5a1709fb8bd" }
 tracing = "0.1.37"
 
 [dev-dependencies]

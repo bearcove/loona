@@ -484,6 +484,10 @@ impl fmt::Debug for AggSlice {
 }
 
 impl IoChunkable for AggSlice {
+    fn len(&self) -> usize {
+        self.len as _
+    }
+
     /// Returns next contiguous slice
     fn next_chunk(&self, offset: u32) -> Option<IoChunk> {
         if offset == self.len {
