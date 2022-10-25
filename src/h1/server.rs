@@ -100,7 +100,7 @@ pub async fn serve(
 
         let req_body = H1Body {
             transport: transport.clone(),
-            buf: client_buf,
+            buf: Some(client_buf),
             kind: if chunked {
                 H1BodyKind::Chunked
             } else if content_len > 0 {
@@ -114,7 +114,7 @@ pub async fn serve(
 
         let res_handle = Responder::new(transport.clone());
 
-        let (req_body, res_handle) = driver
+        let (mut req_body, res_handle) = driver
             .handle(req, req_body, res_handle)
             .await
             .wrap_err("handling request")?;
@@ -128,7 +128,7 @@ pub async fn serve(
             ));
         }
 
-        client_buf = req_body.buf;
+        client_buf = req_body.buf.take().unwrap();
 
         if connection_close {
             debug!("client requested connection close");

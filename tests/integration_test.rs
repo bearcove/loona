@@ -190,9 +190,7 @@ fn request_api() {
                 );
 
                 loop {
-                    let chunk;
-                    (body, chunk) = body.next_chunk().await?;
-                    match chunk {
+                    match body.next_chunk().await? {
                         BodyChunk::Buf(b) => {
                             debug!("got a chunk: {:?}", b.to_vec().hex_dump());
                         }
@@ -210,7 +208,11 @@ fn request_api() {
         }
 
         let driver = TestDriver {};
-        let request_fut = tokio_uring::spawn(h1::request(Rc::new(transport), req, (), driver));
+        let request_fut = tokio_uring::spawn(async {
+            #[allow(clippy::let_unit_value)]
+            let mut body = ();
+            h1::request(Rc::new(transport), req, &mut body, driver).await
+        });
 
         let mut req_buf = BytesMut::new();
         while let Some(chunk) = rx.recv().await {
@@ -342,7 +344,7 @@ fn proxy_verbose() {
                 async fn handle<T, B>(
                     &self,
                     req: hring::Request,
-                    req_body: B,
+                    mut req_body: B,
                     respond: h1::Responder<T, h1::ExpectResponseHeaders>,
                 ) -> eyre::Result<(B, h1::Responder<T, h1::ResponseDone>)>
                 where
@@ -364,8 +366,8 @@ fn proxy_verbose() {
 
                     let driver = CDriver { respond };
 
-                    let (transport, req_body, res) =
-                        h1::request(transport, req, req_body, driver).await?;
+                    let (transport, res) =
+                        h1::request(transport, req, &mut req_body, driver).await?;
 
                     if let Some(transport) = transport {
                         let mut pool = self.pool.borrow_mut();
@@ -405,10 +407,7 @@ fn proxy_verbose() {
                     let mut respond = respond.write_final_response(res).await?;
 
                     loop {
-                        let chunk;
-                        (body, chunk) = body.next_chunk().await?;
-
-                        match chunk {
+                        match body.next_chunk().await? {
                             BodyChunk::Buf(buf) => {
                                 respond = respond.write_body_chunk(buf).await?;
                             }

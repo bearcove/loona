@@ -30,15 +30,14 @@ pub trait ClientDriver {
 /// Perform an HTTP/1.1 request against an HTTP/1.1 server
 ///
 /// The transport will be returned unless the server requested connection close.
-pub async fn request<T, B, D>(
+pub async fn request<T, D>(
     transport: Rc<T>,
     req: Request,
-    body: B,
+    body: &mut impl Body,
     driver: D,
-) -> eyre::Result<(Option<Rc<T>>, B, D::Return)>
+) -> eyre::Result<(Option<Rc<T>>, D::Return)>
 where
     T: ReadWriteOwned,
-    B: Body,
     D: ClientDriver,
 {
     // TODO: set content-length if body isn't empty / missing
@@ -111,7 +110,7 @@ where
 
             let res_body = H1Body {
                 transport: transport.clone(),
-                buf: ups_buf,
+                buf: Some(ups_buf),
                 kind: if chunked {
                     H1BodyKind::Chunked
                 } else if content_len > 0 {
@@ -133,8 +132,9 @@ where
         }
     };
 
-    let (req_body, (ret, conn_close)) = tokio::try_join!(send_body_fut, recv_res_fut)?;
+    // TODO: cancel sending the body if we get a response early?
+    let (_, (ret, conn_close)) = tokio::try_join!(send_body_fut, recv_res_fut)?;
 
     let transport = if conn_close { None } else { Some(transport) };
-    Ok((transport, req_body, ret))
+    Ok((transport, ret))
 }

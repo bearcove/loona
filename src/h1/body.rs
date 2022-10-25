@@ -10,7 +10,7 @@ use crate::{
 
 pub(crate) struct H1Body<T> {
     pub(crate) transport: Rc<T>,
-    pub(crate) buf: AggBuf,
+    pub(crate) buf: Option<AggBuf>,
     pub(crate) kind: H1BodyKind,
     pub(crate) read: u64,
     pub(crate) eof: bool,
@@ -34,9 +34,9 @@ where
         }
     }
 
-    async fn next_chunk(mut self) -> eyre::Result<(Self, BodyChunk)> {
+    async fn next_chunk(&mut self) -> eyre::Result<BodyChunk> {
         if self.eof {
-            return Ok((self, BodyChunk::Eof));
+            return Ok(BodyChunk::Eof);
         }
 
         match self.kind {
@@ -45,7 +45,7 @@ where
 
                 debug!("reading chunk");
                 let chunk;
-                let mut buf = self.buf;
+                let mut buf = self.buf.take().unwrap();
                 buf.write().grow_if_needed()?;
 
                 // TODO: this reads the whole chunk, but if we don't need to maintain
@@ -67,25 +67,25 @@ where
                 };
                 debug!("read {} byte chunk", chunk.len);
 
-                self.buf = buf;
+                self.buf = Some(buf);
 
                 if chunk.len == 0 {
                     debug!("received 0-length chunk, that's EOF!");
                     self.eof = true;
-                    Ok((self, BodyChunk::Eof))
+                    Ok(BodyChunk::Eof)
                 } else {
                     self.read += chunk.len;
-                    Ok((self, BodyChunk::AggSlice(chunk.data)))
+                    Ok(BodyChunk::AggSlice(chunk.data))
                 }
             }
             H1BodyKind::ContentLength(len) => {
                 let remain = len - self.read;
                 if remain == 0 {
                     self.eof = true;
-                    return Ok((self, BodyChunk::Eof));
+                    return Ok(BodyChunk::Eof);
                 }
 
-                let mut buf = self.buf;
+                let mut buf = self.buf.take().unwrap();
 
                 buf.write().grow_if_needed()?;
                 let mut slice = buf.write_slice().limit(remain);
@@ -96,13 +96,13 @@ where
 
                 self.read += n as u64;
                 let slice = buf.read().slice(0..n as u32);
-                self.buf = buf.split();
+                self.buf = Some(buf.split());
 
-                Ok((self, BodyChunk::AggSlice(slice)))
+                Ok(BodyChunk::AggSlice(slice))
             }
             H1BodyKind::Empty => {
                 self.eof = true;
-                Ok((self, BodyChunk::Eof))
+                Ok(BodyChunk::Eof)
             }
         }
     }
@@ -122,18 +122,13 @@ pub(crate) enum BodyWriteMode {
     ContentLength,
 }
 
-pub(crate) async fn write_h1_body<B>(
+pub(crate) async fn write_h1_body(
     transport: Rc<impl WriteOwned>,
-    mut body: B,
+    body: &mut impl Body,
     mode: BodyWriteMode,
-) -> eyre::Result<B>
-where
-    B: Body,
-{
+) -> eyre::Result<()> {
     loop {
-        let chunk;
-        (body, chunk) = body.next_chunk().await?;
-        match chunk {
+        match body.next_chunk().await? {
             BodyChunk::Buf(chunk) => write_h1_body_chunk(transport.as_ref(), chunk, mode).await?,
             BodyChunk::AggSlice(chunk) => {
                 write_h1_body_chunk(transport.as_ref(), chunk, mode).await?
@@ -147,7 +142,7 @@ where
         }
     }
 
-    Ok(body)
+    Ok(())
 }
 
 async fn write_h1_body_chunk(
