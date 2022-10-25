@@ -1,8 +1,13 @@
+#![feature(type_alias_impl_trait)]
+
 use std::convert::Infallible;
 
 use bytes::Bytes;
 use futures::{Future, StreamExt};
-use hyper::{service::Service, Body, Request, Response};
+use hyper::{
+    service::{make_service_fn, Service},
+    Body, Request, Response,
+};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::debug;
 
@@ -66,4 +71,15 @@ impl Service<Request<Body>> for TestService {
             }
         }
     }
+}
+
+#[tokio::main]
+async fn main() {
+    let upstream = hyper::Server::bind(&"[::]:0".parse().unwrap()).serve(make_service_fn(
+        |_addr| async move { Ok::<_, Infallible>(TestService) },
+    ));
+    let upstream_addr = upstream.local_addr();
+    println!("I listen on {upstream_addr}");
+
+    upstream.await.unwrap();
 }
