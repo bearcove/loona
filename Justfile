@@ -6,12 +6,17 @@ _default:
 # Run all tests with nextest and cargo-llvm-cov
 ci-test:
 	#!/bin/bash -eux
+	just build-testbed
 	cargo llvm-cov nextest --lcov --output-path coverage.lcov
 	codecov
 
 # Run all tests with cargo nextest
 test *args:
+	just build-testbed
 	RUST_BACKTRACE=1 cargo nextest run {{args}}
+
+build-testbed:
+	cargo build --release --manifest-path hyper-testbed/Cargo.toml
 	
 single-test *args:
 	just test --no-capture {{args}}
