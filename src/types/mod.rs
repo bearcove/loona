@@ -1,9 +1,6 @@
 mod headers;
 pub use headers::*;
 
-mod driver;
-pub use driver::*;
-
 use crate::bufpool::AggSlice;
 
 /// An HTTP request
