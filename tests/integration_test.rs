@@ -49,15 +49,12 @@ fn serve_api() {
         struct TestDriver {}
 
         impl h1::ServerDriver for TestDriver {
-            async fn handle<T, B>(
+            async fn handle<T: WriteOwned>(
                 &self,
                 _req: hring::Request,
-                req_body: B,
+                _req_body: &mut impl Body,
                 res: h1::Responder<T, h1::ExpectResponseHeaders>,
-            ) -> eyre::Result<(B, h1::Responder<T, h1::ResponseDone>)>
-            where
-                T: WriteOwned,
-            {
+            ) -> eyre::Result<h1::Responder<T, h1::ResponseDone>> {
                 let mut buf = AggBuf::default();
 
                 buf.write().put(b"Continue")?;
@@ -90,7 +87,7 @@ fn serve_api() {
 
                 let res = res.finish_body(None).await?;
 
-                Ok((req_body, res))
+                Ok(res)
             }
         }
 
@@ -175,14 +172,11 @@ fn request_api() {
                 todo!("got informational response!")
             }
 
-            async fn on_final_response<B>(
+            async fn on_final_response(
                 self,
                 res: Response,
-                mut body: B,
-            ) -> eyre::Result<(B, Self::Return)>
-            where
-                B: Body,
-            {
+                body: &mut impl Body,
+            ) -> eyre::Result<Self::Return> {
                 debug!(
                     "got final response! content length = {:?}, is chunked = {}",
                     res.headers.content_length(),
@@ -190,9 +184,7 @@ fn request_api() {
                 );
 
                 loop {
-                    let chunk;
-                    (body, chunk) = body.next_chunk().await?;
-                    match chunk {
+                    match body.next_chunk().await? {
                         BodyChunk::Buf(b) => {
                             debug!("got a chunk: {:?}", b.to_vec().hex_dump());
                         }
@@ -205,12 +197,16 @@ fn request_api() {
                     }
                 }
 
-                Ok((body, ()))
+                Ok(())
             }
         }
 
         let driver = TestDriver {};
-        let request_fut = tokio_uring::spawn(h1::request(Rc::new(transport), req, (), driver));
+        let request_fut = tokio_uring::spawn(async {
+            #[allow(clippy::let_unit_value)]
+            let mut body = ();
+            h1::request(Rc::new(transport), req, &mut body, driver).await
+        });
 
         let mut req_buf = BytesMut::new();
         while let Some(chunk) = rx.recv().await {
@@ -339,16 +335,12 @@ fn proxy_verbose() {
             }
 
             impl h1::ServerDriver for SDriver {
-                async fn handle<T, B>(
+                async fn handle<T: WriteOwned>(
                     &self,
                     req: hring::Request,
-                    req_body: B,
+                    req_body: &mut impl Body,
                     respond: h1::Responder<T, h1::ExpectResponseHeaders>,
-                ) -> eyre::Result<(B, h1::Responder<T, h1::ResponseDone>)>
-                where
-                    T: WriteOwned,
-                    B: Body,
-                {
+                ) -> eyre::Result<h1::Responder<T, h1::ResponseDone>> {
                     let transport = {
                         let mut pool = self.pool.borrow_mut();
                         pool.pop()
@@ -364,15 +356,14 @@ fn proxy_verbose() {
 
                     let driver = CDriver { respond };
 
-                    let (transport, req_body, res) =
-                        h1::request(transport, req, req_body, driver).await?;
+                    let (transport, res) = h1::request(transport, req, req_body, driver).await?;
 
                     if let Some(transport) = transport {
                         let mut pool = self.pool.borrow_mut();
                         pool.push(transport);
                     }
 
-                    Ok((req_body, res))
+                    Ok(res)
                 }
             }
 
@@ -393,22 +384,16 @@ fn proxy_verbose() {
                     todo!()
                 }
 
-                async fn on_final_response<B>(
+                async fn on_final_response(
                     self,
                     res: Response,
-                    mut body: B,
-                ) -> eyre::Result<(B, Self::Return)>
-                where
-                    B: Body,
-                {
+                    body: &mut impl Body,
+                ) -> eyre::Result<Self::Return> {
                     let respond = self.respond;
                     let mut respond = respond.write_final_response(res).await?;
 
                     loop {
-                        let chunk;
-                        (body, chunk) = body.next_chunk().await?;
-
-                        match chunk {
+                        match body.next_chunk().await? {
                             BodyChunk::Buf(buf) => {
                                 respond = respond.write_body_chunk(buf).await?;
                             }
@@ -436,7 +421,7 @@ fn proxy_verbose() {
 
                     let respond = respond.finish_body(None).await?;
 
-                    Ok((body, respond))
+                    Ok(respond)
                 }
             }
 

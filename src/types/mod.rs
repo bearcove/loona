@@ -64,7 +64,7 @@ where
 {
     fn content_len(&self) -> Option<u64>;
     fn eof(&self) -> bool;
-    async fn next_chunk(self) -> eyre::Result<(Self, BodyChunk)>;
+    async fn next_chunk(&mut self) -> eyre::Result<BodyChunk>;
 }
 
 impl Body for () {
@@ -76,7 +76,7 @@ impl Body for () {
         true
     }
 
-    async fn next_chunk(self) -> eyre::Result<(Self, BodyChunk)> {
-        Ok((self, BodyChunk::Eof))
+    async fn next_chunk(&mut self) -> eyre::Result<BodyChunk> {
+        Ok(BodyChunk::Eof)
     }
 }
