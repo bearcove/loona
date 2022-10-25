@@ -547,8 +547,8 @@ fn proxy_verbose() {
                     respond: h1::H1Responder<T, h1::ExpectResponseHeaders>,
                 ) -> eyre::Result<(B, h1::H1Responder<T, h1::ResponseDone>)>
                 where
-                    T: WriteOwned + 'static,
-                    B: Body + 'static,
+                    T: WriteOwned,
+                    B: Body,
                 {
                     let transport = {
                         let mut pool = self.pool.borrow_mut();

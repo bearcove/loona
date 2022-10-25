@@ -304,8 +304,8 @@ pub trait ServerDriver {
     ) -> eyre::Result<(B, H1Responder<T, ResponseDone>)>
     where
         // FIXME: lift the 'static restriction by not spawning send req body
-        T: WriteOwned + 'static,
-        B: Body + 'static;
+        T: WriteOwned,
+        B: Body;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -320,7 +320,7 @@ pub enum ServeOutcome {
 pub async fn serve(
     // TODO: split read/write halves? so we don't have to handle `Rc` ourselves
     // TODO: life 'static requirement
-    transport: impl ReadWriteOwned + 'static,
+    transport: impl ReadWriteOwned,
     conf: Rc<ServerConf>,
     mut client_buf: AggBuf,
     driver: impl ServerDriver,
@@ -545,9 +545,9 @@ pub async fn request<T, B, D>(
     driver: D,
 ) -> eyre::Result<(Option<Rc<T>>, B, D::Return)>
 where
-    T: ReadWriteOwned + 'static,
-    B: Body + 'static,
-    D: ClientDriver + 'static,
+    T: ReadWriteOwned,
+    B: Body,
+    D: ClientDriver,
 {
     // TODO: set content-length if body isn't empty / missing
     let mode = if body.content_len().is_none() {
