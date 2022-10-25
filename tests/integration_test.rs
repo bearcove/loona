@@ -303,7 +303,7 @@ fn proxy_verbose() {
         cmd.arg("--release");
         cmd.arg("--manifest-path");
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-        cmd.arg(format!("${manifest_dir}/hyper-testbed/Cargo.toml"));
+        cmd.arg(format!("{manifest_dir}/hyper-testbed/Cargo.toml"));
         cmd.stdout(Stdio::piped());
         cmd.kill_on_drop(true);
 
