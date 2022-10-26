@@ -1,5 +1,6 @@
-use std::{rc::Rc, fmt};
+use std::{fmt, rc::Rc};
 
+use nom::InputTake;
 use tracing::debug;
 
 use crate::{
@@ -25,7 +26,11 @@ pub(crate) enum H1BodyKind {
 
 impl<T> fmt::Debug for H1Body<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("H1Body").field("kind", &self.kind).field("read", &self.read).field("eof", &self.eof).finish()
+        f.debug_struct("H1Body")
+            .field("kind", &self.kind)
+            .field("read", &self.read)
+            .field("eof", &self.eof)
+            .finish()
     }
 }
 
@@ -86,30 +91,36 @@ where
                 }
             }
             H1BodyKind::ContentLength(len) => {
-                let remain = len - self.read;
-                if remain == 0 {
+                let wanted = len - self.read;
+                if wanted == 0 {
                     self.eof = true;
                     return Ok(BodyChunk::Eof);
                 }
 
-                debug!("reading content-length body, remain = {remain}");
-
+                debug!(%wanted, "reading content-length body");
                 let mut buf = self.buf.take().unwrap();
 
-                buf.write().grow_if_needed()?;
-                let mut slice = buf.write_slice().limit(remain);
+                let mut avail = buf.read().len();
+                if avail == 0 {
+                    buf.write().grow_if_needed()?;
+                    let mut slice = buf.write_slice().limit(wanted);
 
-                let res;
-                (res, slice) = self.transport.as_ref().read(slice).await;
-                buf = slice.into_inner();
-                let n = res?;
-                debug!("read {n} bytes");
+                    let res;
+                    (res, slice) = self.transport.as_ref().read(slice).await;
+                    buf = slice.into_inner();
+                    let n = res?;
+                    debug!("read {n} bytes");
+                    avail += n as u32;
+                }
+                assert!(avail > 0);
 
-                self.read += n as u64;
-                let slice = buf.read().slice(0..n as u32);
-                self.buf = Some(buf.split());
-
-                Ok(BodyChunk::AggSlice(slice))
+                let copied = std::cmp::min(wanted, avail as u64);
+                let slice = buf.read().read_slice();
+                let (suffix, prefix) = slice.take_split(copied as usize);
+                self.read += prefix.len() as u64;
+                let buf = buf.split_at(suffix);
+                self.buf = Some(buf);
+                Ok(BodyChunk::AggSlice(prefix))
             }
             H1BodyKind::Empty => {
                 self.eof = true;
@@ -181,7 +192,10 @@ pub(crate) async fn write_h1_body_chunk(
     Ok(())
 }
 
-pub(crate) async fn write_h1_body_end(transport: &impl WriteOwned, mode: BodyWriteMode) -> eyre::Result<()> {
+pub(crate) async fn write_h1_body_end(
+    transport: &impl WriteOwned,
+    mode: BodyWriteMode,
+) -> eyre::Result<()> {
     match mode {
         BodyWriteMode::Chunked => {
             let mut list = IoChunkList::default();

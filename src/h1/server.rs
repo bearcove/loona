@@ -11,7 +11,7 @@ use crate::{
 };
 
 use super::{
-    body::{H1Body, H1BodyKind, BodyWriteMode},
+    body::{BodyWriteMode, H1Body, H1BodyKind},
     encode::{encode_headers, encode_response},
 };
 
@@ -189,7 +189,7 @@ where
         self,
         res: Response,
     ) -> eyre::Result<Responder<T, ExpectResponseBody>> {
-        let mode = if let Some(_) = res.headers.content_length() {
+        let mode = if res.headers.content_length().is_some() {
             if !res.headers.is_chunked_transfer_encoding() {
                 BodyWriteMode::ContentLength
             } else {
@@ -205,9 +205,7 @@ where
 
         let this = self.write_response_internal(res).await?;
         Ok(Responder {
-            state: ExpectResponseBody {
-                mode,
-            },
+            state: ExpectResponseBody { mode },
             transport: this.transport,
         })
     }
