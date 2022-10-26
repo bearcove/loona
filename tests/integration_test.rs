@@ -13,15 +13,15 @@ use hring::{
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
 use pretty_hex::PrettyHex;
-use std::{net::SocketAddr, process::Stdio, rc::Rc, time::Duration};
+use std::{net::SocketAddr, rc::Rc, time::Duration};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    process::Command,
 };
 use tracing::debug;
 
 mod proxy;
+mod testbed;
 
 // Test ideas:
 // headers too large (ups/dos)
@@ -280,35 +280,8 @@ fn proxy_verbose() {
     }
 
     helpers::run(async move {
-        let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<SocketAddr>();
+        let (upstream_addr, _upstream_guard) = testbed::start().await?;
 
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-        let mut cmd = Command::new(format!(
-            "{manifest_dir}/hyper-testbed/target/release/hyper-testbed"
-        ));
-        cmd.stdout(Stdio::piped());
-        cmd.kill_on_drop(true);
-
-        let child = cmd.spawn()?;
-        let mut addr_tx = Some(addr_tx);
-
-        tokio_uring::spawn(async move {
-            let stdout = child.stdout.unwrap();
-            let stdout = BufReader::new(stdout);
-            let mut lines = stdout.lines();
-            while let Some(line) = lines.next_line().await.unwrap() {
-                if let Some(rest) = line.strip_prefix("I listen on ") {
-                    let addr = rest.parse::<SocketAddr>().unwrap();
-                    if let Some(addr_tx) = addr_tx.take() {
-                        addr_tx.send(addr).unwrap();
-                    }
-                } else {
-                    debug!("[upstream] {}", line);
-                }
-            }
-        });
-
-        let upstream_addr = addr_rx.await?;
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         let mut rx = rx.shared();
 
