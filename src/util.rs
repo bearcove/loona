@@ -32,10 +32,8 @@ where
                             .to_string_lossy()
                     );
 
-                    if buf.write().capacity() >= max_len {
-                        // XXX: not great that the error here is 'headers too long' when
-                        // this is a generic parse function.
-                        return Err(SemanticError::HeadersTooLong.into());
+                    if buf.read().len() >= max_len {
+                        return Err(SemanticError::BufferLimitReachedWhileParsing.into());
                     }
 
                     buf.write().grow_if_needed()?;
@@ -91,14 +89,16 @@ pub(crate) async fn write_all_list(
 
 #[derive(thiserror::Error, Debug)]
 pub(crate) enum SemanticError {
-    #[error("the headers are too long")]
-    HeadersTooLong,
+    #[error("buffering limit reached while parsing")]
+    BufferLimitReachedWhileParsing,
 }
 
 impl SemanticError {
     pub(crate) fn as_http_response(&self) -> &'static [u8] {
         match self {
-            Self::HeadersTooLong => b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n",
+            Self::BufferLimitReachedWhileParsing => {
+                b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n"
+            }
         }
     }
 }

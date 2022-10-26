@@ -1,6 +1,7 @@
 use std::{fmt, rc::Rc};
 
-use tracing::debug;
+use pretty_hex::PrettyHex;
+use tracing::{debug, trace};
 
 use crate::{
     bufpool::{AggBuf, IoChunkList},
@@ -140,6 +141,7 @@ impl ContentLengthDecoder {
         let chunk = buf.take_contiguous_at_most(remain as u32);
         match chunk {
             Some(chunk) => {
+                trace!("got chunk {}", chunk.hex_dump());
                 self.read += chunk.len() as u64;
                 buf_slot.replace(buf);
                 Ok(BodyChunk::Chunk(chunk.into()))
