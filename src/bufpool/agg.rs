@@ -158,7 +158,7 @@ impl AggBuf {
 
         assert!(
             abs_block_start <= abs_rest_start,
-            "rest must start into last block"
+            "rest must start into last block. abs_block_start = {abs_block_start} < abs_rest_start = {abs_rest_start}",
         );
         assert!(
             abs_rest_start <= abs_filled_end,

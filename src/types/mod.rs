@@ -1,4 +1,6 @@
 mod headers;
+use std::fmt::Debug;
+
 pub use headers::*;
 use tracing::debug;
 
@@ -58,7 +60,7 @@ pub enum BodyChunk {
     Eof,
 }
 
-pub trait Body
+pub trait Body: Debug
 where
     Self: Sized,
 {

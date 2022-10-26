@@ -250,6 +250,8 @@ where
         self,
         trailers: Option<Headers>,
     ) -> eyre::Result<Responder<T, ResponseDone>> {
+        super::body::write_h1_body_end(self.transport.as_ref(), self.state.mode).await?;
+
         if let Some(trailers) = trailers {
             // TODO: check all preconditions
             let mut list = IoChunkList::default();

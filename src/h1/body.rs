@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{rc::Rc, fmt};
 
 use tracing::debug;
 
@@ -16,10 +16,17 @@ pub(crate) struct H1Body<T> {
     pub(crate) eof: bool,
 }
 
+#[derive(Debug)]
 pub(crate) enum H1BodyKind {
     Chunked,
     ContentLength(u64),
     Empty,
+}
+
+impl<T> fmt::Debug for H1Body<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("H1Body").field("kind", &self.kind).field("read", &self.read).field("eof", &self.eof).finish()
+    }
 }
 
 impl<T> Body for H1Body<T>
@@ -85,14 +92,18 @@ where
                     return Ok(BodyChunk::Eof);
                 }
 
+                debug!("reading content-length body, remain = {remain}");
+
                 let mut buf = self.buf.take().unwrap();
 
                 buf.write().grow_if_needed()?;
                 let mut slice = buf.write_slice().limit(remain);
+
                 let res;
                 (res, slice) = self.transport.as_ref().read(slice).await;
                 buf = slice.into_inner();
                 let n = res?;
+                debug!("read {n} bytes");
 
                 self.read += n as u64;
                 let slice = buf.read().slice(0..n as u32);
@@ -170,7 +181,7 @@ pub(crate) async fn write_h1_body_chunk(
     Ok(())
 }
 
-async fn write_h1_body_end(transport: &impl WriteOwned, mode: BodyWriteMode) -> eyre::Result<()> {
+pub(crate) async fn write_h1_body_end(transport: &impl WriteOwned, mode: BodyWriteMode) -> eyre::Result<()> {
     match mode {
         BodyWriteMode::Chunked => {
             let mut list = IoChunkList::default();
