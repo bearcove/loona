@@ -11,7 +11,10 @@ use nom::{
 };
 use smallvec::SmallVec;
 
-use crate::bufpool::{self, BufMut};
+use crate::{
+    bufpool::{self, BufMut},
+    Buf,
+};
 
 use super::{IoChunk, IoChunkable};
 
@@ -240,6 +243,54 @@ impl AggBuf {
             len: len as _,
             pos: 0,
         }
+    }
+
+    /// Take at most `n` bytes from the filled portion of this buffer and
+    /// advance this buffer's offset. If this returns `None`, it means
+    /// the filled portion is empty.
+    pub fn take_contiguous_at_most(&mut self, n: u32) -> Option<Buf> {
+        let mut inner = self.inner.borrow_mut();
+        if inner.len == 0 {
+            return None;
+        }
+
+        let start = inner.off;
+        let len = std::cmp::min(n, inner.len);
+        let end = start + len;
+
+        let (block_index, block_range) = inner.contiguous_range(start..len);
+        let block = inner.blocks[block_index].dangerous_clone();
+        let u16_block_range: Range<u16> =
+            (block_range.start.try_into().unwrap())..(block_range.end.try_into().unwrap());
+        let ret = block.freeze_slice(u16_block_range);
+        let consumed = ret.len() as u32;
+
+        let next_inner = if block_range.end == inner.block_size as usize {
+            // we consumed a whole buf
+            AggBufInner {
+                block_size: inner.block_size,
+                blocks: inner
+                    .blocks
+                    .iter()
+                    .skip(1)
+                    .map(|b| b.dangerous_clone())
+                    .collect(),
+                off: inner.off + consumed - inner.block_size,
+                len: inner.len - consumed,
+            }
+        } else {
+            // we still have part of a buf
+            AggBufInner {
+                block_size: inner.block_size,
+                blocks: inner.blocks.iter().map(|b| b.dangerous_clone()).collect(),
+                off: inner.off + consumed,
+                len: inner.len - consumed,
+            }
+        };
+        *self = Self {
+            inner: Rc::new(RefCell::new(next_inner)),
+        };
+        Some(ret)
     }
 }
 

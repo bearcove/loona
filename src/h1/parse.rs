@@ -32,6 +32,16 @@ pub fn chunk(i: AggSlice) -> IResult<AggSlice, Chunk> {
     Ok((i, Chunk { len, data }))
 }
 
+/// Parses a chunked transfer coding chunk size (hex text followed by CRLF)
+pub fn chunk_size(i: AggSlice) -> IResult<AggSlice, u64> {
+    terminated(u64_text_hex, tag(CRLF))(i)
+}
+
+pub fn crlf(i: AggSlice) -> IResult<AggSlice, ()> {
+    let (i, _) = tag(CRLF)(i)?;
+    Ok((i, ()))
+}
+
 // Looks like `GET /path HTTP/1.1\r\n`, then headers
 pub fn request(i: AggSlice) -> IResult<AggSlice, Request> {
     let (i, method) = take_until_and_consume(b" ")(i)?;

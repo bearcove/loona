@@ -4,10 +4,10 @@ use eyre::Context;
 use tracing::debug;
 
 use crate::{
-    bufpool::{AggBuf, Buf, IoChunkList},
+    bufpool::{AggBuf, IoChunkList},
     io::WriteOwned,
     util::{read_and_parse, write_all_list, SemanticError},
-    Body, Headers, ReadWriteOwned, Request, Response,
+    Body, Headers, IoChunkable, ReadWriteOwned, Request, Response,
 };
 
 use super::{
@@ -233,7 +233,7 @@ where
     /// announced content-length.
     pub async fn write_body_chunk(
         self,
-        chunk: Buf,
+        chunk: impl IoChunkable,
     ) -> eyre::Result<Responder<T, ExpectResponseBody>> {
         super::body::write_h1_body_chunk(self.transport.as_ref(), chunk, self.state.mode).await?;
         Ok(self)

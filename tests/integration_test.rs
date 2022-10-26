@@ -191,7 +191,7 @@ fn request_api() {
                         BodyChunk::AggSlice(s) => {
                             debug!("got a chunk: {:?}", s.to_vec().hex_dump());
                         }
-                        BodyChunk::Eof => {
+                        BodyChunk::Done => {
                             break;
                         }
                     }
@@ -411,7 +411,7 @@ fn proxy_verbose() {
                                     }
                                 }
                             }
-                            BodyChunk::Eof => {
+                            BodyChunk::Done => {
                                 // should we do something here in case of
                                 // content-length mismatches or something?
                                 break;

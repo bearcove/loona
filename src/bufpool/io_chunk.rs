@@ -156,6 +156,11 @@ impl IoChunkList {
         chunkable.append_to(&mut self.chunks);
     }
 
+    /// Add a single chunk to the list
+    pub fn push_chunk(&mut self, chunk: IoChunk) {
+        self.chunks.push(chunk);
+    }
+
     /// Returns total length
     pub fn len(&self) -> usize {
         self.chunks.iter().map(|c| c.len()).sum()
