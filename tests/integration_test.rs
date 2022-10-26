@@ -389,3 +389,150 @@ fn proxy_echo_body_content_len() {
         Ok(())
     });
 }
+
+#[test]
+fn proxy_echo_body_chunked() {
+    eyre::set_hook(Box::new(|e| eyre::DefaultHandler::default_with(e))).unwrap();
+
+    #[allow(drop_bounds)]
+    async fn client(ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
+        let socket = TcpStream::connect(ln_addr).await?;
+        socket.set_nodelay(true)?;
+
+        let mut buf = BytesMut::with_capacity(256);
+
+        let (mut read, mut write) = socket.into_split();
+
+        let send_fut = async move {
+            write
+                .write_all(b"POST /echo-body HTTP/1.1\r\ntransfer-encoding: chunked\r\n\r\n")
+                .await?;
+            write.flush().await?;
+
+            let chunks = ["a first chunk", "a second chunk", "a third and final chunk"];
+            for chunk in chunks {
+                let chunk_len = chunk.len();
+                write
+                    .write_all(format!("{chunk_len:x}\r\n{chunk}\r\n").as_bytes())
+                    .await?;
+                write.flush().await?;
+            }
+
+            write.write_all(b"0\r\n\r\n").await?;
+            write.flush().await?;
+
+            Ok::<(), eyre::Report>(())
+        };
+        tokio_uring::spawn(async move {
+            if let Err(e) = send_fut.await {
+                panic!("Error sending request: {e}");
+            }
+        });
+
+        debug!("Reading response...");
+        'read_response: loop {
+            buf.reserve(256);
+            read.read_buf(&mut buf).await?;
+            debug!("After read, got {} bytes", buf.len());
+
+            let mut headers = [EMPTY_HEADER; 16];
+            let mut res = httparse::Response::new(&mut headers[..]);
+            let body_offset = match res.parse(&buf[..])? {
+                Status::Complete(off) => off,
+                Status::Partial => continue 'read_response,
+            };
+            debug!("client got a response header");
+            assert_eq!(res.code, Some(200));
+
+            let mut chunked = false;
+            for header in res.headers.iter() {
+                debug!(
+                    "Got header: {} = {:?}",
+                    header.name,
+                    std::str::from_utf8(header.value)
+                );
+                if header.name.eq_ignore_ascii_case("transfer-encoding") {
+                    let value = std::str::from_utf8(header.value).unwrap();
+                    if value.eq_ignore_ascii_case("chunked") {
+                        chunked = true;
+                    }
+                }
+            }
+            assert!(chunked);
+
+            let mut buf = buf.split_off(body_offset);
+            let mut body: Vec<u8> = Vec::new();
+
+            loop {
+                let status = httparse::parse_chunk_size(&buf[..]).unwrap();
+                match status {
+                    Status::Complete((offset, chunk_len)) => {
+                        debug!("Reading {chunk_len} chunk");
+                        buf = buf.split_off(offset);
+
+                        while buf.len() < chunk_len as usize {
+                            debug!("buf has {} bytes, need {}", buf.len(), chunk_len);
+                            if buf.capacity() == 0 {
+                                buf.reserve(256);
+                            }
+                            let n = read.read_buf(&mut buf).await?;
+                            if n == 0 {
+                                panic!("unexpected EOF");
+                            }
+                            debug!("just read {n}");
+                        }
+
+                        body.extend_from_slice(&buf[..chunk_len as usize]);
+                        buf = buf.split_off(chunk_len as usize);
+
+                        while buf.len() < 2 {
+                            if buf.capacity() == 0 {
+                                buf.reserve(2);
+                            }
+                            let n = read.read_buf(&mut buf).await?;
+                            if n == 0 {
+                                panic!("unexpected EOF");
+                            }
+                        }
+
+                        assert_eq!(&buf[..2], b"\r\n");
+                        buf = buf.split_off(2);
+
+                        if chunk_len == 0 {
+                            debug!("Got the last chunk");
+                            break;
+                        }
+                    }
+                    Status::Partial => {
+                        // partial chunk, reading more
+                        buf.reserve(256);
+                        let n = read.read_buf(&mut buf).await?;
+                        if n == 0 {
+                            panic!("unexpected EOF");
+                        }
+                    }
+                }
+            }
+
+            debug!("Full response body: {:?}", body.hex_dump());
+            let body = String::from_utf8(body)?;
+            assert_eq!(body, "a first chunka second chunka third and final chunk");
+
+            break 'read_response;
+        }
+
+        debug!("http client shutting down");
+        Ok(())
+    }
+
+    helpers::run(async move {
+        let (upstream_addr, _upstream_guard) = testbed::start().await?;
+        let (ln_addr, guard, proxy_fut) = proxy::start(upstream_addr).await?;
+        let client_fut = client(ln_addr, guard);
+
+        tokio::try_join!(proxy_fut, client_fut)?;
+        debug!("everything has been joined");
+
+        Ok(())
+    });
+}
