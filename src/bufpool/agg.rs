@@ -254,11 +254,15 @@ impl AggBuf {
             return None;
         }
 
-        let start = inner.off;
+        let start = 0;
         let len = std::cmp::min(n, inner.len);
         let end = start + len;
 
+        dbg2!("take_contiguous_at_most", start, len, end);
+
         let (block_index, block_range) = inner.contiguous_range(start..end);
+        dbg2!("take_contiguous_at_most", block_index, &block_range);
+
         let block = inner.blocks[block_index].dangerous_clone();
         let u16_block_range: Range<u16> =
             (block_range.start.try_into().unwrap())..(block_range.end.try_into().unwrap());
@@ -267,6 +271,7 @@ impl AggBuf {
 
         let next_inner = if block_range.end == inner.block_size as usize {
             // we consumed a whole buf
+            dbg2!("take_contiguous_at_most", "consumed whole buf");
             AggBufInner {
                 block_size: inner.block_size,
                 blocks: inner
@@ -280,6 +285,7 @@ impl AggBuf {
             }
         } else {
             // we still have part of a buf
+            dbg2!("take_contiguous_at_most", "still have part of a buf");
             AggBufInner {
                 block_size: inner.block_size,
                 blocks: inner.blocks.iter().map(|b| b.dangerous_clone()).collect(),
@@ -1062,5 +1068,44 @@ mod tests {
 
             buf = buf.split_at(rest);
         }
+    }
+
+    #[test]
+    fn agg_take_contiguous_at_most_simple() -> eyre::Result<()> {
+        let mut buf = AggBuf::default();
+        let input = "hello world";
+
+        buf.write().put(input)?;
+        let contig = buf.take_contiguous_at_most(input.len() as u32).unwrap();
+        assert_eq!(&contig[..], input.as_bytes());
+
+        Ok(())
+    }
+
+    #[test]
+    fn agg_take_continuous_at_most_spread() -> eyre::Result<()> {
+        let mut buf = AggBuf::default();
+        buf.write().grow_if_needed()?;
+        assert_eq!(buf.read().capacity(), 4096);
+
+        let input = b"hello world";
+        buf.write().put(" ".repeat(4096 - 5))?;
+        buf.write().put(input)?;
+
+        println!("take padding (should still have rest of block)");
+        let contig = buf.take_contiguous_at_most(4096 - 5).unwrap();
+        assert_eq!(contig.len(), 4096 - 5);
+
+        let mut remain = input.len() as u32;
+        let mut needle_remain = &input[..];
+        while remain > 0 {
+            println!("take part of needle (remain {remain})");
+            let contig = buf.take_contiguous_at_most(remain).unwrap();
+            assert_eq!(&contig[..], &needle_remain[..contig.len()]);
+            remain -= contig.len() as u32;
+            needle_remain = &needle_remain[contig.len()..];
+        }
+
+        Ok(())
     }
 }
