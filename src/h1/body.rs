@@ -1,140 +1,249 @@
 use std::{fmt, rc::Rc};
 
-use nom::InputTake;
 use tracing::debug;
 
 use crate::{
-    bufpool::{AggBuf, IoChunkList, IoChunkable},
+    bufpool::{AggBuf, IoChunkList},
     util::{read_and_parse, write_all_list},
-    Body, BodyChunk, ReadOwned, WriteOwned,
+    Body, BodyChunk, BodyErrorReason, IoChunk, ReadOwned, WriteOwned,
 };
 
+/// An HTTP/1.1 body, either chunked or content-length.
 pub(crate) struct H1Body<T> {
-    pub(crate) transport: Rc<T>,
-    pub(crate) buf: Option<AggBuf>,
-    pub(crate) kind: H1BodyKind,
-    pub(crate) read: u64,
-    pub(crate) eof: bool,
+    transport: Rc<T>,
+    buf: Option<AggBuf>,
+    state: Decoder,
+}
+
+#[derive(Debug)]
+enum Decoder {
+    Chunked(ChunkedDecoder),
+    ContentLength(ContentLengthDecoder),
+}
+
+#[derive(Debug)]
+enum ChunkedDecoder {
+    ReadingChunkHeader,
+    ReadingChunk { remain: u64 },
+
+    // We've gotten one empty chunk
+    Done,
+}
+
+#[derive(Debug)]
+struct ContentLengthDecoder {
+    len: u64,
+    read: u64,
 }
 
 #[derive(Debug)]
 pub(crate) enum H1BodyKind {
     Chunked,
     ContentLength(u64),
-    Empty,
 }
 
 impl<T> fmt::Debug for H1Body<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("H1Body")
-            .field("kind", &self.kind)
-            .field("read", &self.read)
-            .field("eof", &self.eof)
+            .field("state", &self.state)
             .finish()
     }
 }
 
-impl<T> Body for H1Body<T>
-where
-    T: ReadOwned,
-{
+impl<T: ReadOwned> H1Body<T> {
+    pub(crate) fn new(transport: Rc<T>, buf: AggBuf, kind: H1BodyKind) -> Self {
+        let state = match kind {
+            H1BodyKind::Chunked => Decoder::Chunked(ChunkedDecoder::ReadingChunkHeader),
+            H1BodyKind::ContentLength(len) => {
+                Decoder::ContentLength(ContentLengthDecoder { len, read: 0 })
+            }
+        };
+        H1Body {
+            transport,
+            buf: Some(buf),
+            state,
+        }
+    }
+
+    /// Returns the inner buffer, but only if the body has been
+    /// fully read.
+    pub(crate) fn into_buf(self) -> Option<AggBuf> {
+        if !self.eof() {
+            return None;
+        }
+        self.buf
+    }
+}
+
+impl<T: ReadOwned> Body for H1Body<T> {
     fn content_len(&self) -> Option<u64> {
-        match self.kind {
-            H1BodyKind::Chunked => None,
-            H1BodyKind::ContentLength(len) => Some(len),
-            H1BodyKind::Empty => Some(0),
+        match &self.state {
+            Decoder::Chunked(_) => None,
+            Decoder::ContentLength(state) => Some(state.len),
         }
     }
 
     async fn next_chunk(&mut self) -> eyre::Result<BodyChunk> {
-        if self.eof {
-            return Ok(BodyChunk::Eof);
+        if self.buf.is_none() {
+            return Ok(BodyChunk::Done { trailers: None });
         }
 
-        match self.kind {
-            H1BodyKind::Chunked => {
-                const MAX_CHUNK_LENGTH: u32 = 1024 * 1024;
-
-                debug!("reading chunk");
-                let chunk;
-                let mut buf = self.buf.take().unwrap();
-                buf.write().grow_if_needed()?;
-
-                // TODO: this reads the whole chunk, but if we don't need to maintain
-                // chunk size, we don't need to buffer that far. we can just read
-                // whatever, skip the CRLF, know when we need to stop to read another
-                // chunk length, etc. this needs to be a state machine.
-                (buf, chunk) = match read_and_parse(
-                    super::parse::chunk,
-                    self.transport.as_ref(),
-                    buf,
-                    MAX_CHUNK_LENGTH,
-                )
-                .await?
-                {
-                    Some(t) => t,
-                    None => {
-                        return Err(eyre::eyre!("peer went away before sending final chunk"));
-                    }
-                };
-                debug!("read {} byte chunk", chunk.len);
-
-                self.buf = Some(buf);
-
-                if chunk.len == 0 {
-                    debug!("received 0-length chunk, that's EOF!");
-                    self.eof = true;
-                    Ok(BodyChunk::Eof)
-                } else {
-                    self.read += chunk.len;
-                    Ok(BodyChunk::AggSlice(chunk.data))
-                }
+        match &mut self.state {
+            Decoder::Chunked(state) => {
+                state
+                    .next_chunk(&mut self.buf, self.transport.as_ref())
+                    .await
             }
-            H1BodyKind::ContentLength(len) => {
-                let wanted = len - self.read;
-                if wanted == 0 {
-                    self.eof = true;
-                    return Ok(BodyChunk::Eof);
-                }
-
-                debug!(%wanted, "reading content-length body");
-                let mut buf = self.buf.take().unwrap();
-
-                let mut avail = buf.read().len();
-                if avail == 0 {
-                    buf.write().grow_if_needed()?;
-                    let mut slice = buf.write_slice().limit(wanted);
-
-                    let res;
-                    (res, slice) = self.transport.as_ref().read(slice).await;
-                    buf = slice.into_inner();
-                    let n = res?;
-                    debug!("read {n} bytes");
-                    avail += n as u32;
-                }
-                assert!(avail > 0);
-
-                let copied = std::cmp::min(wanted, avail as u64);
-                let slice = buf.read().read_slice();
-                let (suffix, prefix) = slice.take_split(copied as usize);
-                self.read += prefix.len() as u64;
-                let buf = buf.split_at(suffix);
-                self.buf = Some(buf);
-                Ok(BodyChunk::AggSlice(prefix))
-            }
-            H1BodyKind::Empty => {
-                self.eof = true;
-                Ok(BodyChunk::Eof)
+            Decoder::ContentLength(state) => {
+                state
+                    .next_chunk(&mut self.buf, self.transport.as_ref())
+                    .await
             }
         }
     }
 
     fn eof(&self) -> bool {
-        match self.kind {
-            H1BodyKind::Chunked => self.eof,
-            H1BodyKind::ContentLength(len) => self.read == len,
-            H1BodyKind::Empty => true,
+        match &self.state {
+            Decoder::Chunked(state) => state.eof(),
+            Decoder::ContentLength(state) => state.eof(),
         }
+    }
+}
+
+impl ContentLengthDecoder {
+    async fn next_chunk(
+        &mut self,
+        buf_slot: &mut Option<AggBuf>,
+        transport: &impl ReadOwned,
+    ) -> eyre::Result<BodyChunk> {
+        let remain = self.len - self.read;
+        if remain == 0 {
+            return Ok(BodyChunk::Done { trailers: None });
+        }
+
+        debug!(%remain, "reading content-length body");
+
+        let mut buf = buf_slot
+            .take()
+            .ok_or_else(|| BodyErrorReason::CalledNextChunkAfterError.as_err())?;
+
+        if buf.read().len() == 0 {
+            buf.write().grow_if_needed()?;
+            let mut slice = buf.write_slice();
+            let res;
+            (res, slice) = transport.read(slice).await;
+            buf = slice.into_inner();
+            res.map_err(|e| BodyErrorReason::ErrorWhileReadingChunkData.with_cx(e))?;
+        }
+
+        // FIXME: integer demotion
+        let chunk = buf.take_contiguous_at_most(remain as u32);
+        match chunk {
+            Some(chunk) => {
+                self.read += chunk.len() as u64;
+                buf_slot.replace(buf);
+                Ok(BodyChunk::Chunk(chunk.into()))
+            }
+            None => Err(BodyErrorReason::ClosedWhileReadingContentLength
+                .as_err()
+                .into()),
+        }
+    }
+
+    fn eof(&self) -> bool {
+        self.len == self.read
+    }
+}
+
+impl ChunkedDecoder {
+    async fn next_chunk(
+        &mut self,
+        buf_slot: &mut Option<AggBuf>,
+        transport: &impl ReadOwned,
+    ) -> eyre::Result<BodyChunk> {
+        loop {
+            let mut buf = buf_slot
+                .take()
+                .ok_or_else(|| BodyErrorReason::CalledNextChunkAfterError.as_err())?;
+
+            if let ChunkedDecoder::Done = self {
+                buf_slot.replace(buf);
+                // TODO: prevent misuse when calling `next_chunk` after trailers
+                // were already read?
+                return Ok(BodyChunk::Done { trailers: None });
+            }
+
+            if let ChunkedDecoder::ReadingChunkHeader = self {
+                let (next_buf, chunk_size) =
+                    read_and_parse(super::parse::chunk_size, transport, buf, 16)
+                        .await
+                        .map_err(|e| BodyErrorReason::InvalidChunkSize.with_cx(e))?
+                        .ok_or_else(|| BodyErrorReason::ClosedWhileReadingChunkSize.as_err())?;
+                buf = next_buf;
+
+                if chunk_size == 0 {
+                    // that's the final chunk, look for the final CRLF
+                    let (next_buf, _) = read_and_parse(super::parse::crlf, transport, buf, 2)
+                        .await
+                        .map_err(|e| BodyErrorReason::InvalidChunkTerminator.with_cx(e))?
+                        .ok_or_else(|| {
+                            BodyErrorReason::ClosedWhileReadingChunkTerminator.as_err()
+                        })?;
+                    buf = next_buf;
+                    *self = ChunkedDecoder::Done;
+                    buf_slot.replace(buf);
+
+                    // TODO: trailers
+                    return Ok(BodyChunk::Done { trailers: None });
+                }
+
+                *self = ChunkedDecoder::ReadingChunk { remain: chunk_size }
+            };
+
+            if let ChunkedDecoder::ReadingChunk { remain } = self {
+                if *remain == 0 {
+                    // look for CRLF terminator
+                    let (next_buf, _) = read_and_parse(super::parse::crlf, transport, buf, 2)
+                        .await
+                        .map_err(|e| BodyErrorReason::InvalidChunkTerminator.with_cx(e))?
+                        .ok_or_else(|| {
+                            BodyErrorReason::ClosedWhileReadingChunkTerminator.as_err()
+                        })?;
+                    buf = next_buf;
+                    *self = ChunkedDecoder::ReadingChunkHeader;
+                    buf_slot.replace(buf);
+                    continue;
+                }
+
+                if buf.read().len() == 0 {
+                    buf.write().grow_if_needed()?;
+                    let mut slice = buf.write_slice();
+                    let res;
+                    (res, slice) = transport.read(slice).await;
+                    buf = slice.into_inner();
+                    res.map_err(|e| BodyErrorReason::ErrorWhileReadingChunkData.with_cx(e))?;
+                }
+
+                // FIXME: integer demotion
+                let chunk = buf.take_contiguous_at_most(*remain as u32);
+                match chunk {
+                    Some(chunk) => {
+                        *remain -= chunk.len() as u64;
+                        buf_slot.replace(buf);
+                        return Ok(BodyChunk::Chunk(chunk.into()));
+                    }
+                    None => {
+                        return Err(BodyErrorReason::ClosedWhileReadingChunkData.as_err().into());
+                    }
+                }
+            } else {
+                unreachable!()
+            };
+        }
+    }
+
+    fn eof(&self) -> bool {
+        matches!(self, ChunkedDecoder::Done)
     }
 }
 
@@ -151,11 +260,8 @@ pub(crate) async fn write_h1_body(
 ) -> eyre::Result<()> {
     loop {
         match body.next_chunk().await? {
-            BodyChunk::Buf(chunk) => write_h1_body_chunk(transport.as_ref(), chunk, mode).await?,
-            BodyChunk::AggSlice(chunk) => {
-                write_h1_body_chunk(transport.as_ref(), chunk, mode).await?
-            }
-            BodyChunk::Eof => {
+            BodyChunk::Chunk(chunk) => write_h1_body_chunk(transport.as_ref(), chunk, mode).await?,
+            BodyChunk::Done { .. } => {
                 // TODO: check that we've sent what we announced in terms of
                 // content length
                 write_h1_body_end(transport.as_ref(), mode).await?;
@@ -169,24 +275,22 @@ pub(crate) async fn write_h1_body(
 
 pub(crate) async fn write_h1_body_chunk(
     transport: &impl WriteOwned,
-    chunk: impl IoChunkable,
+    chunk: IoChunk,
     mode: BodyWriteMode,
 ) -> eyre::Result<()> {
     match mode {
         BodyWriteMode::Chunked => {
             let mut list = IoChunkList::default();
             list.push(format!("{:x}\r\n", chunk.len()).into_bytes());
-            list.push(chunk);
+            list.push_chunk(chunk);
             list.push("\r\n");
 
             let list = write_all_list(transport, list).await?;
             drop(list);
         }
         BodyWriteMode::ContentLength => {
-            let mut list = IoChunkList::default();
-            list.push(chunk);
-            let list = write_all_list(transport, list).await?;
-            drop(list);
+            let (res, _) = transport.write_all(chunk).await;
+            res?;
         }
     }
     Ok(())

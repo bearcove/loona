@@ -28,6 +28,16 @@ impl From<Buf> for IoChunk {
     }
 }
 
+impl AsRef<[u8]> for IoChunk {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            IoChunk::Static(slice) => slice,
+            IoChunk::Vec(vec) => vec.as_ref(),
+            IoChunk::Buf(buf) => buf.as_ref(),
+        }
+    }
+}
+
 impl IoChunk {
     #[inline(always)]
     pub fn as_io_buf(&self) -> &dyn IoBuf {
@@ -154,6 +164,11 @@ impl IoChunkList {
     /// Add a chunkable to the list (this may result in multiple chunks)
     pub fn push(&mut self, chunkable: impl IoChunkable) {
         chunkable.append_to(&mut self.chunks);
+    }
+
+    /// Add a single chunk to the list
+    pub fn push_chunk(&mut self, chunk: IoChunk) {
+        self.chunks.push(chunk);
     }
 
     /// Returns total length

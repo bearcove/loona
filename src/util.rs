@@ -19,7 +19,7 @@ where
 {
     loop {
         debug!("reading+parsing ({} bytes so far)", buf.read().len());
-        let slice = buf.read().slice(0..buf.read().len());
+        let slice = buf.read().read_slice();
 
         let (rest, req) = match parser(slice) {
             Ok(t) => t,

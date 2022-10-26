@@ -1,10 +1,10 @@
 mod headers;
-use std::fmt::Debug;
+use std::fmt::{self, Debug};
 
 pub use headers::*;
 use tracing::debug;
 
-use crate::bufpool::{AggSlice, Buf};
+use crate::{bufpool::AggSlice, IoChunk};
 
 /// An HTTP request
 pub struct Request {
@@ -55,9 +55,80 @@ impl Response {
 
 /// A body chunk
 pub enum BodyChunk {
-    Buf(Buf),
-    AggSlice(AggSlice),
-    Eof,
+    Chunk(IoChunk),
+
+    /// The body finished, and it matched the announced content-length,
+    /// or we were using a framed protocol
+    Done {
+        trailers: Option<Box<Headers>>,
+    },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub struct BodyError {
+    reason: BodyErrorReason,
+    context: Option<Box<dyn Debug + Send + Sync>>,
+}
+
+impl fmt::Display for BodyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "body error: {:?}", self.reason)?;
+        if let Some(context) = &self.context {
+            write!(f, " ({context:?})")
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyErrorReason {
+    // next_chunk() was called after an error was returned
+    CalledNextChunkAfterError,
+
+    // while doing chunked transfer-encoding, we expected a chunk size
+    // but the connection closed/errored in some way
+    ClosedWhileReadingChunkSize,
+
+    // while doing chunked transfer-encoding, we expected a chunk size,
+    // but what we read wasn't a hex number followed by CRLF
+    InvalidChunkSize,
+
+    // while doing chunked transfer-encoding, the connection was closed
+    // in the middle of reading a chunk's data
+    ClosedWhileReadingChunkData,
+
+    // while reading a content-length body, the connection was closed
+    ClosedWhileReadingContentLength,
+
+    // while doing chunked transfer-encoding, there was a read error
+    // in the middle of reading a chunk's data
+    ErrorWhileReadingChunkData,
+
+    // while doing chunked transfer-encoding, the connection was closed
+    // in the middle of reading the
+    ClosedWhileReadingChunkTerminator,
+
+    // while doing chunked transfer-encoding, we read the chunk size,
+    // then that much data, but then encountered something other than
+    // a CRLF
+    InvalidChunkTerminator,
+}
+
+impl BodyErrorReason {
+    pub fn as_err(self) -> BodyError {
+        BodyError {
+            reason: self,
+            context: None,
+        }
+    }
+
+    pub fn with_cx(self, context: impl Debug + Send + Sync + 'static) -> BodyError {
+        BodyError {
+            reason: self,
+            context: Some(Box::new(context)),
+        }
+    }
 }
 
 pub trait Body: Debug
@@ -79,6 +150,6 @@ impl Body for () {
     }
 
     async fn next_chunk(&mut self) -> eyre::Result<BodyChunk> {
-        Ok(BodyChunk::Eof)
+        Ok(BodyChunk::Done { trailers: None })
     }
 }

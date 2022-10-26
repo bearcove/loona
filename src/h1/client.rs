@@ -77,31 +77,17 @@ where
     let recv_res_fut = {
         let transport = transport.clone();
         async move {
-            let ups_buf = AggBuf::default();
-            let (ups_buf, res) = match read_and_parse(
+            let buf = AggBuf::default();
+            let (buf, res) = read_and_parse(
                 super::parse::response,
                 transport.as_ref(),
-                ups_buf,
+                buf,
                 // TODO: make this configurable
                 64 * 1024,
             )
             .await
-            {
-                Ok(t) => match t {
-                    Some(t) => t,
-                    None => {
-                        return Err(eyre::eyre!(
-                            "server went away before sending response headers"
-                        ));
-                    }
-                },
-                Err(e) => {
-                    // TODO: return error instead?
-                    return Err(eyre::eyre!(
-                        "error reading response headers from server: {e:?}"
-                    ));
-                }
-            };
+            .map_err(|e| eyre::eyre!("error reading response headers from server: {e:?}"))?
+            .ok_or_else(|| eyre::eyre!("server went away before sending response headers"))?;
             res.debug_print();
 
             // TODO: handle informational responses
@@ -110,19 +96,17 @@ where
             // TODO: handle 204/304 separately
             let content_len = res.headers.content_length().unwrap_or_default();
 
-            let mut res_body = H1Body {
-                transport: transport.clone(),
-                buf: Some(ups_buf),
-                kind: if chunked {
+            let mut res_body = H1Body::new(
+                transport,
+                buf,
+                if chunked {
+                    // TODO: even with chunked transfer-encoding, we can announce
+                    // a content length - we should probably detect errors there?
                     H1BodyKind::Chunked
-                } else if content_len > 0 {
-                    H1BodyKind::ContentLength(content_len)
                 } else {
-                    H1BodyKind::Empty
+                    H1BodyKind::ContentLength(content_len)
                 },
-                read: 0,
-                eof: false,
-            };
+            );
 
             let conn_close = res.headers.is_connection_close();
 

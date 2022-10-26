@@ -5,21 +5,22 @@
 mod helpers;
 
 use bytes::BytesMut;
-use futures_util::FutureExt;
 use hring::{
-    h1, AggBuf, Body, BodyChunk, ChanRead, ChanWrite, Headers, IoChunk, IoChunkList, ReadWritePair,
-    Request, Response, WriteOwned,
+    h1, AggBuf, Body, BodyChunk, ChanRead, ChanWrite, Headers, ReadWritePair, Request, Response,
+    WriteOwned,
 };
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
 use pretty_hex::PrettyHex;
-use std::{cell::RefCell, net::SocketAddr, process::Stdio, rc::Rc, time::Duration};
+use std::{net::SocketAddr, rc::Rc, time::Duration};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    process::Command,
 };
 use tracing::debug;
+
+mod proxy;
+mod testbed;
 
 // Test ideas:
 // headers too large (ups/dos)
@@ -183,18 +184,8 @@ fn request_api() {
                     res.headers.is_chunked_transfer_encoding(),
                 );
 
-                loop {
-                    match body.next_chunk().await? {
-                        BodyChunk::Buf(b) => {
-                            debug!("got a chunk: {:?}", b.to_vec().hex_dump());
-                        }
-                        BodyChunk::AggSlice(s) => {
-                            debug!("got a chunk: {:?}", s.to_vec().hex_dump());
-                        }
-                        BodyChunk::Eof => {
-                            break;
-                        }
-                    }
+                while let BodyChunk::Chunk(chunk) = body.next_chunk().await? {
+                    debug!("got a chunk: {:?}", chunk.hex_dump());
                 }
 
                 Ok(())
@@ -246,10 +237,8 @@ fn request_api() {
 
 #[test]
 fn proxy_verbose() {
-    async fn client(
-        ln_addr: SocketAddr,
-        _tx: tokio::sync::oneshot::Sender<()>,
-    ) -> eyre::Result<()> {
+    #[allow(drop_bounds)]
+    async fn client(ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
         let mut socket = TcpStream::connect(ln_addr).await?;
         socket.set_nodelay(true)?;
 
@@ -288,183 +277,12 @@ fn proxy_verbose() {
     }
 
     helpers::run(async move {
-        let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<SocketAddr>();
-
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-        let mut cmd = Command::new(format!(
-            "{manifest_dir}/hyper-testbed/target/release/hyper-testbed"
-        ));
-        cmd.stdout(Stdio::piped());
-        cmd.kill_on_drop(true);
-
-        let child = cmd.spawn()?;
-        let mut addr_tx = Some(addr_tx);
-
-        tokio_uring::spawn(async move {
-            let stdout = child.stdout.unwrap();
-            let stdout = BufReader::new(stdout);
-            let mut lines = stdout.lines();
-            while let Some(line) = lines.next_line().await.unwrap() {
-                if let Some(rest) = line.strip_prefix("I listen on ") {
-                    let addr = rest.parse::<SocketAddr>().unwrap();
-                    if let Some(addr_tx) = addr_tx.take() {
-                        addr_tx.send(addr).unwrap();
-                    }
-                } else {
-                    debug!("[upstream] {}", line);
-                }
-            }
-        });
-
-        let upstream_addr = addr_rx.await?;
-        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-        let mut rx = rx.shared();
-
-        let ln = tokio_uring::net::TcpListener::bind("[::]:0".parse()?)?;
-        let ln_addr = ln.local_addr()?;
-
-        let proxy_fut = async move {
-            let conf = h1::ServerConf::default();
-            let conf = Rc::new(conf);
-
-            type TransportPool = Rc<RefCell<Vec<Rc<tokio_uring::net::TcpStream>>>>;
-
-            struct SDriver {
-                upstream_addr: SocketAddr,
-                pool: TransportPool,
-            }
-
-            impl h1::ServerDriver for SDriver {
-                async fn handle<T: WriteOwned>(
-                    &self,
-                    req: hring::Request,
-                    req_body: &mut impl Body,
-                    respond: h1::Responder<T, h1::ExpectResponseHeaders>,
-                ) -> eyre::Result<h1::Responder<T, h1::ResponseDone>> {
-                    let transport = {
-                        let mut pool = self.pool.borrow_mut();
-                        pool.pop()
-                    };
-
-                    let transport = if let Some(transport) = transport {
-                        debug!("re-using existing transport!");
-                        transport
-                    } else {
-                        debug!("making new connection to upstream!");
-                        Rc::new(tokio_uring::net::TcpStream::connect(self.upstream_addr).await?)
-                    };
-
-                    let driver = CDriver { respond };
-
-                    let (transport, res) = h1::request(transport, req, req_body, driver).await?;
-
-                    if let Some(transport) = transport {
-                        let mut pool = self.pool.borrow_mut();
-                        pool.push(transport);
-                    }
-
-                    Ok(res)
-                }
-            }
-
-            struct CDriver<T>
-            where
-                T: WriteOwned,
-            {
-                respond: h1::Responder<T, h1::ExpectResponseHeaders>,
-            }
-
-            impl<T> h1::ClientDriver for CDriver<T>
-            where
-                T: WriteOwned,
-            {
-                type Return = h1::Responder<T, h1::ResponseDone>;
-
-                async fn on_informational_response(&self, _res: Response) -> eyre::Result<()> {
-                    todo!()
-                }
-
-                async fn on_final_response(
-                    self,
-                    res: Response,
-                    body: &mut impl Body,
-                ) -> eyre::Result<Self::Return> {
-                    let respond = self.respond;
-                    let mut respond = respond.write_final_response(res).await?;
-
-                    loop {
-                        match body.next_chunk().await? {
-                            BodyChunk::Buf(buf) => {
-                                respond = respond.write_body_chunk(buf).await?;
-                            }
-                            BodyChunk::AggSlice(slice) => {
-                                let mut list = IoChunkList::default();
-                                list.push(slice);
-                                let chunks = list.into_vec();
-                                for chunk in chunks {
-                                    match chunk {
-                                        IoChunk::Static(_) => unreachable!(),
-                                        IoChunk::Vec(_) => unreachable!(),
-                                        IoChunk::Buf(buf) => {
-                                            respond = respond.write_body_chunk(buf).await?;
-                                        }
-                                    }
-                                }
-                            }
-                            BodyChunk::Eof => {
-                                // should we do something here in case of
-                                // content-length mismatches or something?
-                                break;
-                            }
-                        }
-                    }
-
-                    let respond = respond.finish_body(None).await?;
-
-                    Ok(respond)
-                }
-            }
-
-            let pool: TransportPool = Default::default();
-
-            loop {
-                tokio::select! {
-                    accept_res = ln.accept() => {
-                        let (transport, remote_addr) = accept_res?;
-                        debug!("Accepted connection from {remote_addr}");
-
-                        let pool = pool.clone();
-                        let conf = conf.clone();
-
-                        tokio_uring::spawn(async move {
-                            let client_buf = AggBuf::default();
-                            let driver = SDriver {
-                                upstream_addr,
-                                pool,
-                            };
-                            h1::serve(transport, conf, client_buf, driver)
-                                .await
-                                .unwrap();
-                            debug!("Done serving h1 connection");
-                        });
-                    },
-                    _ = &mut rx => {
-                        debug!("Shutting down proxy");
-                        break;
-                    }
-                }
-            }
-
-            debug!("Proxy server shutting down.");
-            drop(pool);
-
-            Ok(())
-        };
-
-        let client_fut = client(ln_addr, tx);
+        let (upstream_addr, _upstream_guard) = testbed::start().await?;
+        let (ln_addr, guard, proxy_fut) = proxy::start(upstream_addr).await?;
+        let client_fut = client(ln_addr, guard);
 
         tokio::try_join!(proxy_fut, client_fut)?;
-        debug!("Everything has been joined.");
+        debug!("Everything has been joined");
 
         Ok(())
     });

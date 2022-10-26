@@ -4,10 +4,10 @@ use eyre::Context;
 use tracing::debug;
 
 use crate::{
-    bufpool::{AggBuf, Buf, IoChunkList},
+    bufpool::{AggBuf, IoChunkList},
     io::WriteOwned,
     util::{read_and_parse, write_all_list, SemanticError},
-    Body, Headers, ReadWriteOwned, Request, Response,
+    Body, Headers, IoChunk, IoChunkable, ReadWriteOwned, Request, Response,
 };
 
 use super::{
@@ -95,19 +95,15 @@ pub async fn serve(
         let connection_close = req.headers.is_connection_close();
         let content_len = req.headers.content_length().unwrap_or_default();
 
-        let mut req_body = H1Body {
-            transport: transport.clone(),
-            buf: Some(client_buf),
-            kind: if chunked {
+        let mut req_body = H1Body::new(
+            transport.clone(),
+            client_buf,
+            if chunked {
                 H1BodyKind::Chunked
-            } else if content_len > 0 {
-                H1BodyKind::ContentLength(content_len)
             } else {
-                H1BodyKind::Empty
+                H1BodyKind::ContentLength(content_len)
             },
-            read: 0,
-            eof: false,
-        };
+        );
 
         let res_handle = Responder::new(transport.clone());
 
@@ -119,13 +115,9 @@ pub async fn serve(
         // TODO: if we sent `connection: close` we should close now
         _ = resp;
 
-        if !req_body.eof() {
-            return Err(eyre::eyre!(
-                "request body not drained, have to close connection"
-            ));
-        }
-
-        client_buf = req_body.buf.take().unwrap();
+        client_buf = req_body
+            .into_buf()
+            .ok_or_else(|| eyre::eyre!("request body not drained, have to close connection"))?;
 
         if connection_close {
             debug!("client requested connection close");
@@ -229,11 +221,25 @@ impl<T> Responder<T, ExpectResponseBody>
 where
     T: WriteOwned,
 {
+    /// Send multiple response body chunks (as many as there are in the chunkable).
+    pub async fn write_chunkable(
+        self,
+        chunkable: impl IoChunkable,
+    ) -> eyre::Result<Responder<T, ExpectResponseBody>> {
+        let mut this = self;
+        let mut offset = 0;
+        while let Some(chunk) = chunkable.next_chunk(offset) {
+            offset += chunk.len() as u32;
+            this = this.write_chunk(chunk).await?;
+        }
+        Ok(this)
+    }
+
     /// Send a response body chunk. Errors out if sending more than the
     /// announced content-length.
-    pub async fn write_body_chunk(
+    pub async fn write_chunk(
         self,
-        chunk: Buf,
+        chunk: IoChunk,
     ) -> eyre::Result<Responder<T, ExpectResponseBody>> {
         super::body::write_h1_body_chunk(self.transport.as_ref(), chunk, self.state.mode).await?;
         Ok(self)
@@ -246,14 +252,14 @@ where
     /// 205 or 304, or if the body wasn't sent with chunked transfer encoding.
     pub async fn finish_body(
         self,
-        trailers: Option<Headers>,
+        trailers: Option<Box<Headers>>,
     ) -> eyre::Result<Responder<T, ResponseDone>> {
         super::body::write_h1_body_end(self.transport.as_ref(), self.state.mode).await?;
 
         if let Some(trailers) = trailers {
             // TODO: check all preconditions
             let mut list = IoChunkList::default();
-            encode_headers(trailers, &mut list)?;
+            encode_headers(*trailers, &mut list)?;
 
             let list = write_all_list(self.transport.as_ref(), list)
                 .await
