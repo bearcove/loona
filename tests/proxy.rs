@@ -4,7 +4,7 @@
 #![feature(async_fn_in_trait)]
 
 use hring::{h1, Body, BodyChunk, Response, WriteOwned};
-use std::{cell::RefCell, net::SocketAddr, rc::Rc};
+use std::{cell::RefCell, future::Future, net::SocketAddr, rc::Rc};
 use tracing::debug;
 
 pub type TransportPool = Rc<RefCell<Vec<Rc<tokio_uring::net::TcpStream>>>>;
@@ -90,4 +90,69 @@ where
 
         Ok(respond)
     }
+}
+
+pub async fn start(
+    upstream_addr: SocketAddr,
+) -> eyre::Result<(
+    SocketAddr,
+    impl Drop,
+    impl Future<Output = eyre::Result<()>>,
+)> {
+    let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
+
+    let ln = tokio_uring::net::TcpListener::bind("[::]:0".parse()?)?;
+    let ln_addr = ln.local_addr()?;
+
+    let proxy_fut = async move {
+        let conf = Rc::new(h1::ServerConf::default());
+        let pool: TransportPool = Default::default();
+
+        enum Event {
+            Accepted((tokio_uring::net::TcpStream, SocketAddr)),
+            ShuttingDown,
+        }
+
+        loop {
+            let ev = tokio::select! {
+                accept_res = ln.accept() => {
+                    Event::Accepted(accept_res?)
+                },
+                _ = &mut rx => {
+                    Event::ShuttingDown
+                }
+            };
+
+            match ev {
+                Event::Accepted((transport, remote_addr)) => {
+                    debug!("Accepted connection from {remote_addr}");
+
+                    let pool = pool.clone();
+                    let conf = conf.clone();
+
+                    tokio_uring::spawn(async move {
+                        let driver = ProxyDriver {
+                            upstream_addr,
+                            pool,
+                        };
+                        h1::serve(transport, conf, Default::default(), driver)
+                            .await
+                            .unwrap();
+                        debug!("Done serving h1 connection");
+                    });
+                }
+                Event::ShuttingDown => {
+                    debug!("Shutting down proxy");
+                    break;
+                }
+            }
+        }
+
+        debug!("Proxy server shutting down.");
+        drop(pool);
+
+        Ok(())
+    };
+
+    Ok((ln_addr, tx, proxy_fut))
 }

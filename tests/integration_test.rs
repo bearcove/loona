@@ -5,7 +5,6 @@
 mod helpers;
 
 use bytes::BytesMut;
-use futures_util::FutureExt;
 use hring::{
     h1, AggBuf, Body, BodyChunk, ChanRead, ChanWrite, Headers, ReadWritePair, Request, Response,
     WriteOwned,
@@ -238,10 +237,8 @@ fn request_api() {
 
 #[test]
 fn proxy_verbose() {
-    async fn client(
-        ln_addr: SocketAddr,
-        _tx: tokio::sync::oneshot::Sender<()>,
-    ) -> eyre::Result<()> {
+    #[allow(drop_bounds)]
+    async fn client(ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
         let mut socket = TcpStream::connect(ln_addr).await?;
         socket.set_nodelay(true)?;
 
@@ -281,55 +278,11 @@ fn proxy_verbose() {
 
     helpers::run(async move {
         let (upstream_addr, _upstream_guard) = testbed::start().await?;
-
-        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-        let mut rx = rx.shared();
-
-        let ln = tokio_uring::net::TcpListener::bind("[::]:0".parse()?)?;
-        let ln_addr = ln.local_addr()?;
-
-        let proxy_fut = async move {
-            let conf = Rc::new(h1::ServerConf::default());
-            let pool: proxy::TransportPool = Default::default();
-
-            loop {
-                tokio::select! {
-                    accept_res = ln.accept() => {
-                        let (transport, remote_addr) = accept_res?;
-                        debug!("Accepted connection from {remote_addr}");
-
-                        let pool = pool.clone();
-                        let conf = conf.clone();
-
-                        tokio_uring::spawn(async move {
-                            let client_buf = AggBuf::default();
-                            let driver = proxy::ProxyDriver {
-                                upstream_addr,
-                                pool,
-                            };
-                            h1::serve(transport, conf, client_buf, driver)
-                                .await
-                                .unwrap();
-                            debug!("Done serving h1 connection");
-                        });
-                    },
-                    _ = &mut rx => {
-                        debug!("Shutting down proxy");
-                        break;
-                    }
-                }
-            }
-
-            debug!("Proxy server shutting down.");
-            drop(pool);
-
-            Ok(())
-        };
-
-        let client_fut = client(ln_addr, tx);
+        let (ln_addr, guard, proxy_fut) = proxy::start(upstream_addr).await?;
+        let client_fut = client(ln_addr, guard);
 
         tokio::try_join!(proxy_fut, client_fut)?;
-        debug!("Everything has been joined.");
+        debug!("Everything has been joined");
 
         Ok(())
     });
