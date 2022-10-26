@@ -8,21 +8,21 @@ use crate::{
     Body, BodyChunk, BodyError, BodyErrorReason, IoChunk, ReadOwned, WriteOwned,
 };
 
+/// An HTTP/1.1 body, either chunked or content-length.
 pub(crate) struct H1Body<T> {
     transport: Rc<T>,
     buf: Option<AggBuf>,
-    state: H1BodyState,
+    state: Decoder,
 }
 
 #[derive(Debug)]
-enum H1BodyState {
-    Chunked(H1BodyChunkedState),
-    ContentLength(H1BodyContentLengthState),
-    Empty,
+enum Decoder {
+    Chunked(ChunkedDecoder),
+    ContentLength(ContentLengthDecoder),
 }
 
 #[derive(Debug)]
-enum H1BodyChunkedState {
+enum ChunkedDecoder {
     ReadingChunkHeader,
     ReadingChunk { remain: u64 },
 
@@ -31,7 +31,7 @@ enum H1BodyChunkedState {
 }
 
 #[derive(Debug)]
-struct H1BodyContentLengthState {
+struct ContentLengthDecoder {
     len: u64,
     read: u64,
 }
@@ -40,7 +40,6 @@ struct H1BodyContentLengthState {
 pub(crate) enum H1BodyKind {
     Chunked,
     ContentLength(u64),
-    Empty,
 }
 
 impl<T> fmt::Debug for H1Body<T> {
@@ -54,11 +53,10 @@ impl<T> fmt::Debug for H1Body<T> {
 impl<T: ReadOwned> H1Body<T> {
     pub(crate) fn new(transport: Rc<T>, buf: AggBuf, kind: H1BodyKind) -> Self {
         let state = match kind {
-            H1BodyKind::Chunked => H1BodyState::Chunked(H1BodyChunkedState::ReadingChunkHeader),
+            H1BodyKind::Chunked => Decoder::Chunked(ChunkedDecoder::ReadingChunkHeader),
             H1BodyKind::ContentLength(len) => {
-                H1BodyState::ContentLength(H1BodyContentLengthState { len, read: 0 })
+                Decoder::ContentLength(ContentLengthDecoder { len, read: 0 })
             }
-            H1BodyKind::Empty => H1BodyState::Empty,
         };
         H1Body {
             transport,
@@ -66,14 +64,22 @@ impl<T: ReadOwned> H1Body<T> {
             state,
         }
     }
+
+    /// Returns the inner buffer, but only if the body has been
+    /// fully read.
+    pub(crate) fn into_buf(self) -> Option<AggBuf> {
+        if !self.eof() {
+            return None;
+        }
+        self.buf
+    }
 }
 
 impl<T: ReadOwned> Body for H1Body<T> {
     fn content_len(&self) -> Option<u64> {
         match self.state {
-            H1BodyState::Chunked(_) => None,
-            H1BodyState::ContentLength(state) => Some(state.len),
-            H1BodyState::Empty => Some(0),
+            Decoder::Chunked(_) => None,
+            Decoder::ContentLength(state) => Some(state.len),
         }
     }
 
@@ -83,30 +89,28 @@ impl<T: ReadOwned> Body for H1Body<T> {
         }
 
         match &mut self.state {
-            H1BodyState::Chunked(state) => {
+            Decoder::Chunked(state) => {
                 state
                     .next_chunk(&mut self.buf, self.transport.as_ref())
                     .await
             }
-            H1BodyState::ContentLength(state) => {
+            Decoder::ContentLength(state) => {
                 state
                     .next_chunk(&mut self.buf, self.transport.as_ref())
                     .await
             }
-            H1BodyState::Empty => Ok(BodyChunk::Done),
         }
     }
 
     fn eof(&self) -> bool {
         match &self.state {
-            H1BodyState::Chunked(state) => state.eof(),
-            H1BodyState::ContentLength(state) => state.eof(),
-            H1BodyState::Empty => true,
+            Decoder::Chunked(state) => state.eof(),
+            Decoder::ContentLength(state) => state.eof(),
         }
     }
 }
 
-impl H1BodyContentLengthState {
+impl ContentLengthDecoder {
     async fn next_chunk(
         &mut self,
         buf_slot: &mut Option<AggBuf>,
@@ -148,12 +152,12 @@ impl H1BodyContentLengthState {
 
     fn eof(&self) -> bool {
         match self {
-            H1BodyContentLengthState { len, read } => len == read,
+            ContentLengthDecoder { len, read } => len == read,
         }
     }
 }
 
-impl H1BodyChunkedState {
+impl ChunkedDecoder {
     async fn next_chunk(
         &mut self,
         buf_slot: &mut Option<AggBuf>,
@@ -165,22 +169,22 @@ impl H1BodyChunkedState {
                 context: None,
             })?;
 
-            if let H1BodyChunkedState::Done = self {
+            if let ChunkedDecoder::Done = self {
                 buf_slot.replace(buf);
                 return Ok(BodyChunk::Done);
             }
 
-            if let H1BodyChunkedState::ReadingChunkHeader = self {
+            if let ChunkedDecoder::ReadingChunkHeader = self {
                 let (next_buf, chunk_size) =
                     read_and_parse(super::parse::chunk_size, transport, buf, 16)
                         .await
                         .map_err(|e| BodyErrorReason::InvalidChunkSize.with_cx(e))?
                         .ok_or_else(|| BodyErrorReason::ClosedWhileReadingChunkSize.as_err())?;
                 buf = next_buf;
-                *self = H1BodyChunkedState::ReadingChunk { remain: chunk_size }
+                *self = ChunkedDecoder::ReadingChunk { remain: chunk_size }
             };
 
-            if let H1BodyChunkedState::ReadingChunk { remain } = self {
+            if let ChunkedDecoder::ReadingChunk { remain } = self {
                 if *remain == 0 {
                     // look for CRLF terminator
                     let (next_buf, _) = read_and_parse(super::parse::crlf, transport, buf, 2)
@@ -190,7 +194,7 @@ impl H1BodyChunkedState {
                             BodyErrorReason::ClosedWhileReadingChunkTerminator.as_err()
                         })?;
                     buf = next_buf;
-                    *self = H1BodyChunkedState::ReadingChunkHeader;
+                    *self = ChunkedDecoder::ReadingChunkHeader;
                     buf_slot.replace(buf);
                     continue;
                 }
@@ -223,7 +227,7 @@ impl H1BodyChunkedState {
     }
 
     fn eof(&self) -> bool {
-        matches!(self, H1BodyChunkedState::Done)
+        matches!(self, ChunkedDecoder::Done)
     }
 }
 

@@ -395,7 +395,7 @@ fn proxy_verbose() {
                     loop {
                         match body.next_chunk().await? {
                             BodyChunk::Buf(buf) => {
-                                respond = respond.write_body_chunk(buf).await?;
+                                respond = respond.write_chunk(buf).await?;
                             }
                             BodyChunk::AggSlice(slice) => {
                                 let mut list = IoChunkList::default();
@@ -406,7 +406,7 @@ fn proxy_verbose() {
                                         IoChunk::Static(_) => unreachable!(),
                                         IoChunk::Vec(_) => unreachable!(),
                                         IoChunk::Buf(buf) => {
-                                            respond = respond.write_body_chunk(buf).await?;
+                                            respond = respond.write_chunk(buf).await?;
                                         }
                                     }
                                 }
