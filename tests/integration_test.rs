@@ -13,13 +13,15 @@ use hring::{
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
 use pretty_hex::PrettyHex;
-use std::{cell::RefCell, net::SocketAddr, process::Stdio, rc::Rc, time::Duration};
+use std::{net::SocketAddr, process::Stdio, rc::Rc, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
     process::Command,
 };
 use tracing::debug;
+
+mod proxy;
 
 // Test ideas:
 // headers too large (ups/dos)
@@ -314,94 +316,8 @@ fn proxy_verbose() {
         let ln_addr = ln.local_addr()?;
 
         let proxy_fut = async move {
-            let conf = h1::ServerConf::default();
-            let conf = Rc::new(conf);
-
-            type TransportPool = Rc<RefCell<Vec<Rc<tokio_uring::net::TcpStream>>>>;
-
-            struct SDriver {
-                upstream_addr: SocketAddr,
-                pool: TransportPool,
-            }
-
-            impl h1::ServerDriver for SDriver {
-                async fn handle<T: WriteOwned>(
-                    &self,
-                    req: hring::Request,
-                    req_body: &mut impl Body,
-                    respond: h1::Responder<T, h1::ExpectResponseHeaders>,
-                ) -> eyre::Result<h1::Responder<T, h1::ResponseDone>> {
-                    let transport = {
-                        let mut pool = self.pool.borrow_mut();
-                        pool.pop()
-                    };
-
-                    let transport = if let Some(transport) = transport {
-                        debug!("re-using existing transport!");
-                        transport
-                    } else {
-                        debug!("making new connection to upstream!");
-                        Rc::new(tokio_uring::net::TcpStream::connect(self.upstream_addr).await?)
-                    };
-
-                    let driver = CDriver { respond };
-
-                    let (transport, res) = h1::request(transport, req, req_body, driver).await?;
-
-                    if let Some(transport) = transport {
-                        let mut pool = self.pool.borrow_mut();
-                        pool.push(transport);
-                    }
-
-                    Ok(res)
-                }
-            }
-
-            struct CDriver<T>
-            where
-                T: WriteOwned,
-            {
-                respond: h1::Responder<T, h1::ExpectResponseHeaders>,
-            }
-
-            impl<T> h1::ClientDriver for CDriver<T>
-            where
-                T: WriteOwned,
-            {
-                type Return = h1::Responder<T, h1::ResponseDone>;
-
-                async fn on_informational_response(&self, _res: Response) -> eyre::Result<()> {
-                    todo!()
-                }
-
-                async fn on_final_response(
-                    self,
-                    res: Response,
-                    body: &mut impl Body,
-                ) -> eyre::Result<Self::Return> {
-                    let respond = self.respond;
-                    let mut respond = respond.write_final_response(res).await?;
-
-                    let trailers = loop {
-                        match body.next_chunk().await? {
-                            BodyChunk::Chunk(chunk) => {
-                                respond = respond.write_chunk(chunk).await?;
-                            }
-                            BodyChunk::Done { trailers } => {
-                                // should we do something here in case of
-                                // content-length mismatches or something?
-                                break trailers;
-                            }
-                        }
-                    };
-
-                    let respond = respond.finish_body(trailers).await?;
-
-                    Ok(respond)
-                }
-            }
-
-            let pool: TransportPool = Default::default();
+            let conf = Rc::new(h1::ServerConf::default());
+            let pool: proxy::TransportPool = Default::default();
 
             loop {
                 tokio::select! {
@@ -414,7 +330,7 @@ fn proxy_verbose() {
 
                         tokio_uring::spawn(async move {
                             let client_buf = AggBuf::default();
-                            let driver = SDriver {
+                            let driver = proxy::ProxyDriver {
                                 upstream_addr,
                                 pool,
                             };
