@@ -7,8 +7,8 @@ mod helpers;
 use bytes::BytesMut;
 use futures_util::FutureExt;
 use hring::{
-    h1, AggBuf, Body, BodyChunk, ChanRead, ChanWrite, Headers, IoChunk, IoChunkList, ReadWritePair,
-    Request, Response, WriteOwned,
+    h1, AggBuf, Body, BodyChunk, ChanRead, ChanWrite, Headers, ReadWritePair, Request, Response,
+    WriteOwned,
 };
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
@@ -183,18 +183,8 @@ fn request_api() {
                     res.headers.is_chunked_transfer_encoding(),
                 );
 
-                loop {
-                    match body.next_chunk().await? {
-                        BodyChunk::Buf(b) => {
-                            debug!("got a chunk: {:?}", b.to_vec().hex_dump());
-                        }
-                        BodyChunk::AggSlice(s) => {
-                            debug!("got a chunk: {:?}", s.to_vec().hex_dump());
-                        }
-                        BodyChunk::Done => {
-                            break;
-                        }
-                    }
+                while let BodyChunk::Chunk(chunk) = body.next_chunk().await? {
+                    debug!("got a chunk: {:?}", chunk.hex_dump());
                 }
 
                 Ok(())
@@ -392,34 +382,20 @@ fn proxy_verbose() {
                     let respond = self.respond;
                     let mut respond = respond.write_final_response(res).await?;
 
-                    loop {
+                    let trailers = loop {
                         match body.next_chunk().await? {
-                            BodyChunk::Buf(buf) => {
-                                respond = respond.write_chunk(buf).await?;
+                            BodyChunk::Chunk(chunk) => {
+                                respond = respond.write_chunk(chunk).await?;
                             }
-                            BodyChunk::AggSlice(slice) => {
-                                let mut list = IoChunkList::default();
-                                list.push(slice);
-                                let chunks = list.into_vec();
-                                for chunk in chunks {
-                                    match chunk {
-                                        IoChunk::Static(_) => unreachable!(),
-                                        IoChunk::Vec(_) => unreachable!(),
-                                        IoChunk::Buf(buf) => {
-                                            respond = respond.write_chunk(buf).await?;
-                                        }
-                                    }
-                                }
-                            }
-                            BodyChunk::Done => {
+                            BodyChunk::Done { trailers } => {
                                 // should we do something here in case of
                                 // content-length mismatches or something?
-                                break;
+                                break trailers;
                             }
                         }
-                    }
+                    };
 
-                    let respond = respond.finish_body(None).await?;
+                    let respond = respond.finish_body(trailers).await?;
 
                     Ok(respond)
                 }

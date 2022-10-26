@@ -252,14 +252,14 @@ where
     /// 205 or 304, or if the body wasn't sent with chunked transfer encoding.
     pub async fn finish_body(
         self,
-        trailers: Option<Headers>,
+        trailers: Option<Box<Headers>>,
     ) -> eyre::Result<Responder<T, ResponseDone>> {
         super::body::write_h1_body_end(self.transport.as_ref(), self.state.mode).await?;
 
         if let Some(trailers) = trailers {
             // TODO: check all preconditions
             let mut list = IoChunkList::default();
-            encode_headers(trailers, &mut list)?;
+            encode_headers(*trailers, &mut list)?;
 
             let list = write_all_list(self.transport.as_ref(), list)
                 .await

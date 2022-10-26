@@ -17,21 +17,6 @@ use crate::{
 
 const CRLF: &[u8] = b"\r\n";
 
-pub struct Chunk {
-    pub len: u64,
-    pub data: AggSlice,
-}
-
-/// Parses a single transfer-encoding chunk
-pub fn chunk(i: AggSlice) -> IResult<AggSlice, Chunk> {
-    let (i, len) = terminated(u64_text_hex, tag(CRLF))(i)?;
-    // FIXME: read trailers if any. we should not expect a CRLF after a chunk of
-    // length zero, but a series of headers.
-    let (i, data) = terminated(take(len), tag(CRLF))(i)?;
-
-    Ok((i, Chunk { len, data }))
-}
-
 /// Parses a chunked transfer coding chunk size (hex text followed by CRLF)
 pub fn chunk_size(i: AggSlice) -> IResult<AggSlice, u64> {
     terminated(u64_text_hex, tag(CRLF))(i)

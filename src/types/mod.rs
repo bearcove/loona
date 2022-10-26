@@ -59,7 +59,9 @@ pub enum BodyChunk {
 
     /// The body finished, and it matched the announced content-length,
     /// or we were using a framed protocol
-    Done,
+    Done {
+        trailers: Option<Box<Headers>>,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -72,7 +74,7 @@ impl fmt::Display for BodyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "body error: {:?}", self.reason)?;
         if let Some(context) = &self.context {
-            write!(f, " ({:?})", context)
+            write!(f, " ({context:?})")
         } else {
             Ok(())
         }
@@ -148,6 +150,6 @@ impl Body for () {
     }
 
     async fn next_chunk(&mut self) -> eyre::Result<BodyChunk> {
-        Ok(BodyChunk::Done)
+        Ok(BodyChunk::Done { trailers: None })
     }
 }

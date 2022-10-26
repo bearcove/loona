@@ -5,7 +5,7 @@ use tracing::debug;
 use crate::{
     bufpool::{AggBuf, IoChunkList},
     util::{read_and_parse, write_all_list},
-    Body, BodyChunk, BodyError, BodyErrorReason, IoChunk, ReadOwned, WriteOwned,
+    Body, BodyChunk, BodyErrorReason, IoChunk, ReadOwned, WriteOwned,
 };
 
 /// An HTTP/1.1 body, either chunked or content-length.
@@ -77,7 +77,7 @@ impl<T: ReadOwned> H1Body<T> {
 
 impl<T: ReadOwned> Body for H1Body<T> {
     fn content_len(&self) -> Option<u64> {
-        match self.state {
+        match &self.state {
             Decoder::Chunked(_) => None,
             Decoder::ContentLength(state) => Some(state.len),
         }
@@ -85,7 +85,7 @@ impl<T: ReadOwned> Body for H1Body<T> {
 
     async fn next_chunk(&mut self) -> eyre::Result<BodyChunk> {
         if self.buf.is_none() {
-            return Ok(BodyChunk::Done);
+            return Ok(BodyChunk::Done { trailers: None });
         }
 
         match &mut self.state {
@@ -118,12 +118,14 @@ impl ContentLengthDecoder {
     ) -> eyre::Result<BodyChunk> {
         let remain = self.len - self.read;
         if remain == 0 {
-            return Ok(BodyChunk::Done);
+            return Ok(BodyChunk::Done { trailers: None });
         }
 
         debug!(%remain, "reading content-length body");
 
-        let mut buf = buf_slot.take().unwrap();
+        let mut buf = buf_slot
+            .take()
+            .ok_or_else(|| BodyErrorReason::CalledNextChunkAfterError.as_err())?;
 
         if buf.read().len() == 0 {
             buf.write().grow_if_needed()?;
@@ -140,20 +142,16 @@ impl ContentLengthDecoder {
             Some(chunk) => {
                 self.read += chunk.len() as u64;
                 buf_slot.replace(buf);
-                return Ok(BodyChunk::Chunk(chunk.into()));
+                Ok(BodyChunk::Chunk(chunk.into()))
             }
-            None => {
-                return Err(BodyErrorReason::ClosedWhileReadingContentLength
-                    .as_err()
-                    .into());
-            }
+            None => Err(BodyErrorReason::ClosedWhileReadingContentLength
+                .as_err()
+                .into()),
         }
     }
 
     fn eof(&self) -> bool {
-        match self {
-            ContentLengthDecoder { len, read } => len == read,
-        }
+        self.len == self.read
     }
 }
 
@@ -164,14 +162,15 @@ impl ChunkedDecoder {
         transport: &impl ReadOwned,
     ) -> eyre::Result<BodyChunk> {
         loop {
-            let mut buf = buf_slot.take().ok_or_else(|| BodyError {
-                reason: BodyErrorReason::CalledNextChunkAfterError,
-                context: None,
-            })?;
+            let mut buf = buf_slot
+                .take()
+                .ok_or_else(|| BodyErrorReason::CalledNextChunkAfterError.as_err())?;
 
             if let ChunkedDecoder::Done = self {
                 buf_slot.replace(buf);
-                return Ok(BodyChunk::Done);
+                // TODO: prevent misuse when calling `next_chunk` after trailers
+                // were already read?
+                return Ok(BodyChunk::Done { trailers: None });
             }
 
             if let ChunkedDecoder::ReadingChunkHeader = self {
@@ -181,6 +180,23 @@ impl ChunkedDecoder {
                         .map_err(|e| BodyErrorReason::InvalidChunkSize.with_cx(e))?
                         .ok_or_else(|| BodyErrorReason::ClosedWhileReadingChunkSize.as_err())?;
                 buf = next_buf;
+
+                if chunk_size == 0 {
+                    // that's the final chunk, look for the final CRLF
+                    let (next_buf, _) = read_and_parse(super::parse::crlf, transport, buf, 2)
+                        .await
+                        .map_err(|e| BodyErrorReason::InvalidChunkTerminator.with_cx(e))?
+                        .ok_or_else(|| {
+                            BodyErrorReason::ClosedWhileReadingChunkTerminator.as_err()
+                        })?;
+                    buf = next_buf;
+                    *self = ChunkedDecoder::Done;
+                    buf_slot.replace(buf);
+
+                    // TODO: trailers
+                    return Ok(BodyChunk::Done { trailers: None });
+                }
+
                 *self = ChunkedDecoder::ReadingChunk { remain: chunk_size }
             };
 
@@ -245,7 +261,7 @@ pub(crate) async fn write_h1_body(
     loop {
         match body.next_chunk().await? {
             BodyChunk::Chunk(chunk) => write_h1_body_chunk(transport.as_ref(), chunk, mode).await?,
-            BodyChunk::Done => {
+            BodyChunk::Done { .. } => {
                 // TODO: check that we've sent what we announced in terms of
                 // content length
                 write_h1_body_end(transport.as_ref(), mode).await?;

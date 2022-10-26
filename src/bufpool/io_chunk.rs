@@ -28,6 +28,16 @@ impl From<Buf> for IoChunk {
     }
 }
 
+impl AsRef<[u8]> for IoChunk {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            IoChunk::Static(slice) => slice,
+            IoChunk::Vec(vec) => vec.as_ref(),
+            IoChunk::Buf(buf) => buf.as_ref(),
+        }
+    }
+}
+
 impl IoChunk {
     #[inline(always)]
     pub fn as_io_buf(&self) -> &dyn IoBuf {

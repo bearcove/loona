@@ -249,7 +249,7 @@ impl AggBuf {
     /// advance this buffer's offset. If this returns `None`, it means
     /// the filled portion is empty.
     pub fn take_contiguous_at_most(&mut self, n: u32) -> Option<Buf> {
-        let mut inner = self.inner.borrow_mut();
+        let inner = self.inner.borrow();
         if inner.len == 0 {
             return None;
         }
@@ -258,7 +258,7 @@ impl AggBuf {
         let len = std::cmp::min(n, inner.len);
         let end = start + len;
 
-        let (block_index, block_range) = inner.contiguous_range(start..len);
+        let (block_index, block_range) = inner.contiguous_range(start..end);
         let block = inner.blocks[block_index].dangerous_clone();
         let u16_block_range: Range<u16> =
             (block_range.start.try_into().unwrap())..(block_range.end.try_into().unwrap());
@@ -287,6 +287,8 @@ impl AggBuf {
                 len: inner.len - consumed,
             }
         };
+        drop(inner);
+
         *self = Self {
             inner: Rc::new(RefCell::new(next_inner)),
         };
