@@ -7,7 +7,7 @@ use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::Subscriber
 /// test, which is a limitation we accept.
 pub(crate) fn setup_tracing() {
     let filter_layer = Targets::new()
-        .with_default(Level::DEBUG)
+        .with_default(Level::TRACE)
         .with_target("hring::io", Level::TRACE)
         .with_target("want", Level::INFO);
 

@@ -236,7 +236,7 @@ fn request_api() {
 }
 
 #[test]
-fn proxy_verbose() {
+fn proxy_statuses() {
     #[allow(drop_bounds)]
     async fn client(ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
         let mut socket = TcpStream::connect(ln_addr).await?;
@@ -264,7 +264,7 @@ fn proxy_verbose() {
                     Status::Complete(off) => off,
                     Status::Partial => continue 'read_response,
                 };
-                debug!("Client got a complete response");
+                debug!("client got a complete response");
                 assert_eq!(res.code, Some(status));
 
                 _ = buf.split();
@@ -272,7 +272,7 @@ fn proxy_verbose() {
             }
         }
 
-        debug!("Http client shutting down");
+        debug!("http client shutting down");
         Ok(())
     }
 
@@ -282,7 +282,109 @@ fn proxy_verbose() {
         let client_fut = client(ln_addr, guard);
 
         tokio::try_join!(proxy_fut, client_fut)?;
-        debug!("Everything has been joined");
+        debug!("everything has been joined");
+
+        Ok(())
+    });
+}
+
+#[test]
+fn proxy_echo_body_content_len() {
+    #[allow(drop_bounds)]
+    async fn client(ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
+        let socket = TcpStream::connect(ln_addr).await?;
+        socket.set_nodelay(true)?;
+
+        let mut buf = BytesMut::with_capacity(256);
+
+        debug!("Sending a small body");
+        let body = "Please return to sender.";
+        let content_len = body.len();
+
+        let (mut read, mut write) = socket.into_split();
+
+        let send_fut = async move {
+            write
+                .write_all(
+                    format!("POST /echo-body HTTP/1.1\r\ncontent-length: {content_len}\r\n\r\n")
+                        .as_bytes(),
+                )
+                .await?;
+            write.flush().await?;
+
+            write.write_all(body.as_bytes()).await?;
+            write.flush().await?;
+
+            Ok::<(), eyre::Report>(())
+        };
+        tokio_uring::spawn(async move {
+            if let Err(e) = send_fut.await {
+                panic!("Error sending request: {e}");
+            }
+        });
+
+        debug!("Reading response...");
+        'read_response: loop {
+            buf.reserve(256);
+            read.read_buf(&mut buf).await?;
+            debug!("After read, got {} bytes", buf.len());
+
+            let mut headers = [EMPTY_HEADER; 16];
+            let mut res = httparse::Response::new(&mut headers[..]);
+            let body_offset = match res.parse(&buf[..])? {
+                Status::Complete(off) => off,
+                Status::Partial => continue 'read_response,
+            };
+            debug!("client got a response header");
+            assert_eq!(res.code, Some(200));
+
+            let mut content_len = None;
+            for header in res.headers.iter() {
+                debug!(
+                    "Got header: {} = {:?}",
+                    header.name,
+                    std::str::from_utf8(header.value)
+                );
+                if header.name.eq_ignore_ascii_case("content-length") {
+                    content_len = Some(
+                        std::str::from_utf8(header.value)
+                            .unwrap()
+                            .parse::<usize>()
+                            .unwrap(),
+                    );
+                }
+            }
+            let content_len = content_len.expect("no content-length header");
+
+            let mut buf = buf.split_off(body_offset);
+
+            while buf.len() < content_len {
+                debug!("buf has {} bytes, need {}", buf.len(), content_len);
+                if buf.capacity() == 0 {
+                    buf.reserve(256);
+                }
+                let n = read.read_buf(&mut buf).await?;
+                if n == 0 {
+                    panic!("unexpected EOF");
+                }
+                debug!("just read {n}");
+            }
+            debug!("Body: {:?}", std::str::from_utf8(&buf[..]));
+
+            break 'read_response;
+        }
+
+        debug!("http client shutting down");
+        Ok(())
+    }
+
+    helpers::run(async move {
+        let (upstream_addr, _upstream_guard) = testbed::start().await?;
+        let (ln_addr, guard, proxy_fut) = proxy::start(upstream_addr).await?;
+        let client_fut = client(ln_addr, guard);
+
+        tokio::try_join!(proxy_fut, client_fut)?;
+        debug!("everything has been joined");
 
         Ok(())
     });
