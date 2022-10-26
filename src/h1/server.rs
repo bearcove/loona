@@ -11,7 +11,7 @@ use crate::{
 };
 
 use super::{
-    body::{H1Body, H1BodyKind},
+    body::{H1Body, H1BodyKind, BodyWriteMode},
     encode::{encode_headers, encode_response},
 };
 
@@ -139,7 +139,9 @@ pub trait ResponseState {}
 pub struct ExpectResponseHeaders;
 impl ResponseState for ExpectResponseHeaders {}
 
-pub struct ExpectResponseBody;
+pub struct ExpectResponseBody {
+    mode: BodyWriteMode,
+}
 impl ResponseState for ExpectResponseBody {}
 
 pub struct ResponseDone;
@@ -187,13 +189,25 @@ where
         self,
         res: Response,
     ) -> eyre::Result<Responder<T, ExpectResponseBody>> {
+        let mode = if let Some(_) = res.headers.content_length() {
+            if !res.headers.is_chunked_transfer_encoding() {
+                BodyWriteMode::ContentLength
+            } else {
+                BodyWriteMode::Chunked
+            }
+        } else {
+            BodyWriteMode::Chunked
+        };
+
         if res.code < 200 {
             return Err(eyre::eyre!("final response must have status code >= 200"));
         }
 
         let this = self.write_response_internal(res).await?;
         Ok(Responder {
-            state: ExpectResponseBody,
+            state: ExpectResponseBody {
+                mode,
+            },
             transport: this.transport,
         })
     }
@@ -223,8 +237,8 @@ where
         self,
         chunk: Buf,
     ) -> eyre::Result<Responder<T, ExpectResponseBody>> {
-        _ = chunk;
-        todo!();
+        super::body::write_h1_body_chunk(self.transport.as_ref(), chunk, self.state.mode).await?;
+        Ok(self)
     }
 
     /// Finish the body, with optional trailers, cf. https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/TE

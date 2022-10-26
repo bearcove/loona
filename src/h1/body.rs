@@ -145,7 +145,7 @@ pub(crate) async fn write_h1_body(
     Ok(())
 }
 
-async fn write_h1_body_chunk(
+pub(crate) async fn write_h1_body_chunk(
     transport: &impl WriteOwned,
     chunk: impl IoChunkable,
     mode: BodyWriteMode,
