@@ -134,12 +134,13 @@ impl AggBuf {
     pub fn split_at(self, rest: AggSlice) -> Self {
         let inner = self.inner.borrow();
         let block_size = inner.block_size;
+        dbg2!("split_at", inner.off, inner.len, inner.capacity());
 
-        dbg2!("split_at", inner.off, inner.len, inner.capacity(),);
-
-        let abs_block_start = (inner.blocks.len() as u32 - 1) * block_size;
         let abs_filled_end = inner.len + inner.off;
         let abs_rest_start = rest.off + inner.off;
+        let rest_first_block = abs_rest_start / block_size;
+        let abs_block_start = rest_first_block * block_size;
+
         dbg2!("split_at", abs_block_start, abs_filled_end, abs_rest_start);
 
         // we now have (1 block)
@@ -165,9 +166,6 @@ impl AggBuf {
             "rest must start before end of filled part"
         );
 
-        // let's clone get that block and make everything relative to its start
-        let reused_block = inner.blocks.iter().last().unwrap().dangerous_clone();
-
         let rel_filled_end = abs_filled_end - abs_block_start;
         let rel_rest_start = abs_rest_start - abs_block_start;
 
@@ -192,13 +190,20 @@ impl AggBuf {
             return Default::default();
         }
 
-        let mut new_inner = AggBufInner {
-            blocks: Default::default(),
+        // let's clone get that block and make everything relative to its start
+        let reused_blocks = inner
+            .blocks
+            .iter()
+            .skip(rest_first_block as usize)
+            .map(|block| block.dangerous_clone())
+            .collect();
+
+        let new_inner = AggBufInner {
+            blocks: reused_blocks,
             block_size: inner.block_size,
             off: rel_rest_start,
             len: rel_filled_end - rel_rest_start,
         };
-        new_inner.blocks.push(reused_block);
         Self {
             inner: Rc::new(RefCell::new(new_inner)),
         }
