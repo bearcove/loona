@@ -1,10 +1,12 @@
 use std::{
     cell::UnsafeCell,
     fmt::{Debug, Formatter},
+    iter::Enumerate,
     ops::{Bound, Deref, RangeBounds},
     rc::Rc,
 };
 
+use nom::{Compare, CompareResult, InputIter, InputLength, InputTake, Needed};
 use tokio_uring::buf::{IoBuf, IoBufMut};
 
 use crate::{Buf, BufMut, ReadOwned, BUF_SIZE};
@@ -457,6 +459,125 @@ impl Roll {
             RollInner::Box(b) => b.slice(range).into(),
         }
     }
+
+    pub fn iter(&self) -> RollIter {
+        RollIter {
+            roll: self.clone(),
+            pos: 0,
+        }
+    }
+}
+
+impl InputIter for Roll {
+    type Item = u8;
+    type Iter = Enumerate<Self::IterElem>;
+    type IterElem = RollIter;
+
+    #[inline]
+    fn iter_indices(&self) -> Self::Iter {
+        self.iter_elements().enumerate()
+    }
+    #[inline]
+    fn iter_elements(&self) -> Self::IterElem {
+        self.iter()
+    }
+    #[inline]
+    fn position<P>(&self, predicate: P) -> Option<usize>
+    where
+        P: Fn(Self::Item) -> bool,
+    {
+        self.iter().position(predicate)
+    }
+    #[inline]
+    fn slice_index(&self, count: usize) -> Result<usize, Needed> {
+        if self.len() >= count {
+            Ok(count)
+        } else {
+            Err(Needed::new(count - self.len()))
+        }
+    }
+}
+
+/// An iterator over [Roll]
+pub struct RollIter {
+    roll: Roll,
+    pos: usize,
+}
+
+impl Iterator for RollIter {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pos >= self.roll.len() {
+            return None;
+        }
+
+        Some(self.roll[self.pos])
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.roll.len() - self.pos;
+        (remaining, Some(remaining))
+    }
+}
+
+impl InputTake for Roll {
+    #[inline]
+    fn take(&self, count: usize) -> Self {
+        self.slice(..count)
+    }
+    #[inline]
+    fn take_split(&self, count: usize) -> (Self, Self) {
+        let (prefix, suffix) = self.clone().split_at(count);
+        (suffix, prefix)
+    }
+}
+
+impl Compare<&[u8]> for Roll {
+    #[inline(always)]
+    fn compare(&self, t: &[u8]) -> CompareResult {
+        let pos = self.iter().zip(t.iter()).position(|(a, b)| a != *b);
+
+        match pos {
+            Some(_) => CompareResult::Error,
+            None => {
+                if self.len() >= t.len() {
+                    CompareResult::Ok
+                } else {
+                    CompareResult::Incomplete
+                }
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn compare_no_case(&self, t: &[u8]) -> CompareResult {
+        if self
+            .iter()
+            .zip(t)
+            .any(|(a, b)| lowercase_byte(a) != lowercase_byte(*b))
+        {
+            CompareResult::Error
+        } else if self.len() < t.len() {
+            CompareResult::Incomplete
+        } else {
+            CompareResult::Ok
+        }
+    }
+}
+
+fn lowercase_byte(c: u8) -> u8 {
+    match c {
+        b'A'..=b'Z' => c - b'A' + b'a',
+        _ => c,
+    }
+}
+
+impl InputLength for Roll {
+    #[inline]
+    fn input_len(&self) -> usize {
+        self.len()
+    }
 }
 
 #[cfg(test)]
@@ -572,43 +693,43 @@ mod tests {
         test_roll_keep_inner(rm);
     }
 
-    // #[test]
-    // fn test_roll_nom_sample() {
-    //     fn parse(i: Roll) -> IResult<Roll, Roll> {
-    //         nom::bytes::streaming::tag(&b"HTTP/1.1 200 OK"[..])(i)
-    //     }
+    #[test]
+    fn test_roll_nom_sample() {
+        fn parse(i: Roll) -> IResult<Roll, Roll> {
+            nom::bytes::streaming::tag(&b"HTTP/1.1 200 OK"[..])(i)
+        }
 
-    //     let mut buf = RollMut::alloc().unwrap();
+        let mut buf = RollMut::alloc().unwrap();
 
-    //     let input = b"HTTP/1.1 200 OK".repeat(1000);
-    //     let mut pending = &input[..];
+        let input = b"HTTP/1.1 200 OK".repeat(1000);
+        let mut pending = &input[..];
 
-    //     loop {
-    //         let (rest, version) = match parse(buf.filled()) {
-    //             Ok(t) => t,
-    //             Err(e) => {
-    //                 if e.is_incomplete() {
-    //                     {
-    //                         if pending.is_empty() {
-    //                             println!("ran out of input");
-    //                             break;
-    //                         }
+        loop {
+            let (rest, version) = match parse(buf.filled()) {
+                Ok(t) => t,
+                Err(e) => {
+                    if e.is_incomplete() {
+                        {
+                            if pending.is_empty() {
+                                println!("ran out of input");
+                                break;
+                            }
 
-    //                         let n = std::cmp::min(buf.cap(), pending.len());
-    //                         buf.put(&pending[..n]).unwrap();
-    //                         pending = &pending[n..];
+                            let n = std::cmp::min(buf.cap(), pending.len());
+                            buf.put(&pending[..n]).unwrap();
+                            pending = &pending[n..];
 
-    //                         println!("advanced by {n}, {} remaining", pending.len());
-    //                     }
+                            println!("advanced by {n}, {} remaining", pending.len());
+                        }
 
-    //                     continue;
-    //                 }
-    //                 panic!("parsing error: {e}");
-    //             }
-    //         };
-    //         assert_eq!(version, b"HTTP/1.1 200 OK");
+                        continue;
+                    }
+                    panic!("parsing error: {e}");
+                }
+            };
+            assert_eq!(version, b"HTTP/1.1 200 OK");
 
-    //         buf.keep(rest);
-    //     }
-    // }
+            buf.keep(rest);
+        }
+    }
 }

@@ -10,6 +10,9 @@ ci-test:
 	cargo llvm-cov nextest --lcov --output-path coverage.lcov
 	codecov
 
+cov:
+	cargo llvm-cov nextest --lcov --output-path coverage.lcov
+
 # Run all tests with cargo nextest
 test *args:
 	just build-testbed
