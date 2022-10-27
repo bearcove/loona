@@ -384,14 +384,34 @@ impl Drop for Buf {
 
 #[cfg(test)]
 mod tests {
+    use std::rc::Rc;
+
     use crate::bufpool::{Buf, BUF_POOL};
 
     use super::BufMut;
 
     #[test]
-    fn align_test() {
-        assert_eq!(4, std::mem::align_of::<BufMut>());
-        assert_eq!(4, std::mem::align_of::<Buf>());
+    fn size_test() {
+        assert_eq!(8, std::mem::size_of::<BufMut>());
+        assert_eq!(8, std::mem::size_of::<Buf>());
+        assert_eq!(16, std::mem::size_of::<Box<[u8]>>());
+
+        assert_eq!(16, std::mem::size_of::<&[u8]>());
+
+        #[allow(dead_code)]
+        enum BufOrBox {
+            Buf(Buf),
+            Box((Rc<Box<[u8]>>, u32, u32)),
+        }
+        assert_eq!(16, std::mem::size_of::<BufOrBox>());
+
+        #[allow(dead_code)]
+        enum Chunk {
+            Buf(Buf),
+            Box(Box<[u8]>),
+            Static(&'static [u8]),
+        }
+        assert_eq!(24, std::mem::size_of::<Chunk>());
     }
 
     #[test]
