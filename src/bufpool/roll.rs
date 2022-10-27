@@ -1,8 +1,8 @@
-use std::{cell::UnsafeCell, rc::Rc};
+use std::{cell::UnsafeCell, ops::Deref, rc::Rc};
 
 use tokio_uring::buf::{IoBuf, IoBufMut};
 
-use crate::{Buf, BufMut, ReadOwned};
+use crate::{Buf, BufMut, ReadOwned, BUF_SIZE};
 
 /// A "rolling buffer". Uses either one [BufMut] or a `Box<[u8]>` for storage.
 /// This buffer never grows, but it can be split, and it can be reallocated so
@@ -18,6 +18,14 @@ enum StorageMut {
 }
 
 impl StorageMut {
+    #[inline(always)]
+    fn cap(&self) -> usize {
+        match self {
+            StorageMut::Buf(_) => BUF_SIZE as usize,
+            StorageMut::Box(b) => b.cap(),
+        }
+    }
+
     #[inline(always)]
     fn len(&self) -> usize {
         match self {
@@ -71,6 +79,18 @@ impl BoxStorage {
         let buf = self.buf.get();
         unsafe { &(*buf)[self.off as usize..][..len as usize] }
     }
+
+    /// Returns a mutable slice of bytes into this buffer, of the specified
+    /// length Panics if the length is larger than the buffer.
+    fn slice_mut(&mut self, len: u32) -> &mut [u8] {
+        let buf = self.buf.get();
+        unsafe { &mut (*buf)[self.off as usize..][..len as usize] }
+    }
+
+    fn cap(&self) -> usize {
+        let buf = self.buf.get();
+        unsafe { (*buf).len() }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -84,6 +104,27 @@ impl RollMut {
             storage: StorageMut::Buf(BufMut::alloc()?),
             len: 0,
         })
+    }
+
+    /// Double the capacity of this buffer by reallocating it, copying the
+    /// filled part into the new buffer. This method always uses a `Box<[u8]>`
+    /// for storage.
+    ///
+    /// This method is somewhat expensive.
+    pub fn grow(&mut self) {
+        let old_cap = self.storage.cap();
+        let new_cap = old_cap * 2;
+        let b = vec![0; new_cap].into_boxed_slice();
+        let mut bs = BoxStorage {
+            buf: Rc::new(UnsafeCell::new(b)),
+            off: 0,
+        };
+        let src_slice = self.borrow_filled();
+        let dst_slice = bs.slice_mut(src_slice.len() as u32);
+        dst_slice.copy_from_slice(src_slice);
+        let s = StorageMut::Box(bs);
+
+        self.storage = s;
     }
 
     /// The length (filled portion) of this buffer, that can be read
@@ -110,10 +151,12 @@ impl RollMut {
         limit: usize,
         r: &impl ReadOwned,
     ) -> (Self, std::io::Result<usize>) {
-        let len = std::cmp::min(limit, self.cap());
+        let read_cap = std::cmp::min(limit, self.cap());
+        let read_off = self.len;
         let read_into = ReadInto {
             buf: self,
-            len: len.try_into().unwrap(),
+            off: read_off,
+            cap: read_cap.try_into().unwrap(),
             init: 0,
         };
         let (res, mut read_into) = r.read(read_into).await;
@@ -129,7 +172,7 @@ impl RollMut {
         }
         unsafe {
             let ptr = self.storage.as_mut_ptr().add(self.len as usize);
-            std::ptr::copy_nonoverlapping(s.as_ptr(), ptr, len as usize);
+            std::ptr::copy_nonoverlapping(s.as_ptr(), ptr, len);
         }
         let u32_len: u32 = len.try_into().unwrap();
         self.len += u32_len;
@@ -151,40 +194,45 @@ impl RollMut {
         }
     }
 
+    /// Borrow the filled portion of this buffer as a slice
+    pub fn borrow_filled(&self) -> &[u8] {
+        match &self.storage {
+            StorageMut::Buf(b) => &b[..self.len as usize],
+            StorageMut::Box(b) => b.slice(self.len),
+        }
+    }
+
     /// Split this [RollMut] at the given index.
     /// Panics if `at > len()`. If `at < len()`, the filled portion will carry
     /// over in the new [RollMut].
-    pub fn split_off(self, at: usize) -> Self {
-        let at: u32 = at.try_into().unwrap();
-        assert!(at <= self.len);
+    pub fn skip(self, n: usize) -> Self {
+        let n: u32 = n.try_into().unwrap();
+        assert!(n <= self.len);
 
         RollMut {
             storage: match self.storage {
-                StorageMut::Buf(b) => {
-                    // TODO: don't use `split_at` here
-                    let (l, r) = b.split_at(at as usize);
-                    StorageMut::Buf(r)
-                }
+                StorageMut::Buf(b) => StorageMut::Buf(b.skip(n as usize)),
                 StorageMut::Box(mut b) => {
-                    b.off += at;
+                    b.off += n;
                     StorageMut::Box(b)
                 }
             },
-            len: self.len - at,
+            len: self.len - n,
         }
     }
 }
 
 struct ReadInto {
     buf: RollMut,
-    len: u32,
+    off: u32,
+    cap: u32,
     init: u32,
 }
 
 unsafe impl IoBuf for ReadInto {
     #[inline(always)]
     fn stable_ptr(&self) -> *const u8 {
-        self.buf.storage.as_ptr()
+        unsafe { self.buf.storage.as_ptr().add(self.off as usize) }
     }
 
     #[inline(always)]
@@ -194,14 +242,14 @@ unsafe impl IoBuf for ReadInto {
 
     #[inline(always)]
     fn bytes_total(&self) -> usize {
-        self.len as _
+        self.cap as _
     }
 }
 
 unsafe impl IoBufMut for ReadInto {
     #[inline(always)]
     fn stable_mut_ptr(&mut self) -> *mut u8 {
-        unsafe { self.buf.storage.as_mut_ptr() }
+        unsafe { self.buf.storage.as_mut_ptr().add(self.off as usize) }
     }
 
     #[inline(always)]
@@ -277,6 +325,15 @@ impl AsRef<[u8]> for Roll {
     }
 }
 
+impl Deref for Roll {
+    type Target = [u8];
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
 impl RollInner {
     #[inline(always)]
     fn split_at(self, at: usize) -> (Self, Self) {
@@ -303,6 +360,11 @@ impl Roll {
         }
     }
 
+    /// Returns true if this roll is empty
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn split_at(self, at: usize) -> (Roll, Roll) {
         let (left, right) = self.inner.split_at(at);
         (left.into(), right.into())
@@ -311,21 +373,81 @@ impl Roll {
 
 #[cfg(test)]
 mod tests {
-    use crate::{RollMut, BUF_SIZE};
+    use crate::{ChanRead, RollMut, BUF_SIZE};
 
     #[test]
-    fn test_roll() {
+    fn test_roll_put() {
+        fn test_roll_put_inner(mut rm: RollMut) {
+            let initial_size = rm.cap();
+
+            rm.put(b"hello").unwrap();
+            assert_eq!(rm.cap(), initial_size - 5);
+
+            let filled = rm.filled();
+            assert_eq!(&filled[..], b"hello");
+
+            let rm = rm.skip(5);
+            assert_eq!(rm.len(), 0);
+            assert_eq!(rm.cap(), initial_size - 5);
+        }
+
+        let rm = RollMut::alloc().unwrap();
+        assert_eq!(rm.cap(), BUF_SIZE as usize);
+        test_roll_put_inner(rm);
+
+        let mut rm = RollMut::alloc().unwrap();
+        rm.grow();
+        test_roll_put_inner(rm);
+
+        let mut rm = RollMut::alloc().unwrap();
+        rm.grow();
+        rm.grow();
+        test_roll_put_inner(rm);
+    }
+
+    #[test]
+    fn test_roll_put_then_grow() {
         let mut rm = RollMut::alloc().unwrap();
         assert_eq!(rm.cap(), BUF_SIZE as usize);
 
-        rm.put(b"hello").unwrap();
-        assert_eq!(rm.cap(), BUF_SIZE as usize - 5);
+        let input = b"I am pretty long";
 
-        let filled = rm.filled();
-        assert_eq!(filled.as_ref(), b"hello");
+        rm.put(input).unwrap();
+        assert_eq!(rm.len(), input.len());
+        assert_eq!(rm.borrow_filled(), input);
 
-        let rm = rm.split_off(5);
+        assert_eq!(rm.cap(), BUF_SIZE as usize - input.len());
 
-        assert_eq!(rm.cap(), BUF_SIZE as usize - 5);
+        rm.grow();
+        assert_eq!(rm.cap(), 2 * (BUF_SIZE as usize) - input.len());
+        assert_eq!(rm.borrow_filled(), input);
+
+        let rm = rm.skip(5);
+        assert_eq!(rm.borrow_filled(), b"pretty long");
+    }
+
+    #[test]
+    fn test_roll_readfrom_start() {
+        tokio_uring::start(async move {
+            let mut rm = RollMut::alloc().unwrap();
+
+            let (send, read) = ChanRead::new();
+            tokio_uring::spawn(async move {
+                send.send("123456").await.unwrap();
+            });
+
+            let mut res;
+            (rm, res) = rm.read_into(3, &read).await;
+            res.unwrap();
+
+            assert_eq!(rm.len(), 3);
+            assert_eq!(rm.filled().as_ref(), b"123");
+
+            (rm, res) = rm.read_into(3, &read).await;
+            res.unwrap();
+
+            assert_eq!(rm.len(), 6);
+            assert_eq!(rm.filled().as_ref(), b"123456");
+        });
     }
 }

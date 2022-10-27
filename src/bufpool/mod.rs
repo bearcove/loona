@@ -237,6 +237,17 @@ impl BufMut {
 
         (left, right)
     }
+
+    /// Return a new slice that starts at `n`
+    pub fn skip(mut self, n: usize) -> Self {
+        assert!(n <= self.len as usize);
+
+        let u16_n: u16 = n.try_into().unwrap();
+        self.off += u16_n;
+        self.len -= u16_n;
+
+        self
+    }
 }
 
 impl ops::Deref for BufMut {
