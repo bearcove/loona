@@ -143,7 +143,7 @@ impl BufPool {
 
 /// A mutable buffer. Cannot be cloned, but can be written to
 pub struct BufMut {
-    index: u32,
+    pub(crate) index: u32,
     off: u16,
     len: u16,
 
@@ -238,15 +238,13 @@ impl BufMut {
         (left, right)
     }
 
-    /// Return a new slice that starts at `n`
-    pub fn skip(mut self, n: usize) -> Self {
+    /// Skip over the first `n` bytes, panics if out of bound
+    pub fn skip(&mut self, n: usize) {
         assert!(n <= self.len as usize);
 
         let u16_n: u16 = n.try_into().unwrap();
         self.off += u16_n;
         self.len -= u16_n;
-
-        self
     }
 }
 
@@ -315,7 +313,7 @@ impl Drop for BufMut {
 
 /// A read-only buffer. Can be cloned, but cannot be written to.
 pub struct Buf {
-    index: u32,
+    pub(crate) index: u32,
     off: u16,
     len: u16,
 

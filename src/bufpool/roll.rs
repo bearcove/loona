@@ -1,4 +1,9 @@
-use std::{cell::UnsafeCell, ops::Deref, rc::Rc};
+use std::{
+    cell::UnsafeCell,
+    fmt::{Debug, Formatter},
+    ops::Deref,
+    rc::Rc,
+};
 
 use tokio_uring::buf::{IoBuf, IoBufMut};
 
@@ -205,19 +210,40 @@ impl RollMut {
     /// Split this [RollMut] at the given index.
     /// Panics if `at > len()`. If `at < len()`, the filled portion will carry
     /// over in the new [RollMut].
-    pub fn skip(self, n: usize) -> Self {
-        let n: u32 = n.try_into().unwrap();
-        assert!(n <= self.len);
+    pub fn skip(&mut self, n: usize) {
+        let u32_n: u32 = n.try_into().unwrap();
+        assert!(u32_n <= self.len);
 
-        RollMut {
-            storage: match self.storage {
-                StorageMut::Buf(b) => StorageMut::Buf(b.skip(n as usize)),
-                StorageMut::Box(mut b) => {
-                    b.off += n;
-                    StorageMut::Box(b)
-                }
-            },
-            len: self.len - n,
+        match &mut self.storage {
+            StorageMut::Buf(b) => b.skip(n),
+            StorageMut::Box(b) => b.off += u32_n,
+        }
+        self.len -= u32_n;
+    }
+
+    /// Advance this buffer, keeping the filled part only starting with
+    /// the given roll. (Useful after parsing something with nom)
+    ///
+    /// Panics if the roll is not from this buffer
+    pub fn keep(&mut self, roll: Roll) {
+        match (&mut self.storage, &roll.inner) {
+            (StorageMut::Buf(ours), RollInner::Buf(theirs)) => {
+                assert_eq!(ours.index, theirs.index, "roll must be from same buffer");
+                assert!(theirs.off >= ours.off, "roll must be from same buffer");
+                ours.off -= theirs.off;
+            }
+            (StorageMut::Box(ours), RollInner::Box(theirs)) => {
+                assert_eq!(
+                    ours.buf.get(),
+                    theirs.b.buf.get(),
+                    "roll must be from same buffer"
+                );
+                assert!(theirs.b.off >= ours.off);
+                ours.off -= theirs.b.off;
+            }
+            _ => {
+                panic!("cannot keep roll from different buffer");
+            }
         }
     }
 }
@@ -263,6 +289,23 @@ unsafe impl IoBufMut for ReadInto {
 pub struct Roll {
     inner: RollInner,
 }
+
+impl Debug for Roll {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(&self[..], f)
+    }
+}
+
+impl<T> PartialEq<T> for Roll
+where
+    T: AsRef<[u8]>,
+{
+    fn eq(&self, other: &T) -> bool {
+        &self[..] == other.as_ref()
+    }
+}
+
+impl Eq for Roll {}
 
 impl From<RollInner> for Roll {
     fn from(inner: RollInner) -> Self {
@@ -373,7 +416,9 @@ impl Roll {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ChanRead, RollMut, BUF_SIZE};
+    use nom::IResult;
+
+    use crate::{ChanRead, Roll, RollMut, BUF_SIZE};
 
     #[test]
     fn test_roll_put() {
@@ -449,5 +494,45 @@ mod tests {
             assert_eq!(rm.len(), 6);
             assert_eq!(rm.filled().as_ref(), b"123456");
         });
+    }
+
+    #[test]
+    fn test_roll_nom_sample() {
+        fn parse(i: Roll) -> IResult<Roll, Roll> {
+            nom::bytes::streaming::tag(&b"HTTP/1.1 200 OK"[..])(i)
+        }
+
+        let mut buf = RollMut::alloc().unwrap();
+
+        let input = b"HTTP/1.1 200 OK".repeat(1000);
+        let mut pending = &input[..];
+
+        loop {
+            let (rest, version) = match parse(buf.filled()) {
+                Ok(t) => t,
+                Err(e) => {
+                    if e.is_incomplete() {
+                        {
+                            if pending.is_empty() {
+                                println!("ran out of input");
+                                break;
+                            }
+
+                            let n = std::cmp::min(buf.cap(), pending.len());
+                            buf.put(&pending[..n]).unwrap();
+                            pending = &pending[n..];
+
+                            println!("advanced by {n}, {} remaining", pending.len());
+                        }
+
+                        continue;
+                    }
+                    panic!("parsing error: {e}");
+                }
+            };
+            assert_eq!(version, b"HTTP/1.1 200 OK");
+
+            buf.keep(rest);
+        }
     }
 }
