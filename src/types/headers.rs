@@ -2,7 +2,7 @@
 
 use smallvec::SmallVec;
 
-use crate::bufpool::AggSlice;
+use crate::Roll;
 
 const HEADERS_SMALLVEC_CAPACITY: usize = 32;
 
@@ -49,16 +49,9 @@ impl Headers {
     /// Returns the content-length header
     pub fn content_length(&self) -> Option<u64> {
         for h in self {
-            if h.name.eq_ignore_ascii_case("content-length") {
-                // FIXME: this is really wasteful. maybe there's something to be
-                // done where: 1) it's probably contiguous aynway, so just use that,
-                // or: 2) if it's not, just copy it to a stack-allocated slice.
-                //
-                // this could be a method of AggSlice that lends a `&[u8]`
-                // to a closure and errors out if it's too big. it could take
-                // const generics.
-                let value = h.value.to_vec();
-                if let Ok(s) = std::str::from_utf8(&value[..]) {
+            if h.name.eq_ignore_ascii_case(b"content-length") {
+                // TODO: introduce RollStr
+                if let Ok(s) = std::str::from_utf8(&h.value[..]) {
                     if let Ok(l) = s.parse() {
                         return Some(l);
                     }
@@ -88,6 +81,6 @@ impl IntoIterator for Headers {
 }
 
 pub struct Header {
-    pub name: AggSlice,
-    pub value: AggSlice,
+    pub name: Roll,
+    pub value: Roll,
 }

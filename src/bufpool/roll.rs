@@ -138,6 +138,13 @@ impl RollMut {
         self.storage = s;
     }
 
+    /// Reallocates the backing storage for this buffer, copying the filled
+    /// portion into it. Panics if buf.len() == buf.cap(), in which case
+    /// reallocating won't do much good
+    pub fn realloc(&mut self) {
+        todo!("this is maybe a bad API, should it just grow and accept a bound?");
+    }
+
     /// The length (filled portion) of this buffer, that can be read
     #[inline(always)]
     pub fn len(&self) -> usize {
