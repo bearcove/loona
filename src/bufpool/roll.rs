@@ -19,9 +19,9 @@ enum StorageMut {
 
 impl StorageMut {
     #[inline(always)]
-    fn len(&self) -> u32 {
+    fn len(&self) -> usize {
         match self {
-            StorageMut::Buf(b) => b.len() as u32,
+            StorageMut::Buf(b) => b.len(),
             StorageMut::Box(b) => b.len(),
         }
     }
@@ -49,10 +49,10 @@ struct BoxStorage {
 
 impl BoxStorage {
     #[inline(always)]
-    fn len(&self) -> u32 {
+    fn len(&self) -> usize {
         let buf = self.buf.get();
-        let len = unsafe { (*buf).len() as u32 };
-        len - self.off
+        let len = unsafe { (*buf).len() };
+        len - self.off as usize
     }
 
     fn as_ptr(&self) -> *const u8 {
@@ -73,6 +73,10 @@ impl BoxStorage {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("slice does not fit into this RollMut")]
+pub struct DoesNotFit;
+
 impl RollMut {
     /// Allocate, using a single [BufMut] for storage.
     pub fn alloc() -> eyre::Result<Self> {
@@ -84,8 +88,8 @@ impl RollMut {
 
     /// The length (filled portion) of this buffer, that can be read
     #[inline(always)]
-    pub fn len(&self) -> u32 {
-        self.len
+    pub fn len(&self) -> usize {
+        self.len as usize
     }
 
     /// Returns true if this is empty
@@ -96,16 +100,20 @@ impl RollMut {
 
     /// The capacity of this buffer, that can be written to
     #[inline(always)]
-    pub fn cap(&self) -> u32 {
-        self.storage.len() - self.len
+    pub fn cap(&self) -> usize {
+        self.storage.len() - self.len as usize
     }
 
     /// Read at most `limit` bytes from [ReadOwned] into this buffer.
-    pub async fn read_into(self, limit: u32, r: &impl ReadOwned) -> (Self, std::io::Result<usize>) {
+    pub async fn read_into(
+        self,
+        limit: usize,
+        r: &impl ReadOwned,
+    ) -> (Self, std::io::Result<usize>) {
         let len = std::cmp::min(limit, self.cap());
         let read_into = ReadInto {
             buf: self,
-            len,
+            len: len.try_into().unwrap(),
             init: 0,
         };
         let (res, mut read_into) = r.read(read_into).await;
@@ -113,7 +121,22 @@ impl RollMut {
         (read_into.buf, res)
     }
 
-    /// Borrow the filled portion of this buffer as a [Roll]
+    /// Put a slice into this buffer, fails if the slice doesn't fit in the buffer's capacity
+    pub fn put(&mut self, s: &[u8]) -> Result<(), DoesNotFit> {
+        let len = s.len();
+        if len > self.cap() {
+            return Err(DoesNotFit);
+        }
+        unsafe {
+            let ptr = self.storage.as_mut_ptr().add(self.len as usize);
+            std::ptr::copy_nonoverlapping(s.as_ptr(), ptr, len as usize);
+        }
+        let u32_len: u32 = len.try_into().unwrap();
+        self.len += u32_len;
+        Ok(())
+    }
+
+    /// Get a [Roll] corresponding to the filled portion of this buffer
     pub fn filled(&self) -> Roll {
         match &self.storage {
             StorageMut::Buf(b) => {
@@ -125,6 +148,29 @@ impl RollMut {
                 len: self.len,
             })
             .into(),
+        }
+    }
+
+    /// Split this [RollMut] at the given index.
+    /// Panics if `at > len()`. If `at < len()`, the filled portion will carry
+    /// over in the new [RollMut].
+    pub fn split_off(self, at: usize) -> Self {
+        let at: u32 = at.try_into().unwrap();
+        assert!(at <= self.len);
+
+        RollMut {
+            storage: match self.storage {
+                StorageMut::Buf(b) => {
+                    // TODO: don't use `split_at` here
+                    let (l, r) = b.split_at(at as usize);
+                    StorageMut::Buf(r)
+                }
+                StorageMut::Box(mut b) => {
+                    b.off += at;
+                    StorageMut::Box(b)
+                }
+            },
+            len: self.len - at,
         }
     }
 }
@@ -190,7 +236,8 @@ struct RollBox {
 
 impl RollBox {
     #[inline(always)]
-    pub fn split_at(self, at: u32) -> (Self, Self) {
+    pub fn split_at(self, at: usize) -> (Self, Self) {
+        let at: u32 = at.try_into().unwrap();
         assert!(at <= self.len);
 
         let left = Self {
@@ -208,8 +255,8 @@ impl RollBox {
     }
 
     #[inline(always)]
-    pub fn len(&self) -> u32 {
-        self.len
+    pub fn len(&self) -> usize {
+        self.len as usize
     }
 }
 
@@ -232,10 +279,10 @@ impl AsRef<[u8]> for Roll {
 
 impl RollInner {
     #[inline(always)]
-    fn split_at(self, at: u32) -> (Self, Self) {
+    fn split_at(self, at: usize) -> (Self, Self) {
         match self {
             RollInner::Buf(b) => {
-                let (left, right) = b.split_at(at as usize);
+                let (left, right) = b.split_at(at);
                 (RollInner::Buf(left), RollInner::Buf(right))
             }
             RollInner::Box(b) => {
@@ -249,15 +296,36 @@ impl RollInner {
 impl Roll {
     /// Returns the length of this roll
     #[inline(always)]
-    pub fn len(&self) -> u32 {
+    pub fn len(&self) -> usize {
         match &self.inner {
-            RollInner::Buf(b) => b.len() as u32,
-            RollInner::Box(b) => b.len() as u32,
+            RollInner::Buf(b) => b.len(),
+            RollInner::Box(b) => b.len(),
         }
     }
 
-    pub fn split_at(self, at: u32) -> (Roll, Roll) {
+    pub fn split_at(self, at: usize) -> (Roll, Roll) {
         let (left, right) = self.inner.split_at(at);
         (left.into(), right.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{RollMut, BUF_SIZE};
+
+    #[test]
+    fn test_roll() {
+        let mut rm = RollMut::alloc().unwrap();
+        assert_eq!(rm.cap(), BUF_SIZE as usize);
+
+        rm.put(b"hello").unwrap();
+        assert_eq!(rm.cap(), BUF_SIZE as usize - 5);
+
+        let filled = rm.filled();
+        assert_eq!(filled.as_ref(), b"hello");
+
+        let rm = rm.split_off(5);
+
+        assert_eq!(rm.cap(), BUF_SIZE as usize - 5);
     }
 }
