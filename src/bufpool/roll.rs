@@ -512,7 +512,9 @@ impl Iterator for RollIter {
             return None;
         }
 
-        Some(self.roll[self.pos])
+        let c = self.roll[self.pos];
+        self.pos += 1;
+        Some(c)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -691,6 +693,15 @@ mod tests {
         let mut rm = RollMut::alloc().unwrap();
         rm.grow();
         test_roll_keep_inner(rm);
+    }
+
+    #[test]
+    fn test_roll_iter() {
+        let mut rm = RollMut::alloc().unwrap();
+        rm.put(b"hello").unwrap();
+        let roll = rm.filled();
+        let v = roll.iter().collect::<Vec<_>>();
+        assert_eq!(v, b"hello");
     }
 
     #[test]
