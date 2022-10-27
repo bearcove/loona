@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     cell::UnsafeCell,
     fmt::{Debug, Formatter},
     iter::Enumerate,
@@ -466,6 +467,10 @@ impl Roll {
             pos: 0,
         }
     }
+
+    pub fn to_string_lossy(&self) -> Cow<'_, str> {
+        String::from_utf8_lossy(self)
+    }
 }
 
 impl InputIter for Roll {
@@ -702,6 +707,8 @@ mod tests {
         let roll = rm.filled();
         let v = roll.iter().collect::<Vec<_>>();
         assert_eq!(v, b"hello");
+
+        assert_eq!(roll.to_string_lossy(), "hello");
     }
 
     #[test]
