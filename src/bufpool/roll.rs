@@ -227,7 +227,9 @@ impl RollMut {
             (StorageMut::Buf(ours), RollInner::Buf(theirs)) => {
                 assert_eq!(ours.index, theirs.index, "roll must be from same buffer");
                 assert!(theirs.off >= ours.off, "roll must be from same buffer");
-                ours.off -= theirs.off;
+                let skipped = theirs.off - ours.off;
+                self.len -= skipped as u32;
+                ours.off = theirs.off;
             }
             (StorageMut::Box(ours), RollInner::Box(theirs)) => {
                 assert_eq!(
@@ -236,7 +238,9 @@ impl RollMut {
                     "roll must be from same buffer"
                 );
                 assert!(theirs.b.off >= ours.off);
-                ours.off -= theirs.b.off;
+                let skipped = theirs.b.off - ours.off;
+                self.len -= skipped;
+                ours.off = theirs.b.off;
             }
             _ => {
                 panic!("cannot keep roll from different buffer");
@@ -557,7 +561,7 @@ mod tests {
             assert_eq!(roll, b"world");
 
             rm.keep(roll);
-            assert_eq!(rm.borrow_filled(), b"hello");
+            assert_eq!(rm.borrow_filled(), b"world");
         }
 
         let rm = RollMut::alloc().unwrap();
