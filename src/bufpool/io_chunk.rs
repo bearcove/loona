@@ -2,12 +2,15 @@
 
 use tokio_uring::buf::IoBuf;
 
+use crate::Roll;
+
 use super::Buf;
 
 pub enum IoChunk {
     Static(&'static [u8]),
     Vec(Vec<u8>),
     Buf(Buf),
+    Roll(Roll),
 }
 
 impl From<&'static [u8]> for IoChunk {
@@ -28,12 +31,19 @@ impl From<Buf> for IoChunk {
     }
 }
 
+impl From<Roll> for IoChunk {
+    fn from(roll: Roll) -> Self {
+        IoChunk::Roll(roll)
+    }
+}
+
 impl AsRef<[u8]> for IoChunk {
     fn as_ref(&self) -> &[u8] {
         match self {
             IoChunk::Static(slice) => slice,
             IoChunk::Vec(vec) => vec.as_ref(),
             IoChunk::Buf(buf) => buf.as_ref(),
+            IoChunk::Roll(roll) => roll.as_ref(),
         }
     }
 }
@@ -45,6 +55,7 @@ impl IoChunk {
             IoChunk::Static(slice) => slice,
             IoChunk::Vec(vec) => vec,
             IoChunk::Buf(buf) => buf,
+            IoChunk::Roll(roll) => roll,
         }
     }
 }
@@ -93,6 +104,7 @@ impl IoChunk {
             IoChunk::Static(slice) => slice.len(),
             IoChunk::Vec(vec) => vec.len(),
             IoChunk::Buf(buf) => buf.len(),
+            IoChunk::Roll(roll) => roll.len(),
         }
     }
 
