@@ -1,6 +1,9 @@
 mod agg;
 pub use agg::*;
 
+mod roll;
+pub use roll::*;
+
 mod io_chunk;
 pub use io_chunk::*;
 
@@ -149,6 +152,11 @@ pub struct BufMut {
 }
 
 impl BufMut {
+    #[inline(always)]
+    pub fn alloc() -> Result<BufMut, Error> {
+        BUF_POOL.alloc()
+    }
+
     /// Clone this buffer. This is only pub(crate) because it's used
     /// by `AggBuf`.
     pub(crate) fn dangerous_clone(&self) -> Self {
@@ -159,11 +167,6 @@ impl BufMut {
             len: self.len,
             _non_send: PhantomData,
         }
-    }
-
-    #[inline(always)]
-    pub fn alloc() -> Result<BufMut, Error> {
-        BUF_POOL.alloc()
     }
 
     #[inline(always)]
@@ -333,6 +336,34 @@ impl Buf {
 
             _non_send: PhantomData,
         }
+    }
+
+    /// Split this buffer in twain.
+    /// Panics if `at` is out of bounds.
+    #[inline]
+    pub fn split_at(self, at: usize) -> (Self, Self) {
+        assert!(at <= self.len as usize);
+
+        let left = Buf {
+            index: self.index,
+            off: self.off,
+            len: at as _,
+
+            _non_send: PhantomData,
+        };
+
+        let right = Buf {
+            index: self.index,
+            off: self.off + at as u16,
+            len: (self.len - at as u16),
+
+            _non_send: PhantomData,
+        };
+
+        std::mem::forget(self); // don't decrease ref count
+        BUF_POOL.inc(left.index); // in fact, increase it by 1
+
+        (left, right)
     }
 }
 
