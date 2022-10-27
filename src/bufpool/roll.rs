@@ -7,7 +7,10 @@ use std::{
     rc::Rc,
 };
 
-use nom::{Compare, CompareResult, InputIter, InputLength, InputTake, Needed};
+use nom::{
+    Compare, CompareResult, FindSubstring, InputIter, InputLength, InputTake, InputTakeAtPosition,
+    Needed,
+};
 use tokio_uring::buf::{IoBuf, IoBufMut};
 
 use crate::{Buf, BufMut, IoChunk, IoChunkable, ReadOwned, BUF_SIZE};
@@ -571,6 +574,106 @@ impl InputTake for Roll {
     fn take_split(&self, count: usize) -> (Self, Self) {
         let (prefix, suffix) = self.clone().split_at(count);
         (suffix, prefix)
+    }
+}
+
+impl InputTakeAtPosition for Roll {
+    type Item = u8;
+
+    fn split_at_position<P, E: nom::error::ParseError<Self>>(
+        &self,
+        predicate: P,
+    ) -> nom::IResult<Self, Self, E>
+    where
+        P: Fn(Self::Item) -> bool,
+    {
+        match self.iter().position(predicate) {
+            Some(i) => Ok(self.clone().take_split(i)),
+            None => Err(nom::Err::Incomplete(nom::Needed::new(1))),
+        }
+    }
+
+    fn split_at_position1<P, E: nom::error::ParseError<Self>>(
+        &self,
+        predicate: P,
+        e: nom::error::ErrorKind,
+    ) -> nom::IResult<Self, Self, E>
+    where
+        P: Fn(Self::Item) -> bool,
+    {
+        match self.iter().position(predicate) {
+            Some(0) => Err(nom::Err::Error(E::from_error_kind(self.clone(), e))),
+            Some(i) => Ok(self.take_split(i)),
+            None => Err(nom::Err::Incomplete(nom::Needed::new(1))),
+        }
+    }
+
+    fn split_at_position_complete<P, E: nom::error::ParseError<Self>>(
+        &self,
+        predicate: P,
+    ) -> nom::IResult<Self, Self, E>
+    where
+        P: Fn(Self::Item) -> bool,
+    {
+        match self.iter().position(predicate) {
+            Some(i) => Ok(self.take_split(i)),
+            None => Ok(self.take_split(self.input_len())),
+        }
+    }
+
+    fn split_at_position1_complete<P, E: nom::error::ParseError<Self>>(
+        &self,
+        predicate: P,
+        e: nom::error::ErrorKind,
+    ) -> nom::IResult<Self, Self, E>
+    where
+        P: Fn(Self::Item) -> bool,
+    {
+        match self.iter().position(predicate) {
+            Some(0) => Err(nom::Err::Error(E::from_error_kind(self.clone(), e))),
+            Some(i) => Ok(self.take_split(i)),
+            None => {
+                if self.is_empty() {
+                    Err(nom::Err::Error(E::from_error_kind(self.clone(), e)))
+                } else {
+                    Ok(self.take_split(self.input_len()))
+                }
+            }
+        }
+    }
+}
+
+impl FindSubstring<&[u8]> for Roll {
+    fn find_substring(&self, substr: &[u8]) -> Option<usize> {
+        if substr.len() > self.len() {
+            return None;
+        }
+
+        let (&substr_first, substr_rest) = match substr.split_first() {
+            Some(split) => split,
+            // an empty substring is found at position 0
+            // This matches the behavior of str.find("").
+            None => return Some(0),
+        };
+
+        if substr_rest.is_empty() {
+            return memchr::memchr(substr_first, self);
+        }
+
+        let mut offset = 0;
+        let haystack = &self[..self.len() - substr_rest.len()];
+
+        while let Some(position) = memchr::memchr(substr_first, &haystack[offset..]) {
+            offset += position;
+            let next_offset = offset + 1;
+            if &self[next_offset..][..substr_rest.len()] == substr_rest {
+                return Some(offset);
+            }
+
+            offset = next_offset;
+        }
+
+        None
     }
 }
 
