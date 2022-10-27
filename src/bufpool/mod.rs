@@ -11,7 +11,7 @@ use std::{
     cell::{RefCell, RefMut},
     collections::VecDeque,
     marker::PhantomData,
-    ops::{self, Range},
+    ops::{self, Bound, RangeBounds},
 };
 
 use memmap2::MmapMut;
@@ -198,7 +198,7 @@ impl BufMut {
 
     /// Dangerous: freeze a slice of this. Must only be used if you can
     /// guarantee this portion won't be written to anymore.
-    pub(crate) fn freeze_slice(&self, range: Range<u16>) -> Buf {
+    pub(crate) fn freeze_slice(&self, range: impl RangeBounds<usize>) -> Buf {
         let b = Buf {
             index: self.index,
             off: self.off,
@@ -333,15 +333,30 @@ impl Buf {
     }
 
     /// Slice this buffer
-    pub fn slice(&self, range: Range<u16>) -> Self {
-        assert!(range.end >= range.start);
-        assert!(range.end <= self.len);
+    pub fn slice(&self, range: impl RangeBounds<usize>) -> Self {
+        let mut new_start = 0;
+        let mut new_end = self.len();
+
+        match range.start_bound() {
+            Bound::Included(&n) => new_start = n,
+            Bound::Excluded(&n) => new_start = n + 1,
+            Bound::Unbounded => {}
+        }
+
+        match range.end_bound() {
+            Bound::Included(&n) => new_end = n + 1,
+            Bound::Excluded(&n) => new_end = n,
+            Bound::Unbounded => {}
+        }
+
+        assert!(new_start <= new_end);
+        assert!(new_end <= self.len());
 
         BUF_POOL.inc(1);
         Buf {
             index: self.index,
-            off: self.off + range.start,
-            len: (range.end - range.start) as _,
+            off: self.off + new_start as u16,
+            len: (new_end - new_start) as u16,
 
             _non_send: PhantomData,
         }

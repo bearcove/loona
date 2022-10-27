@@ -264,9 +264,7 @@ impl AggBuf {
         dbg2!("take_contiguous_at_most", block_index, &block_range);
 
         let block = inner.blocks[block_index].dangerous_clone();
-        let u16_block_range: Range<u16> =
-            (block_range.start.try_into().unwrap())..(block_range.end.try_into().unwrap());
-        let ret = block.freeze_slice(u16_block_range);
+        let ret = block.freeze_slice(block_range.clone());
         let consumed = ret.len() as u32;
 
         let next_inner = if block_range.end == inner.block_size as usize {
@@ -561,8 +559,6 @@ impl IoChunkable for AggSlice {
         let parent = self.parent.read();
         let (block_index, range) = parent.contiguous_range(self.off + offset..self.off + self.len);
 
-        // FIXME: use try_into?
-        let range = (range.start as u16)..(range.end as u16);
         Some(parent.blocks[block_index].freeze_slice(range).into())
     }
 }

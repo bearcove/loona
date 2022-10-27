@@ -1,7 +1,7 @@
 use std::{
     cell::UnsafeCell,
     fmt::{Debug, Formatter},
-    ops::Deref,
+    ops::{Bound, Deref, RangeBounds},
     rc::Rc,
 };
 
@@ -187,14 +187,11 @@ impl RollMut {
     /// Get a [Roll] corresponding to the filled portion of this buffer
     pub fn filled(&self) -> Roll {
         match &self.storage {
-            StorageMut::Buf(b) => {
-                let u16_len: u16 = self.len.try_into().unwrap();
-                RollInner::Buf(b.freeze_slice(0..u16_len)).into()
-            }
-            StorageMut::Box(b) => RollInner::Box(RollBox {
+            StorageMut::Buf(b) => b.freeze_slice(0..self.len()).into(),
+            StorageMut::Box(b) => RollBox {
                 b: b.clone(),
                 len: self.len,
-            })
+            }
             .into(),
         }
     }
@@ -313,6 +310,18 @@ impl From<RollInner> for Roll {
     }
 }
 
+impl From<RollBox> for Roll {
+    fn from(b: RollBox) -> Self {
+        RollInner::Box(b).into()
+    }
+}
+
+impl From<Buf> for Roll {
+    fn from(b: Buf) -> Self {
+        RollInner::Buf(b).into()
+    }
+}
+
 #[derive(Clone)]
 enum RollInner {
     Buf(Buf),
@@ -327,7 +336,7 @@ struct RollBox {
 
 impl RollBox {
     #[inline(always)]
-    pub fn split_at(self, at: usize) -> (Self, Self) {
+    fn split_at(self, at: usize) -> (Self, Self) {
         let at: u32 = at.try_into().unwrap();
         assert!(at <= self.len);
 
@@ -346,8 +355,33 @@ impl RollBox {
     }
 
     #[inline(always)]
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.len as usize
+    }
+
+    fn slice(&self, range: impl RangeBounds<usize>) -> Self {
+        let mut new_start = 0;
+        let mut new_end = self.len();
+
+        match range.start_bound() {
+            Bound::Included(&n) => new_start = n,
+            Bound::Excluded(&n) => new_start = n + 1,
+            Bound::Unbounded => {}
+        }
+
+        match range.end_bound() {
+            Bound::Included(&n) => new_end = n + 1,
+            Bound::Excluded(&n) => new_end = n,
+            Bound::Unbounded => {}
+        }
+
+        assert!(new_start <= new_end);
+        assert!(new_end <= self.len());
+
+        let mut new = self.clone();
+        new.b.off += new_start as u32;
+        new.len = (new_end - new_start) as u32;
+        new
     }
 }
 
@@ -412,6 +446,13 @@ impl Roll {
         let (left, right) = self.inner.split_at(at);
         (left.into(), right.into())
     }
+
+    pub fn slice(&self, range: impl RangeBounds<usize>) -> Self {
+        match &self.inner {
+            RollInner::Buf(b) => b.slice(range).into(),
+            RollInner::Box(b) => b.slice(range).into(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -431,7 +472,7 @@ mod tests {
             let filled = rm.filled();
             assert_eq!(&filled[..], b"hello");
 
-            let rm = rm.skip(5);
+            rm.skip(5);
             assert_eq!(rm.len(), 0);
             assert_eq!(rm.cap(), initial_size - 5);
         }
@@ -467,7 +508,7 @@ mod tests {
         assert_eq!(rm.cap(), 2 * (BUF_SIZE as usize) - input.len());
         assert_eq!(rm.borrow_filled(), input);
 
-        let rm = rm.skip(5);
+        rm.skip(5);
         assert_eq!(rm.borrow_filled(), b"pretty long");
     }
 
@@ -497,42 +538,73 @@ mod tests {
     }
 
     #[test]
-    fn test_roll_nom_sample() {
-        fn parse(i: Roll) -> IResult<Roll, Roll> {
-            nom::bytes::streaming::tag(&b"HTTP/1.1 200 OK"[..])(i)
+    fn test_roll_keep() {
+        fn test_roll_keep_inner(mut rm: RollMut) {
+            rm.put(b"helloworld").unwrap();
+            assert_eq!(rm.borrow_filled(), b"helloworld");
+
+            {
+                let roll = rm.filled().slice(3..=5);
+                assert_eq!(roll, b"low");
+            }
+
+            {
+                let roll = rm.filled().slice(..5);
+                assert_eq!(roll, b"hello");
+            }
+
+            let roll = rm.filled().slice(5..);
+            assert_eq!(roll, b"world");
+
+            rm.keep(roll);
+            assert_eq!(rm.borrow_filled(), b"hello");
         }
 
-        let mut buf = RollMut::alloc().unwrap();
+        let rm = RollMut::alloc().unwrap();
+        test_roll_keep_inner(rm);
 
-        let input = b"HTTP/1.1 200 OK".repeat(1000);
-        let mut pending = &input[..];
-
-        loop {
-            let (rest, version) = match parse(buf.filled()) {
-                Ok(t) => t,
-                Err(e) => {
-                    if e.is_incomplete() {
-                        {
-                            if pending.is_empty() {
-                                println!("ran out of input");
-                                break;
-                            }
-
-                            let n = std::cmp::min(buf.cap(), pending.len());
-                            buf.put(&pending[..n]).unwrap();
-                            pending = &pending[n..];
-
-                            println!("advanced by {n}, {} remaining", pending.len());
-                        }
-
-                        continue;
-                    }
-                    panic!("parsing error: {e}");
-                }
-            };
-            assert_eq!(version, b"HTTP/1.1 200 OK");
-
-            buf.keep(rest);
-        }
+        let mut rm = RollMut::alloc().unwrap();
+        rm.grow();
+        test_roll_keep_inner(rm);
     }
+
+    // #[test]
+    // fn test_roll_nom_sample() {
+    //     fn parse(i: Roll) -> IResult<Roll, Roll> {
+    //         nom::bytes::streaming::tag(&b"HTTP/1.1 200 OK"[..])(i)
+    //     }
+
+    //     let mut buf = RollMut::alloc().unwrap();
+
+    //     let input = b"HTTP/1.1 200 OK".repeat(1000);
+    //     let mut pending = &input[..];
+
+    //     loop {
+    //         let (rest, version) = match parse(buf.filled()) {
+    //             Ok(t) => t,
+    //             Err(e) => {
+    //                 if e.is_incomplete() {
+    //                     {
+    //                         if pending.is_empty() {
+    //                             println!("ran out of input");
+    //                             break;
+    //                         }
+
+    //                         let n = std::cmp::min(buf.cap(), pending.len());
+    //                         buf.put(&pending[..n]).unwrap();
+    //                         pending = &pending[n..];
+
+    //                         println!("advanced by {n}, {} remaining", pending.len());
+    //                     }
+
+    //                     continue;
+    //                 }
+    //                 panic!("parsing error: {e}");
+    //             }
+    //         };
+    //         assert_eq!(version, b"HTTP/1.1 200 OK");
+
+    //         buf.keep(rest);
+    //     }
+    // }
 }
