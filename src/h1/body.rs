@@ -147,6 +147,7 @@ impl ContentLengthDecoder {
             }
         }
 
+        // TODO: this should probably be a method on `Roll`
         let taken = std::cmp::min(buf.len(), remain as usize);
         self.read += taken as u64;
         let chunk = buf.filled().slice(..taken);
