@@ -1,10 +1,10 @@
 use crate::{
-    buffet::IoChunkList,
+    buffet::PieceList,
     types::{Headers, Request, Response},
 };
 
-pub(crate) fn encode_request(req: Request, list: &mut IoChunkList) -> eyre::Result<()> {
-    list.push(req.method);
+pub(crate) fn encode_request(req: Request, list: &mut PieceList) -> eyre::Result<()> {
+    list.push(req.method.into_chunk());
     list.push(" ");
     list.push(req.path);
     match req.version {
@@ -21,7 +21,7 @@ pub(crate) fn encode_request(req: Request, list: &mut IoChunkList) -> eyre::Resu
     Ok(())
 }
 
-pub(crate) fn encode_response(res: Response, list: &mut IoChunkList) -> eyre::Result<()> {
+pub(crate) fn encode_response(res: Response, list: &mut PieceList) -> eyre::Result<()> {
     match res.version {
         1 => list.push(&b"HTTP/1.1 "[..]),
         _ => return Err(eyre::eyre!("unsupported HTTP version 1.{}", res.version)),
@@ -37,7 +37,7 @@ pub(crate) fn encode_response(res: Response, list: &mut IoChunkList) -> eyre::Re
     Ok(())
 }
 
-pub(crate) fn encode_headers(headers: Headers, list: &mut IoChunkList) -> eyre::Result<()> {
+pub(crate) fn encode_headers(headers: Headers, list: &mut PieceList) -> eyre::Result<()> {
     for header in headers {
         list.push(header.name);
         list.push(": ");

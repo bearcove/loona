@@ -6,8 +6,8 @@ mod helpers;
 
 use bytes::BytesMut;
 use hring::{
-    h1, Body, BodyChunk, ChanRead, ChanWrite, Headers, ReadWritePair, Request, Response, RollMut,
-    WriteOwned,
+    h1, Body, BodyChunk, ChanRead, ChanWrite, Headers, Method, ReadWritePair, Request, Response,
+    RollMut, WriteOwned,
 };
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
@@ -143,19 +143,9 @@ fn request_api() {
         let (mut rx, write) = ChanWrite::new();
         let transport = ReadWritePair(read, write);
 
-        let mut buf = RollMut::alloc()?;
-
-        buf.put(b"GET")?;
-        let method = buf.take_all();
-
-        buf.put(b"/")?;
-        let path = buf.take_all();
-
-        _ = buf;
-
         let req = Request {
-            method,
-            path,
+            method: Method::Get,
+            path: "/".into(),
             version: 1,
             headers: Headers::default(),
         };

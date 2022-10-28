@@ -1,17 +1,21 @@
-mod headers;
 use std::fmt::{self, Debug};
 
-pub use headers::*;
 use tracing::debug;
 
-use crate::{IoChunk, Roll};
+use crate::{Piece, PieceStr, Roll};
+
+mod headers;
+pub use headers::*;
+
+mod method;
+pub use method::*;
 
 /// An HTTP request
 pub struct Request {
-    pub method: Roll,
+    pub method: Method,
 
     /// Requested entity
-    pub path: Roll,
+    pub path: PieceStr,
 
     /// The 'b' in 'HTTP/1.b'
     pub version: u8,
@@ -22,7 +26,7 @@ pub struct Request {
 
 impl Request {
     pub(crate) fn debug_print(&self) {
-        debug!(method = %self.method.to_string_lossy(), path = %self.path.to_string_lossy(), version = %self.version, "got request");
+        debug!(method = %self.method, path = %self.path, version = %self.version, "got request");
         for h in &self.headers {
             debug!(name = %h.name.to_string_lossy(), value = %h.value.to_string_lossy(), "got header");
         }
@@ -55,7 +59,7 @@ impl Response {
 
 /// A body chunk
 pub enum BodyChunk {
-    Chunk(IoChunk),
+    Chunk(Piece),
 
     /// The body finished, and it matched the announced content-length,
     /// or we were using a framed protocol

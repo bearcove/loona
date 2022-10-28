@@ -1,8 +1,8 @@
 mod roll;
 pub use roll::*;
 
-mod io_chunk;
-pub use io_chunk::*;
+mod piece;
+pub use piece::*;
 
 use std::{
     cell::{RefCell, RefMut},
