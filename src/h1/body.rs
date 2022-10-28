@@ -1,7 +1,6 @@
 use std::{fmt, rc::Rc};
 
-use pretty_hex::PrettyHex;
-use tracing::{debug, trace};
+use tracing::debug;
 
 use crate::{
     util::{read_and_parse, write_all_list},
@@ -127,18 +126,11 @@ impl ContentLengthDecoder {
             .take()
             .ok_or_else(|| BodyErrorReason::CalledNextChunkAfterError.as_err())?;
 
-        if buf.len() == 0 {
-            if buf.cap() == 0 {
-                // TODO: maybe this should be built into buf? but what about max size?
-                if buf.len() < buf.cap() {
-                    buf.realloc();
-                } else {
-                    buf.grow();
-                }
-            }
+        if buf.is_empty() {
+            buf.reserve();
 
             let res;
-            (buf, res) = buf.read_into(usize::MAX, transport).await;
+            (res, buf) = buf.read_into(usize::MAX, transport).await;
             res.map_err(|e| BodyErrorReason::ErrorWhileReadingChunkData.with_cx(e))?;
         }
 
@@ -215,17 +207,15 @@ impl ChunkedDecoder {
                     continue;
                 }
 
-                if buf.read().len() == 0 {
-                    buf.write().grow_if_needed()?;
-                    let mut slice = buf.write_slice();
+                if buf.is_empty() {
+                    buf.reserve();
+
                     let res;
-                    (res, slice) = transport.read(slice).await;
-                    buf = slice.into_inner();
+                    (res, buf) = buf.read_into(*remain as usize, transport).await;
                     res.map_err(|e| BodyErrorReason::ErrorWhileReadingChunkData.with_cx(e))?;
                 }
 
-                // FIXME: integer demotion
-                let chunk = buf.take_contiguous_at_most(*remain as u32);
+                let chunk = buf.take_at_most(*remain as usize);
                 match chunk {
                     Some(chunk) => {
                         *remain -= chunk.len() as u64;

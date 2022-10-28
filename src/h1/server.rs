@@ -4,10 +4,10 @@ use eyre::Context;
 use tracing::debug;
 
 use crate::{
-    bufpool::{AggBuf, IoChunkList},
+    bufpool::IoChunkList,
     io::WriteOwned,
     util::{read_and_parse, write_all_list, SemanticError},
-    Body, Headers, IoChunk, IoChunkable, ReadWriteOwned, Request, Response,
+    Body, Headers, IoChunk, IoChunkable, ReadWriteOwned, Request, Response, RollMut,
 };
 
 use super::{
@@ -17,13 +17,13 @@ use super::{
 
 pub struct ServerConf {
     /// Max length of the request line + HTTP headers
-    pub max_http_header_len: u32,
+    pub max_http_header_len: usize,
 
     /// Max length of a single header record, e.g. `user-agent: foobar`
-    pub max_header_record_len: u32,
+    pub max_header_record_len: usize,
 
     /// Max number of header records
-    pub max_header_records: u32,
+    pub max_header_records: usize,
 }
 
 impl Default for ServerConf {
@@ -57,7 +57,7 @@ pub enum ServeOutcome {
 pub async fn serve(
     transport: impl ReadWriteOwned,
     conf: Rc<ServerConf>,
-    mut client_buf: AggBuf,
+    mut client_buf: RollMut,
     driver: impl ServerDriver,
 ) -> eyre::Result<ServeOutcome> {
     let transport = Rc::new(transport);

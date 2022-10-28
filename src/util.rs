@@ -38,7 +38,6 @@ where
                         );
                     }
 
-                    // TODO: handle buf growth
                     let res;
                     let read_limit = max_len - buf.len();
                     if buf.len() >= max_len {

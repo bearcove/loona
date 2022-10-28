@@ -145,6 +145,23 @@ impl RollMut {
         todo!("this is maybe a bad API, should it just grow and accept a bound?");
     }
 
+    /// Reserve more capacity for this buffer if this buffer is full.
+    /// If this buffer's size matches the underlying storage size,
+    /// this is equivalent to `grow`. Otherwise, it's equivalent
+    /// to `realloc`.
+    pub fn reserve(&mut self) {
+        if self.len() < self.cap() {
+            return;
+        }
+
+        if self.len() < self.storage_size() {
+            // we don't need to go up a buffer size
+            self.realloc()
+        } else {
+            self.grow()
+        }
+    }
+
     /// The length (filled portion) of this buffer, that can be read
     #[inline(always)]
     pub fn len(&self) -> usize {
@@ -161,6 +178,12 @@ impl RollMut {
     #[inline(always)]
     pub fn cap(&self) -> usize {
         self.storage.len() - self.len as usize
+    }
+
+    /// The size of the underlying storage (to know whether
+    /// to reallocate or grow)
+    pub fn storage_size(&self) -> usize {
+        self.storage.cap()
     }
 
     /// Read at most `limit` bytes from [ReadOwned] into this buffer.
@@ -515,7 +538,7 @@ impl Roll {
     }
 
     pub fn slice(self, range: impl RangeBounds<usize>) -> Self {
-        match &self.inner {
+        match self.inner {
             RollInner::Buf(b) => b.slice(range).into(),
             RollInner::Box(b) => b.slice(range).into(),
         }
@@ -591,7 +614,7 @@ impl Iterator for RollIter {
 impl InputTake for Roll {
     #[inline]
     fn take(&self, count: usize) -> Self {
-        self.slice(..count)
+        self.clone().slice(..count)
     }
     #[inline]
     fn take_split(&self, count: usize) -> (Self, Self) {
