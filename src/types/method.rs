@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::{IoChunk, Roll};
+use crate::{IoChunk, RollStr};
 
 /// An HTTP method, see https://httpwg.org/specs/rfc9110.html#methods
 #[derive(Clone, Debug)]
@@ -13,7 +13,7 @@ pub enum Method {
     Connect,
     Options,
     Trace,
-    Other(Roll),
+    Other(RollStr),
 }
 
 impl fmt::Display for Method {
@@ -27,8 +27,7 @@ impl fmt::Display for Method {
             Method::Connect => "CONNECT",
             Method::Options => "OPTIONS",
             Method::Trace => "TRACE",
-            // TODO: use RollStr
-            Method::Other(roll) => return write!(f, "{}", roll.to_string_lossy()),
+            Method::Other(s) => s,
         };
         f.pad(s)
     }
@@ -45,24 +44,24 @@ impl Method {
             Method::Connect => "CONNECT",
             Method::Options => "OPTIONS",
             Method::Trace => "TRACE",
-            Method::Other(chunk) => return chunk.into(),
+            Method::Other(roll) => return roll.into_inner().into(),
         };
         s.into()
     }
 }
 
-impl From<Roll> for Method {
-    fn from(roll: Roll) -> Self {
-        match &roll[..] {
-            b"GET" => Method::Get,
-            b"HEAD" => Method::Head,
-            b"POST" => Method::Post,
-            b"PUT" => Method::Put,
-            b"DELETE" => Method::Delete,
-            b"CONNECT" => Method::Connect,
-            b"OPTIONS" => Method::Options,
-            b"TRACE" => Method::Trace,
-            _ => Method::Other(roll),
+impl From<RollStr> for Method {
+    fn from(s: RollStr) -> Self {
+        match &s[..] {
+            "GET" => Method::Get,
+            "HEAD" => Method::Head,
+            "POST" => Method::Post,
+            "PUT" => Method::Put,
+            "DELETE" => Method::Delete,
+            "CONNECT" => Method::Connect,
+            "OPTIONS" => Method::Options,
+            "TRACE" => Method::Trace,
+            _ => Method::Other(s),
         }
     }
 }

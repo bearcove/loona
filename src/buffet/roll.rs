@@ -593,6 +593,14 @@ impl Roll {
         _ = std::str::from_utf8(&self)?;
         Ok(RollStr { roll: self })
     }
+
+    /// Convert to [RollStr].
+    ///
+    /// # Safety
+    /// UB if not utf-8. Typically only used in parsers.
+    pub unsafe fn to_string_unchecked(self) -> RollStr {
+        RollStr { roll: self }
+    }
 }
 
 impl InputIter for Roll {
@@ -810,8 +818,15 @@ impl InputLength for Roll {
 }
 
 /// A [Roll] that's also a valid utf-8 string.
+#[derive(Clone)]
 pub struct RollStr {
     roll: Roll,
+}
+
+impl Debug for RollStr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(&self[..], f)
+    }
 }
 
 impl Deref for RollStr {
@@ -819,6 +834,12 @@ impl Deref for RollStr {
 
     fn deref(&self) -> &Self::Target {
         unsafe { std::str::from_utf8_unchecked(&self.roll) }
+    }
+}
+
+impl RollStr {
+    pub fn into_inner(self) -> Roll {
+        self.roll
     }
 }
 

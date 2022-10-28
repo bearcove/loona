@@ -12,7 +12,7 @@ use nom::{
 
 use crate::{
     types::{Header, Headers, Request, Response},
-    Method, Roll,
+    Method, Roll, RollStr,
 };
 
 const CRLF: &[u8] = b"\r\n";
@@ -29,7 +29,7 @@ pub fn crlf(i: Roll) -> IResult<Roll, ()> {
 
 // Looks like `GET /path HTTP/1.1\r\n`, then headers
 pub fn request(i: Roll) -> IResult<Roll, Request> {
-    let (i, method) = method_and_spacing(i)?;
+    let (i, method) = terminated(method, space1)(i)?;
     let (i, path) = take_until_and_consume(b" ")(i)?;
     let (i, version) = terminated(http_version, tag(CRLF))(i)?;
     let (i, headers) = headers_and_crlf(i)?;
@@ -43,10 +43,27 @@ pub fn request(i: Roll) -> IResult<Roll, Request> {
     Ok((i, request))
 }
 
-// TODO: use `token`, cf. https://httpwg.org/specs/rfc9110.html#methods
-pub fn method_and_spacing(i: Roll) -> IResult<Roll, Method> {
-    let (i, method) = take_until_and_consume(b" ")(i)?;
+pub fn method(i: Roll) -> IResult<Roll, Method> {
+    let (i, method) = token(i)?;
     Ok((i, method.into()))
+}
+
+/// A short textual identifier that does not include whitspace or delimiters,
+/// cf. https://httpwg.org/specs/rfc9110.html#rule.token.separators
+pub fn token(i: Roll) -> IResult<Roll, RollStr> {
+    let (i, token) = take_while1(is_tchar)(i)?;
+    let token = unsafe { token.to_string_unchecked() };
+    Ok((i, token))
+}
+
+/// cf. https://httpwg.org/specs/rfc9110.html#rule.token.separators
+fn is_tchar(c: u8) -> bool {
+    c.is_ascii_graphic() && !is_delimiter(c)
+}
+
+/// cf. https://httpwg.org/specs/rfc9110.html#rule.token.separators
+fn is_delimiter(c: u8) -> bool {
+    memchr::memchr(c, br#"(),/:;<=>?@[\]{}""#).is_some()
 }
 
 // Looks like `HTTP/1.1 200 OK\r\n` or `HTTP/1.1 404 Not Found\r\n`, then headers
@@ -134,4 +151,17 @@ fn space1(i: Roll) -> IResult<Roll, ()> {
 /// Parse until the given tag, then skip the tag
 fn take_until_and_consume(needle: &[u8]) -> impl FnMut(Roll) -> IResult<Roll, Roll> + '_ {
     terminated(take_until(needle), tag(needle))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::h1::parse::is_delimiter;
+
+    #[test]
+    fn test_h1_parse_various_lowlevel_functions() {
+        assert!(is_delimiter(b'('));
+        assert!(is_delimiter(b'"'));
+        assert!(is_delimiter(b'\\'));
+        assert!(!is_delimiter(b'B'));
+    }
 }
