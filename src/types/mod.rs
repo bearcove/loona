@@ -1,5 +1,6 @@
 use std::fmt::{self, Debug};
 
+use http::StatusCode;
 use tracing::debug;
 
 use crate::{Piece, PieceStr};
@@ -39,10 +40,7 @@ pub struct Response {
     pub version: u8,
 
     /// Status code (1xx-5xx)
-    pub code: u16,
-
-    /// Human-readable string following the status code
-    pub reason: PieceStr,
+    pub status: StatusCode,
 
     /// Response headers
     pub headers: Headers,
@@ -50,7 +48,7 @@ pub struct Response {
 
 impl Response {
     pub(crate) fn debug_print(&self) {
-        debug!(code = %self.code, reason = %self.reason, version = %self.version, "got response");
+        debug!(code = %self.status, version = %self.version, "got response");
         for h in &self.headers {
             debug!(name = %h.name, value = ?h.value.as_str(), "got header");
         }

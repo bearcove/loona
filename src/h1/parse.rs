@@ -3,6 +3,7 @@
 //! As of June 2022, the authoritative document for HTTP/1.1
 //! is https://www.rfc-editor.org/rfc/rfc9110
 
+use http::StatusCode;
 use nom::{
     bytes::streaming::{tag, take, take_until, take_while1},
     combinator::{map_res, opt},
@@ -86,29 +87,22 @@ fn is_uri_char(c: u8) -> bool {
 // Looks like `HTTP/1.1 200 OK\r\n` or `HTTP/1.1 404 Not Found\r\n`, then headers
 pub fn response(i: Roll) -> IResult<Roll, Response> {
     let (i, version) = terminated(http_version, space1)(i)?;
-    let (i, code) = terminated(u16_text, space1)(i)?;
-    let (i, reason) = map_res(terminated(take_until(CRLF), tag(CRLF)), |s: Roll| {
-        s.to_string()
-    })(i)?;
+    let (i, code) = terminated(status_code, space1)(i)?;
+    let (i, _reason) = terminated(take_until(CRLF), tag(CRLF))(i)?;
     let (i, headers) = headers_and_crlf(i)?;
 
     let response = Response {
         version,
-        code,
-        reason: reason.into(),
+        status: code,
         headers,
     };
     Ok((i, response))
 }
 
-/// Parses text as a u16
-fn u16_text(i: Roll) -> IResult<Roll, u16> {
-    // TODO: limit how many digits we read
-    let f = take_while1(nom::character::is_digit);
-    // FIXME: this is inefficient (calling `to_vec` just to parse)
-    let f = map_res(f, |s: Roll| String::from_utf8(s.to_vec()));
-    let mut f = map_res(f, |s| s.parse());
-    f(i)
+/// Parses an HTTP/1.1 status code
+fn status_code(i: Roll) -> IResult<Roll, StatusCode> {
+    let (i, code) = map_res(take(3_usize), |r: Roll| StatusCode::from_bytes(&r[..]))(i)?;
+    Ok((i, code))
 }
 
 /// Parses text as a hex u64

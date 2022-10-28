@@ -9,7 +9,7 @@ const HEADERS_SMALLVEC_CAPACITY: usize = 32;
 #[derive(Default)]
 pub struct Headers {
     // TODO: this could/should be a multimap. http's multimap is neat but doesn't
-    // support `AggSlice`. The `HeaderName` type should probably have three
+    // support `Piece`/`PieceStr`. The `HeaderName` type should probably have three
     // variants:
     //   WellKnown (TransferEncoding, Connection, etc.)
     //   &'static [u8] (custom)

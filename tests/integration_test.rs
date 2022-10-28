@@ -9,6 +9,7 @@ use hring::{
     h1, Body, BodyChunk, ChanRead, ChanWrite, Headers, Method, ReadWritePair, Request, Response,
     RollMut, WriteOwned,
 };
+use http::StatusCode;
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
 use pretty_hex::PrettyHex;
@@ -62,9 +63,8 @@ fn serve_api() {
 
                 let res = res
                     .write_interim_response(Response {
-                        code: 101,
+                        status: StatusCode::CONTINUE,
                         headers: Headers::default(),
-                        reason: "Continue".into(),
                         version: 1,
                     })
                     .await?;
@@ -75,9 +75,8 @@ fn serve_api() {
 
                 let res = res
                     .write_final_response(Response {
-                        code: 200,
+                        status: StatusCode::OK,
                         headers: Headers::default(),
-                        reason: "OK".into(),
                         version: 1,
                     })
                     .await?;

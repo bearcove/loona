@@ -26,11 +26,14 @@ pub(crate) fn encode_response(res: Response, list: &mut PieceList) -> eyre::Resu
         1 => list.push(&b"HTTP/1.1 "[..]),
         _ => return Err(eyre::eyre!("unsupported HTTP version 1.{}", res.version)),
     }
-    // FIXME: wasteful
-    let code = res.code.to_string();
-    list.push(code.into_bytes());
+
+    // cf. https://github.com/hyperium/http/pull/569 - it's already 'static,
+    // the function signature just doesn't reflect it
+    let status_str: &'static str = unsafe { std::mem::transmute(res.status.as_str()) };
+
+    list.push(status_str);
     list.push(" ");
-    list.push(res.reason);
+    list.push(res.status.canonical_reason().unwrap_or("Unknown"));
     list.push("\r\n");
     encode_headers(res.headers, list)?;
     list.push("\r\n");

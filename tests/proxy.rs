@@ -61,7 +61,7 @@ where
     type Return = h1::Responder<T, h1::ResponseDone>;
 
     async fn on_informational_response(&self, res: Response) -> eyre::Result<()> {
-        debug!("Got informational response {}", res.code);
+        debug!("Got informational response {}", res.status);
         Ok(())
     }
 
