@@ -43,6 +43,7 @@ pub fn request(i: Roll) -> IResult<Roll, Request> {
     Ok((i, request))
 }
 
+// TODO: use `token`, cf. https://httpwg.org/specs/rfc9110.html#methods
 pub fn method_and_spacing(i: Roll) -> IResult<Roll, Method> {
     let (i, method) = take_until_and_consume(b" ")(i)?;
     Ok((i, method.into()))

@@ -5,6 +5,7 @@ use std::{
     iter::Enumerate,
     ops::{Bound, Deref, RangeBounds},
     rc::Rc,
+    str::Utf8Error,
 };
 
 use nom::{
@@ -586,6 +587,12 @@ impl Roll {
     pub fn to_string_lossy(&self) -> Cow<'_, str> {
         String::from_utf8_lossy(self)
     }
+
+    /// Decode as utf-8
+    pub fn to_string(self) -> Result<RollStr, Utf8Error> {
+        _ = std::str::from_utf8(&self)?;
+        Ok(RollStr { roll: self })
+    }
 }
 
 impl InputIter for Roll {
@@ -799,6 +806,19 @@ impl InputLength for Roll {
     #[inline]
     fn input_len(&self) -> usize {
         self.len()
+    }
+}
+
+/// A [Roll] that's also a valid utf-8 string.
+pub struct RollStr {
+    roll: Roll,
+}
+
+impl Deref for RollStr {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { std::str::from_utf8_unchecked(&self.roll) }
     }
 }
 
