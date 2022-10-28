@@ -1,9 +1,12 @@
 //! Types for performing vectored I/O.
 
+use std::ops::Deref;
+
 use tokio_uring::buf::IoBuf;
 
 use crate::Roll;
 
+#[derive(Clone)]
 pub enum IoChunk {
     Static(&'static [u8]),
     Vec(Vec<u8>),
@@ -31,6 +34,18 @@ impl From<Vec<u8>> for IoChunk {
 impl From<Roll> for IoChunk {
     fn from(roll: Roll) -> Self {
         IoChunk::Roll(roll)
+    }
+}
+
+impl Deref for IoChunk {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            IoChunk::Static(slice) => slice,
+            IoChunk::Vec(vec) => vec,
+            IoChunk::Roll(roll) => roll,
+        }
     }
 }
 
