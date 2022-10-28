@@ -7,7 +7,7 @@ use crate::{
     buffet::IoChunkList,
     io::WriteOwned,
     util::{read_and_parse, write_all_list, SemanticError},
-    Body, Headers, IoChunk, IoChunkable, ReadWriteOwned, Request, Response, RollMut,
+    Body, Headers, IoChunk, ReadWriteOwned, Request, Response, RollMut,
 };
 
 use super::{
@@ -221,20 +221,6 @@ impl<T> Responder<T, ExpectResponseBody>
 where
     T: WriteOwned,
 {
-    /// Send multiple response body chunks (as many as there are in the chunkable).
-    pub async fn write_chunkable(
-        self,
-        chunkable: impl IoChunkable,
-    ) -> eyre::Result<Responder<T, ExpectResponseBody>> {
-        let mut this = self;
-        let mut offset = 0;
-        while let Some(chunk) = chunkable.next_chunk(offset) {
-            offset += chunk.len() as u32;
-            this = this.write_chunk(chunk).await?;
-        }
-        Ok(this)
-    }
-
     /// Send a response body chunk. Errors out if sending more than the
     /// announced content-length.
     pub async fn write_chunk(

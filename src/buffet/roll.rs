@@ -13,7 +13,7 @@ use nom::{
 };
 use tokio_uring::buf::{IoBuf, IoBufMut};
 
-use crate::{Buf, BufMut, IoChunk, IoChunkable, ReadOwned, BUF_SIZE};
+use crate::{Buf, BufMut, ReadOwned, BUF_SIZE};
 
 /// A "rolling buffer". Uses either one [BufMut] or a `Box<[u8]>` for storage.
 /// This buffer never grows, but it can be split, and it can be reallocated so
@@ -393,20 +393,6 @@ pub struct Roll {
 impl Debug for Roll {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         Debug::fmt(&self[..], f)
-    }
-}
-
-impl IoChunkable for Roll {
-    fn len(&self) -> usize {
-        Roll::len(self)
-    }
-
-    fn next_chunk(&self, offset: u32) -> Option<IoChunk> {
-        if offset == 0 {
-            Some(IoChunk::Roll(self.clone()))
-        } else {
-            None
-        }
     }
 }
 
@@ -1151,7 +1137,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "take_all is pointless if th filled part is empty")]
+    #[should_panic(expected = "take_all is pointless if the filled part is empty")]
     fn test_roll_take_all_empty() {
         let mut rm = RollMut::alloc().unwrap();
         rm.take_all();

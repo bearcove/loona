@@ -272,7 +272,7 @@ pub(crate) async fn write_h1_body_chunk(
         BodyWriteMode::Chunked => {
             let mut list = IoChunkList::default();
             list.push(format!("{:x}\r\n", chunk.len()).into_bytes());
-            list.push_chunk(chunk);
+            list.push(chunk);
             list.push("\r\n");
 
             let list = write_all_list(transport, list).await?;
