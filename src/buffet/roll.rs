@@ -290,8 +290,11 @@ impl RollMut {
     }
 
     /// Takes the first `n` bytes (up to `len`) as a `Roll`, and advances
-    /// this buffer. Returns `None` if `len` is zero.
+    /// this buffer. Returns `None` if `len` is zero. Panics if `n` is
+    /// zero.
     pub fn take_at_most(&mut self, n: usize) -> Option<Roll> {
+        assert!(n != 0, "refusing to do empty take_at_most");
+
         if self.len == 0 {
             return None;
         }
@@ -1121,6 +1124,44 @@ mod tests {
             rm.grow();
             test_roll_iobuf_inner(rm).await.unwrap();
         });
+    }
+
+    #[test]
+    fn test_roll_take_at_most() {
+        let mut rm = RollMut::alloc().unwrap();
+        rm.put(b"hello").unwrap();
+        let roll = rm.take_at_most(4).unwrap();
+        assert_eq!(roll, b"hell");
+
+        let mut rm = RollMut::alloc().unwrap();
+        rm.put(b"hello").unwrap();
+        let roll = rm.take_at_most(12).unwrap();
+        assert_eq!(roll, b"hello");
+
+        let mut rm = RollMut::alloc().unwrap();
+        assert!(rm.take_at_most(12).is_none());
+    }
+
+    #[test]
+    fn test_roll_take_all() {
+        let mut rm = RollMut::alloc().unwrap();
+        rm.put(b"hello").unwrap();
+        let roll = rm.take_all();
+        assert_eq!(roll, b"hello");
+    }
+
+    #[test]
+    #[should_panic(expected = "take_all is pointless if th filled part is empty")]
+    fn test_roll_take_all_empty() {
+        let mut rm = RollMut::alloc().unwrap();
+        rm.take_all();
+    }
+
+    #[test]
+    #[should_panic(expected = "refusing to do empty take_at_most")]
+    fn test_roll_take_at_most_panic() {
+        let mut rm = RollMut::alloc().unwrap();
+        rm.take_at_most(0);
     }
 
     #[test]
