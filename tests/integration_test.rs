@@ -59,19 +59,17 @@ fn serve_api() {
                 let mut buf = RollMut::alloc()?;
 
                 buf.put(b"Continue")?;
-                let reason = buf.take_all();
 
                 let res = res
                     .write_interim_response(Response {
                         code: 101,
                         headers: Headers::default(),
-                        reason,
+                        reason: "Continue".into(),
                         version: 1,
                     })
                     .await?;
 
                 buf.put(b"OK")?;
-                let reason = buf.take_all();
 
                 _ = buf;
 
@@ -79,7 +77,7 @@ fn serve_api() {
                     .write_final_response(Response {
                         code: 200,
                         headers: Headers::default(),
-                        reason,
+                        reason: "OK".into(),
                         version: 1,
                     })
                     .await?;

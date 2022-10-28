@@ -5,7 +5,7 @@
 
 use nom::{
     bytes::streaming::{tag, take, take_until, take_while1},
-    combinator::opt,
+    combinator::{map_res, opt},
     sequence::{preceded, terminated},
     IResult,
 };
@@ -87,13 +87,15 @@ fn is_uri_char(c: u8) -> bool {
 pub fn response(i: Roll) -> IResult<Roll, Response> {
     let (i, version) = terminated(http_version, space1)(i)?;
     let (i, code) = terminated(u16_text, space1)(i)?;
-    let (i, reason) = terminated(take_until(CRLF), tag(CRLF))(i)?;
+    let (i, reason) = map_res(terminated(take_until(CRLF), tag(CRLF)), |s: Roll| {
+        s.to_string()
+    })(i)?;
     let (i, headers) = headers_and_crlf(i)?;
 
     let response = Response {
         version,
         code,
-        reason,
+        reason: reason.into(),
         headers,
     };
     Ok((i, response))
@@ -104,8 +106,8 @@ fn u16_text(i: Roll) -> IResult<Roll, u16> {
     // TODO: limit how many digits we read
     let f = take_while1(nom::character::is_digit);
     // FIXME: this is inefficient (calling `to_vec` just to parse)
-    let f = nom::combinator::map_res(f, |s: Roll| String::from_utf8(s.to_vec()));
-    let mut f = nom::combinator::map_res(f, |s| s.parse());
+    let f = map_res(f, |s: Roll| String::from_utf8(s.to_vec()));
+    let mut f = map_res(f, |s| s.parse());
     f(i)
 }
 
@@ -114,8 +116,8 @@ fn u64_text_hex(i: Roll) -> IResult<Roll, u64> {
     // TODO: limit how many digits we read
     let f = take_while1(nom::character::is_hex_digit);
     // FIXME: this is inefficient (calling `to_vec` just to parse)
-    let f = nom::combinator::map_res(f, |s: Roll| String::from_utf8(s.to_vec()));
-    let mut f = nom::combinator::map_res(f, |s| u64::from_str_radix(&s, 16));
+    let f = map_res(f, |s: Roll| String::from_utf8(s.to_vec()));
+    let mut f = map_res(f, |s| u64::from_str_radix(&s, 16));
     f(i)
 }
 
@@ -146,14 +148,17 @@ pub fn headers_and_crlf(mut i: Roll) -> IResult<Roll, Headers> {
         }
 
         let (i2, (name, value)) = header(i)?;
-        headers.push(Header { name, value });
+        headers.push(Header {
+            name: name.into(),
+            value: value.into(),
+        });
         i = i2;
     }
 }
 
 /// Parse a single header line
-fn header(i: Roll) -> IResult<Roll, (Roll, Roll)> {
-    let (i, name) = take_until_and_consume(b":")(i)?;
+fn header(i: Roll) -> IResult<Roll, (RollStr, Roll)> {
+    let (i, name) = map_res(take_until_and_consume(b":"), |s: Roll| s.to_string())(i)?;
     let (i, value) = preceded(space1, take_until_and_consume(CRLF))(i)?;
 
     Ok((i, (name, value)))

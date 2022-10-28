@@ -2,7 +2,7 @@ use std::fmt::{self, Debug};
 
 use tracing::debug;
 
-use crate::{Piece, PieceStr, Roll};
+use crate::{Piece, PieceStr};
 
 mod headers;
 pub use headers::*;
@@ -28,7 +28,7 @@ impl Request {
     pub(crate) fn debug_print(&self) {
         debug!(method = %self.method, path = %self.path, version = %self.version, "got request");
         for h in &self.headers {
-            debug!(name = %h.name.to_string_lossy(), value = %h.value.to_string_lossy(), "got header");
+            debug!(name = %h.name, value = ?h.value.as_str(), "got header");
         }
     }
 }
@@ -42,7 +42,7 @@ pub struct Response {
     pub code: u16,
 
     /// Human-readable string following the status code
-    pub reason: Roll,
+    pub reason: PieceStr,
 
     /// Response headers
     pub headers: Headers,
@@ -50,9 +50,9 @@ pub struct Response {
 
 impl Response {
     pub(crate) fn debug_print(&self) {
-        debug!(code = %self.code, reason = %self.reason.to_string_lossy(), version = %self.version, "got response");
+        debug!(code = %self.code, reason = %self.reason, version = %self.version, "got response");
         for h in &self.headers {
-            debug!(name = %h.name.to_string_lossy(), value = %h.value.to_string_lossy(), "got header");
+            debug!(name = %h.name, value = ?h.value.as_str(), "got header");
         }
     }
 }
