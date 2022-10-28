@@ -166,7 +166,7 @@ where
         self,
         res: Response,
     ) -> eyre::Result<Responder<T, ExpectResponseHeaders>> {
-        if res.code >= 200 {
+        if !res.status.is_informational() {
             return Err(eyre::eyre!("interim response must have status code 1xx"));
         }
 
@@ -191,7 +191,7 @@ where
             BodyWriteMode::Chunked
         };
 
-        if res.code < 200 {
+        if res.status.is_informational() {
             return Err(eyre::eyre!("final response must have status code >= 200"));
         }
 

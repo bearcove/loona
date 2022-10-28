@@ -6,9 +6,10 @@ mod helpers;
 
 use bytes::BytesMut;
 use hring::{
-    h1, Body, BodyChunk, ChanRead, ChanWrite, Headers, Method, ReadWritePair, Request, Response,
-    RollMut, WriteOwned,
+    h1, Body, BodyChunk, ChanRead, ChanWrite, Method, ReadWritePair, Request, Response, RollMut,
+    WriteOwned,
 };
+use http::StatusCode;
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
 use pretty_hex::PrettyHex;
@@ -59,28 +60,22 @@ fn serve_api() {
                 let mut buf = RollMut::alloc()?;
 
                 buf.put(b"Continue")?;
-                let reason = buf.take_all();
 
                 let res = res
                     .write_interim_response(Response {
-                        code: 101,
-                        headers: Headers::default(),
-                        reason,
-                        version: 1,
+                        status: StatusCode::CONTINUE,
+                        ..Default::default()
                     })
                     .await?;
 
                 buf.put(b"OK")?;
-                let reason = buf.take_all();
 
                 _ = buf;
 
                 let res = res
                     .write_final_response(Response {
-                        code: 200,
-                        headers: Headers::default(),
-                        reason,
-                        version: 1,
+                        status: StatusCode::OK,
+                        ..Default::default()
                     })
                     .await?;
 
@@ -116,7 +111,7 @@ fn serve_api() {
             debug!("Got a complete response: {res:?}");
 
             match res.code {
-                Some(101) => {
+                Some(100) => {
                     assert_eq!(res.reason, Some("Continue"));
                     res_buf = res_buf.split_off(body_offset);
                 }
@@ -146,8 +141,7 @@ fn request_api() {
         let req = Request {
             method: Method::Get,
             path: "/".into(),
-            version: 1,
-            headers: Headers::default(),
+            ..Default::default()
         };
 
         struct TestDriver {}

@@ -1,10 +1,6 @@
 //! Types for performing vectored I/O.
 
-use std::{
-    fmt::{Display, Formatter},
-    ops::Deref,
-    str::Utf8Error,
-};
+use std::{fmt, ops::Deref, str::Utf8Error};
 
 use tokio_uring::buf::IoBuf;
 
@@ -75,6 +71,11 @@ impl Piece {
             Piece::Vec(vec) => vec,
             Piece::Roll(roll) => roll,
         }
+    }
+
+    /// Decode as utf-8 (borrowed)
+    pub fn as_str(&self) -> Result<&str, Utf8Error> {
+        std::str::from_utf8(self.as_ref())
     }
 
     /// Decode as utf-8
@@ -166,8 +167,14 @@ pub struct PieceStr {
     piece: Piece,
 }
 
-impl Display for PieceStr {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for PieceStr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt::Debug::fmt(&self[..], f)
+    }
+}
+
+impl fmt::Display for PieceStr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
         f.pad(self)
     }
 }
