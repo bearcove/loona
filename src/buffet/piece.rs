@@ -39,6 +39,12 @@ impl From<Roll> for Piece {
     }
 }
 
+impl From<PieceStr> for Piece {
+    fn from(s: PieceStr) -> Self {
+        s.piece
+    }
+}
+
 impl Deref for Piece {
     type Target = [u8];
 

@@ -125,9 +125,8 @@ impl RollMut {
             buf: Rc::new(UnsafeCell::new(b)),
             off: 0,
         };
-        let src_slice = self.borrow_filled();
-        let dst_slice = bs.slice_mut(src_slice.len() as u32);
-        dst_slice.copy_from_slice(src_slice);
+        let dst_slice = bs.slice_mut(self.len() as u32);
+        dst_slice.copy_from_slice(&self[..]);
         let next_storage = StorageMut::Box(bs);
 
         self.storage = next_storage;
@@ -139,18 +138,17 @@ impl RollMut {
     pub fn realloc(&mut self) -> eyre::Result<()> {
         assert!(self.len() != self.storage_size());
 
-        let src_slice = self.borrow_filled();
         let next_storage = match &self.storage {
             StorageMut::Buf(_) => {
                 let mut next_b = BufMut::alloc()?;
-                next_b[..src_slice.len()].copy_from_slice(src_slice);
+                next_b[..self.len()].copy_from_slice(&self[..]);
                 StorageMut::Buf(next_b)
             }
             StorageMut::Box(b) => {
-                if src_slice.len() > BUF_SIZE as usize {
+                if self.len() > BUF_SIZE as usize {
                     // TODO: optimize via `MaybeUninit`?
                     let mut next_b = vec![0; b.cap()].into_boxed_slice();
-                    next_b[..src_slice.len()].copy_from_slice(src_slice);
+                    next_b[..self.len()].copy_from_slice(&self[..]);
                     let next_b = BoxStorage {
                         buf: Rc::new(UnsafeCell::new(next_b)),
                         off: 0,
@@ -158,7 +156,7 @@ impl RollMut {
                     StorageMut::Box(next_b)
                 } else {
                     let mut next_b = BufMut::alloc()?;
-                    next_b[..src_slice.len()].copy_from_slice(src_slice);
+                    next_b[..self.len()].copy_from_slice(&self[..]);
                     StorageMut::Buf(next_b)
                 }
             }
@@ -268,14 +266,6 @@ impl RollMut {
         }
     }
 
-    /// Borrow the filled portion of this buffer as a slice
-    pub fn borrow_filled(&self) -> &[u8] {
-        match &self.storage {
-            StorageMut::Buf(b) => &b[..self.len as usize],
-            StorageMut::Box(b) => b.slice(self.len),
-        }
-    }
-
     /// Split this [RollMut] at the given index.
     /// Panics if `at > len()`. If `at < len()`, the filled portion will carry
     /// over in the new [RollMut].
@@ -345,6 +335,18 @@ impl RollMut {
             _ => {
                 panic!("roll must be from same buffer");
             }
+        }
+    }
+}
+
+impl Deref for RollMut {
+    type Target = [u8];
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        match &self.storage {
+            StorageMut::Buf(b) => &b[..self.len as usize],
+            StorageMut::Box(b) => b.slice(self.len),
         }
     }
 }
@@ -921,7 +923,7 @@ mod tests {
 
         assert_eq!(rm.storage_size(), BUF_SIZE as usize * 2);
         assert_eq!(rm.len(), put.len());
-        assert_eq!(rm.borrow_filled(), put.as_bytes());
+        assert_eq!(&rm[..], put.as_bytes());
     }
 
     #[test]
@@ -966,16 +968,16 @@ mod tests {
 
         rm.put(input).unwrap();
         assert_eq!(rm.len(), input.len());
-        assert_eq!(rm.borrow_filled(), input);
+        assert_eq!(&rm[..], input);
 
         assert_eq!(rm.cap(), BUF_SIZE as usize - input.len());
 
         rm.grow();
         assert_eq!(rm.cap(), 2 * (BUF_SIZE as usize) - input.len());
-        assert_eq!(rm.borrow_filled(), input);
+        assert_eq!(&rm[..], input);
 
         rm.skip(5);
-        assert_eq!(rm.borrow_filled(), b"pretty long");
+        assert_eq!(&rm[..], b"pretty long");
     }
 
     #[test]
@@ -1007,7 +1009,7 @@ mod tests {
     fn test_roll_keep() {
         fn test_roll_keep_inner(mut rm: RollMut) {
             rm.put(b"helloworld").unwrap();
-            assert_eq!(rm.borrow_filled(), b"helloworld");
+            assert_eq!(&rm[..], b"helloworld");
 
             {
                 let roll = rm.filled().slice(3..=5);
@@ -1023,7 +1025,7 @@ mod tests {
             assert_eq!(roll, b"world");
 
             rm.keep(roll);
-            assert_eq!(rm.borrow_filled(), b"world");
+            assert_eq!(&rm[..], b"world");
         }
 
         let rm = RollMut::alloc().unwrap();

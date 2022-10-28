@@ -31,10 +31,9 @@ where
             Err(err) => {
                 if err.is_incomplete() {
                     {
-                        let filled = buf.borrow_filled();
                         debug!(
                             "incomplete request, need more data. start of buffer: {:?}",
-                            filled[0..std::cmp::min(filled.len(), 128)].hex_dump()
+                            &buf[..std::cmp::min(buf.len(), 128)].hex_dump()
                         );
                     }
 
