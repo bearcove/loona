@@ -4,7 +4,7 @@ use eyre::Context;
 use tracing::debug;
 
 use crate::{
-    bufpool::IoChunkList,
+    buffet::IoChunkList,
     io::WriteOwned,
     util::{read_and_parse, write_all_list, SemanticError},
     Body, Headers, IoChunk, IoChunkable, ReadWriteOwned, Request, Response, RollMut,

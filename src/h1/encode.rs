@@ -1,5 +1,5 @@
 use crate::{
-    bufpool::IoChunkList,
+    buffet::IoChunkList,
     types::{Headers, Request, Response},
 };
 

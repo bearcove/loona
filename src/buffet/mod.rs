@@ -421,7 +421,7 @@ impl Drop for Buf {
 mod tests {
     use std::rc::Rc;
 
-    use crate::bufpool::{Buf, BUF_POOL};
+    use crate::buffet::{Buf, BUF_POOL};
 
     use super::BufMut;
 

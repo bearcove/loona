@@ -6,8 +6,8 @@
 
 mod util;
 
-mod bufpool;
-pub use bufpool::*;
+mod buffet;
+pub use buffet::*;
 
 mod io;
 pub use io::*;

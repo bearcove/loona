@@ -4,7 +4,7 @@ use pretty_hex::PrettyHex;
 use tracing::debug;
 
 use crate::{
-    bufpool::IoChunkList,
+    buffet::IoChunkList,
     io::{ReadOwned, WriteOwned},
     Roll, RollMut,
 };
