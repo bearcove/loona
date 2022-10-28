@@ -895,6 +895,39 @@ mod tests {
     }
 
     #[test]
+    fn test_roll_reserve() {
+        let mut rm = RollMut::alloc().unwrap();
+        assert_eq!(rm.cap(), BUF_SIZE as usize);
+        assert_eq!(rm.len(), 0);
+        rm.reserve().unwrap();
+        assert_eq!(rm.cap(), BUF_SIZE as usize);
+        assert_eq!(rm.len(), 0);
+
+        rm.put("hello").unwrap();
+        rm.take_all();
+
+        assert_eq!(rm.cap(), BUF_SIZE as usize - 5);
+        assert_eq!(rm.len(), 0);
+        rm.reserve().unwrap();
+        assert_eq!(rm.cap(), BUF_SIZE as usize - 5);
+        assert_eq!(rm.len(), 0);
+
+        let old_cap = rm.cap();
+        rm.put(b" ".repeat(old_cap)).unwrap();
+        assert_eq!(rm.cap(), 0);
+        assert_eq!(rm.len(), old_cap);
+
+        rm.reserve().unwrap();
+        assert_eq!(rm.cap(), 5);
+        assert_eq!(rm.len(), old_cap);
+
+        rm.put("hello").unwrap();
+        rm.reserve().unwrap();
+        assert_eq!(rm.cap(), BUF_SIZE as usize);
+        assert_eq!(rm.len(), BUF_SIZE as usize);
+    }
+
+    #[test]
     fn test_roll_put_then_grow() {
         let mut rm = RollMut::alloc().unwrap();
         assert_eq!(rm.cap(), BUF_SIZE as usize);
