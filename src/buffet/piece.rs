@@ -1,6 +1,6 @@
 //! Types for performing vectored I/O.
 
-use std::ops::Deref;
+use std::{ops::Deref, str::Utf8Error};
 
 use tokio_uring::buf::IoBuf;
 
@@ -65,6 +65,20 @@ impl Piece {
             Piece::Vec(vec) => vec,
             Piece::Roll(roll) => roll,
         }
+    }
+
+    /// Decode as utf-8
+    pub fn to_string(self) -> Result<PieceStr, Utf8Error> {
+        _ = std::str::from_utf8(&self)?;
+        Ok(PieceStr { piece: self })
+    }
+
+    /// Convert to [PieceStr].
+    ///
+    /// # Safety
+    /// UB if not utf-8. Typically only used in parsers.
+    pub unsafe fn to_string_unchecked(self) -> PieceStr {
+        PieceStr { piece: self }
     }
 }
 
@@ -132,5 +146,38 @@ impl PieceList {
 impl From<Vec<Piece>> for PieceList {
     fn from(chunks: Vec<Piece>) -> Self {
         Self { pieces: chunks }
+    }
+}
+
+/// A piece of data with a stablea ddress that's _also_
+/// valid utf-8.
+#[derive(Clone)]
+pub struct PieceStr {
+    piece: Piece,
+}
+
+impl Deref for PieceStr {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { std::str::from_utf8_unchecked(&self.piece) }
+    }
+}
+
+impl AsRef<str> for PieceStr {
+    fn as_ref(&self) -> &str {
+        self
+    }
+}
+
+impl PieceStr {
+    /// Returns the underlying bytes (borrowed)
+    pub fn as_bytes(&self) -> &[u8] {
+        self.piece.as_ref()
+    }
+
+    /// Returns the underlying bytes (owned)
+    pub fn into_inner(self) -> Piece {
+        self.piece
     }
 }
