@@ -210,7 +210,9 @@ impl RollMut {
     }
 
     /// Put a slice into this buffer, fails if the slice doesn't fit in the buffer's capacity
-    pub fn put(&mut self, s: &[u8]) -> Result<(), DoesNotFit> {
+    pub fn put(&mut self, s: impl AsRef<[u8]>) -> Result<(), DoesNotFit> {
+        let s = s.as_ref();
+
         let len = s.len();
         if len > self.cap() {
             return Err(DoesNotFit);
@@ -269,6 +271,18 @@ impl RollMut {
         let roll = self.filled().slice(..n);
         self.skip(n);
         Some(roll)
+    }
+
+    /// Takes the whole `filled` part. Panics if empty, since this is probably
+    /// a misuse.
+    pub fn take_all(&mut self) -> Roll {
+        let roll = self.filled();
+        assert!(
+            !roll.is_empty(),
+            "take_all is pointless if the filled part is empty, check len first"
+        );
+        self.skip(roll.len());
+        roll
     }
 
     /// Advance this buffer, keeping the filled part only starting with

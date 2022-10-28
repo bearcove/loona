@@ -3,7 +3,7 @@
 #![feature(type_alias_impl_trait)]
 #![feature(async_fn_in_trait)]
 
-use hring::{h1, Body, BodyChunk, Response, WriteOwned};
+use hring::{h1, Body, BodyChunk, Response, RollMut, WriteOwned};
 use std::{cell::RefCell, future::Future, net::SocketAddr, rc::Rc};
 use tracing::debug;
 
@@ -135,7 +135,7 @@ pub async fn start(
                             upstream_addr,
                             pool,
                         };
-                        h1::serve(transport, conf, Default::default(), driver)
+                        h1::serve(transport, conf, RollMut::alloc().unwrap(), driver)
                             .await
                             .unwrap();
                         debug!("Done serving h1 connection");

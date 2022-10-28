@@ -159,6 +159,8 @@ impl BufMut {
 
     /// Clone this buffer. This is only pub(crate) because it's used
     /// by `AggBuf`.
+    /// TODO: remove this, since it's only used by `AggBuf` which is on its way
+    /// out.
     pub(crate) fn dangerous_clone(&self) -> Self {
         BUF_POOL.inc(1); // in fact, increase it by 1
         BufMut {

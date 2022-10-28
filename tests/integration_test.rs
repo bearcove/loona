@@ -6,7 +6,7 @@ mod helpers;
 
 use bytes::BytesMut;
 use hring::{
-    h1, AggBuf, Body, BodyChunk, ChanRead, ChanWrite, Headers, ReadWritePair, Request, Response,
+    h1, Body, BodyChunk, ChanRead, ChanWrite, Headers, ReadWritePair, Request, Response, RollMut,
     WriteOwned,
 };
 use httparse::{Status, EMPTY_HEADER};
@@ -56,11 +56,10 @@ fn serve_api() {
                 _req_body: &mut impl Body,
                 res: h1::Responder<T, h1::ExpectResponseHeaders>,
             ) -> eyre::Result<h1::Responder<T, h1::ResponseDone>> {
-                let mut buf = AggBuf::default();
+                let mut buf = RollMut::alloc()?;
 
-                buf.write().put(b"Continue")?;
-                let reason = buf.read().read_slice();
-                buf = buf.split();
+                buf.put(b"Continue")?;
+                let reason = buf.take_all();
 
                 let res = res
                     .write_interim_response(Response {
@@ -71,9 +70,8 @@ fn serve_api() {
                     })
                     .await?;
 
-                buf.write().put(b"OK")?;
-                let reason = buf.read().read_slice();
-                buf = buf.split();
+                buf.put(b"OK")?;
+                let reason = buf.take_all();
 
                 _ = buf;
 
@@ -95,7 +93,7 @@ fn serve_api() {
         let (tx, read) = ChanRead::new();
         let (mut rx, write) = ChanWrite::new();
         let transport = ReadWritePair(read, write);
-        let client_buf = AggBuf::default();
+        let client_buf = RollMut::alloc()?;
         let driver = TestDriver {};
         let serve_fut = tokio_uring::spawn(h1::serve(transport, conf, client_buf, driver));
 
@@ -145,15 +143,13 @@ fn request_api() {
         let (mut rx, write) = ChanWrite::new();
         let transport = ReadWritePair(read, write);
 
-        let mut buf = AggBuf::default();
+        let mut buf = RollMut::alloc()?;
 
-        buf.write().put(b"GET")?;
-        let method = buf.read().read_slice();
-        buf = buf.split();
+        buf.put(b"GET")?;
+        let method = buf.take_all();
 
-        buf.write().put(b"/")?;
-        let path = buf.read().read_slice();
-        buf = buf.split();
+        buf.put(b"/")?;
+        let path = buf.take_all();
 
         _ = buf;
 
