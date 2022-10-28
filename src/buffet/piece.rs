@@ -1,10 +1,14 @@
 //! Types for performing vectored I/O.
 
-use std::{ops::Deref, str::Utf8Error};
+use std::{
+    fmt::{Display, Formatter},
+    ops::Deref,
+    str::Utf8Error,
+};
 
 use tokio_uring::buf::IoBuf;
 
-use crate::Roll;
+use crate::{Roll, RollStr};
 
 /// A piece of data (arbitrary bytes) with a stable address, suitable for
 /// passing to the kernel (io_uring writes).
@@ -162,6 +166,12 @@ pub struct PieceStr {
     piece: Piece,
 }
 
+impl Display for PieceStr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.pad(self)
+    }
+}
+
 impl Deref for PieceStr {
     type Target = str;
 
@@ -185,5 +195,29 @@ impl PieceStr {
     /// Returns the underlying bytes (owned)
     pub fn into_inner(self) -> Piece {
         self.piece
+    }
+}
+
+impl From<&'static str> for PieceStr {
+    fn from(s: &'static str) -> Self {
+        PieceStr {
+            piece: Piece::Static(s.as_bytes()),
+        }
+    }
+}
+
+impl From<String> for PieceStr {
+    fn from(s: String) -> Self {
+        PieceStr {
+            piece: Piece::Vec(s.into_bytes()),
+        }
+    }
+}
+
+impl From<RollStr> for PieceStr {
+    fn from(s: RollStr) -> Self {
+        PieceStr {
+            piece: Piece::Roll(s.into_inner()),
+        }
     }
 }

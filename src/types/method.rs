@@ -1,9 +1,9 @@
 use std::fmt;
 
-use crate::{Piece, RollStr};
+use crate::{Piece, PieceStr};
 
 /// An HTTP method, see https://httpwg.org/specs/rfc9110.html#methods
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum Method {
     Get,
     Head,
@@ -13,7 +13,14 @@ pub enum Method {
     Connect,
     Options,
     Trace,
-    Other(RollStr),
+    Other(PieceStr),
+}
+
+impl fmt::Debug for Method {
+    // forward to display
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
 }
 
 impl fmt::Display for Method {
@@ -44,14 +51,14 @@ impl Method {
             Method::Connect => "CONNECT",
             Method::Options => "OPTIONS",
             Method::Trace => "TRACE",
-            Method::Other(roll) => return roll.into_inner().into(),
+            Method::Other(roll) => return roll.into_inner(),
         };
         s.into()
     }
 }
 
-impl From<RollStr> for Method {
-    fn from(s: RollStr) -> Self {
+impl From<PieceStr> for Method {
+    fn from(s: PieceStr) -> Self {
         match &s[..] {
             "GET" => Method::Get,
             "HEAD" => Method::Head,

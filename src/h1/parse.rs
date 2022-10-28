@@ -12,7 +12,7 @@ use nom::{
 
 use crate::{
     types::{Header, Headers, Request, Response},
-    Method, Roll, RollStr,
+    Method, PieceStr, Roll, RollStr,
 };
 
 const CRLF: &[u8] = b"\r\n";
@@ -30,13 +30,13 @@ pub fn crlf(i: Roll) -> IResult<Roll, ()> {
 // Looks like `GET /path HTTP/1.1\r\n`, then headers
 pub fn request(i: Roll) -> IResult<Roll, Request> {
     let (i, method) = terminated(method, space1)(i)?;
-    let (i, path) = take_until_and_consume(b" ")(i)?;
+    let (i, path) = terminated(path, space1)(i)?;
     let (i, version) = terminated(http_version, tag(CRLF))(i)?;
     let (i, headers) = headers_and_crlf(i)?;
 
     let request = Request {
         method,
-        path,
+        path: path.into(),
         version,
         headers,
     };
@@ -45,6 +45,7 @@ pub fn request(i: Roll) -> IResult<Roll, Request> {
 
 pub fn method(i: Roll) -> IResult<Roll, Method> {
     let (i, method) = token(i)?;
+    let method: PieceStr = method.into();
     Ok((i, method.into()))
 }
 
@@ -64,6 +65,22 @@ fn is_tchar(c: u8) -> bool {
 /// cf. https://httpwg.org/specs/rfc9110.html#rule.token.separators
 fn is_delimiter(c: u8) -> bool {
     memchr::memchr(c, br#"(),/:;<=>?@[\]{}""#).is_some()
+}
+
+fn path(i: Roll) -> IResult<Roll, RollStr> {
+    let (i, path) = take_while1(is_uri_char)(i)?;
+    let path = unsafe { path.to_string_unchecked() };
+    Ok((i, path))
+}
+
+/// Returns true if `c` is a character that can be found in an URI
+/// cf. https://stackoverflow.com/a/7109208
+fn is_uri_char(c: u8) -> bool {
+    memchr::memchr(
+        c,
+        br#"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~:/?#[]@!$&'()*+,;%="#,
+    )
+    .is_some()
 }
 
 // Looks like `HTTP/1.1 200 OK\r\n` or `HTTP/1.1 404 Not Found\r\n`, then headers

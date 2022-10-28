@@ -2,7 +2,7 @@ use std::fmt::{self, Debug};
 
 use tracing::debug;
 
-use crate::{Piece, Roll};
+use crate::{Piece, PieceStr, Roll};
 
 mod headers;
 pub use headers::*;
@@ -15,7 +15,7 @@ pub struct Request {
     pub method: Method,
 
     /// Requested entity
-    pub path: Roll,
+    pub path: PieceStr,
 
     /// The 'b' in 'HTTP/1.b'
     pub version: u8,
@@ -26,7 +26,7 @@ pub struct Request {
 
 impl Request {
     pub(crate) fn debug_print(&self) {
-        debug!(method = %self.method, path = %self.path.to_string_lossy(), version = %self.version, "got request");
+        debug!(method = %self.method, path = %self.path, version = %self.version, "got request");
         for h in &self.headers {
             debug!(name = %h.name.to_string_lossy(), value = %h.value.to_string_lossy(), "got header");
         }

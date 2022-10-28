@@ -143,16 +143,9 @@ fn request_api() {
         let (mut rx, write) = ChanWrite::new();
         let transport = ReadWritePair(read, write);
 
-        let mut buf = RollMut::alloc()?;
-
-        buf.put(b"/")?;
-        let path = buf.take_all();
-
-        _ = buf;
-
         let req = Request {
             method: Method::Get,
-            path,
+            path: "/".into(),
             version: 1,
             headers: Headers::default(),
         };
