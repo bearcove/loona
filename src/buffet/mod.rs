@@ -1,5 +1,5 @@
-mod agg;
-pub use agg::*;
+mod roll;
+pub use roll::*;
 
 mod io_chunk;
 pub use io_chunk::*;
@@ -8,7 +8,7 @@ use std::{
     cell::{RefCell, RefMut},
     collections::VecDeque,
     marker::PhantomData,
-    ops::{self, Range},
+    ops::{self, Bound, RangeBounds},
 };
 
 use memmap2::MmapMut;
@@ -140,7 +140,7 @@ impl BufPool {
 
 /// A mutable buffer. Cannot be cloned, but can be written to
 pub struct BufMut {
-    index: u32,
+    pub(crate) index: u32,
     off: u16,
     len: u16,
 
@@ -149,18 +149,6 @@ pub struct BufMut {
 }
 
 impl BufMut {
-    /// Clone this buffer. This is only pub(crate) because it's used
-    /// by `AggBuf`.
-    pub(crate) fn dangerous_clone(&self) -> Self {
-        BUF_POOL.inc(1); // in fact, increase it by 1
-        BufMut {
-            index: self.index,
-            off: self.off,
-            len: self.len,
-            _non_send: PhantomData,
-        }
-    }
-
     #[inline(always)]
     pub fn alloc() -> Result<BufMut, Error> {
         BUF_POOL.alloc()
@@ -195,7 +183,7 @@ impl BufMut {
 
     /// Dangerous: freeze a slice of this. Must only be used if you can
     /// guarantee this portion won't be written to anymore.
-    pub(crate) fn freeze_slice(&self, range: Range<u16>) -> Buf {
+    pub(crate) fn freeze_slice(&self, range: impl RangeBounds<usize>) -> Buf {
         let b = Buf {
             index: self.index,
             off: self.off,
@@ -233,6 +221,15 @@ impl BufMut {
         BUF_POOL.inc(left.index); // in fact, increase it by 1
 
         (left, right)
+    }
+
+    /// Skip over the first `n` bytes, panics if out of bound
+    pub fn skip(&mut self, n: usize) {
+        assert!(n <= self.len as usize);
+
+        let u16_n: u16 = n.try_into().unwrap();
+        self.off += u16_n;
+        self.len -= u16_n;
     }
 }
 
@@ -301,7 +298,7 @@ impl Drop for BufMut {
 
 /// A read-only buffer. Can be cloned, but cannot be written to.
 pub struct Buf {
-    index: u32,
+    pub(crate) index: u32,
     off: u16,
     len: u16,
 
@@ -320,19 +317,57 @@ impl Buf {
         self.len == 0
     }
 
-    /// Slice this buffer
-    pub fn slice(&self, range: Range<u16>) -> Self {
-        assert!(range.end >= range.start);
-        assert!(range.end <= self.len);
+    /// Take an owned slice of this
+    pub fn slice(mut self, range: impl RangeBounds<usize>) -> Self {
+        let mut new_start = 0;
+        let mut new_end = self.len();
 
-        BUF_POOL.inc(1);
-        Buf {
+        match range.start_bound() {
+            Bound::Included(&n) => new_start = n,
+            Bound::Excluded(&n) => new_start = n + 1,
+            Bound::Unbounded => {}
+        }
+
+        match range.end_bound() {
+            Bound::Included(&n) => new_end = n + 1,
+            Bound::Excluded(&n) => new_end = n,
+            Bound::Unbounded => {}
+        }
+
+        assert!(new_start <= new_end);
+        assert!(new_end <= self.len());
+
+        self.off += new_start as u16;
+        self.len = (new_end - new_start) as u16;
+        self
+    }
+
+    /// Split this buffer in twain.
+    /// Panics if `at` is out of bounds.
+    #[inline]
+    pub fn split_at(self, at: usize) -> (Self, Self) {
+        assert!(at <= self.len as usize);
+
+        let left = Buf {
             index: self.index,
-            off: self.off + range.start,
-            len: (range.end - range.start) as _,
+            off: self.off,
+            len: at as _,
 
             _non_send: PhantomData,
-        }
+        };
+
+        let right = Buf {
+            index: self.index,
+            off: self.off + at as u16,
+            len: (self.len - at as u16),
+
+            _non_send: PhantomData,
+        };
+
+        std::mem::forget(self); // don't decrease ref count
+        BUF_POOL.inc(left.index); // in fact, increase it by 1
+
+        (left, right)
     }
 }
 
@@ -384,14 +419,34 @@ impl Drop for Buf {
 
 #[cfg(test)]
 mod tests {
-    use crate::bufpool::{Buf, BUF_POOL};
+    use std::rc::Rc;
+
+    use crate::buffet::{Buf, BUF_POOL};
 
     use super::BufMut;
 
     #[test]
-    fn align_test() {
-        assert_eq!(4, std::mem::align_of::<BufMut>());
-        assert_eq!(4, std::mem::align_of::<Buf>());
+    fn size_test() {
+        assert_eq!(8, std::mem::size_of::<BufMut>());
+        assert_eq!(8, std::mem::size_of::<Buf>());
+        assert_eq!(16, std::mem::size_of::<Box<[u8]>>());
+
+        assert_eq!(16, std::mem::size_of::<&[u8]>());
+
+        #[allow(dead_code)]
+        enum BufOrBox {
+            Buf(Buf),
+            Box((Rc<Box<[u8]>>, u32, u32)),
+        }
+        assert_eq!(16, std::mem::size_of::<BufOrBox>());
+
+        #[allow(dead_code)]
+        enum Chunk {
+            Buf(Buf),
+            Box(Box<[u8]>),
+            Static(&'static [u8]),
+        }
+        assert_eq!(24, std::mem::size_of::<Chunk>());
     }
 
     #[test]

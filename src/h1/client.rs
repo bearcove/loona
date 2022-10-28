@@ -4,11 +4,11 @@ use eyre::Context;
 use tracing::debug;
 
 use crate::{
-    bufpool::{AggBuf, IoChunkList},
+    buffet::IoChunkList,
     io::ReadWriteOwned,
     types::Request,
     util::{read_and_parse, write_all_list},
-    Body, Response,
+    Body, Response, RollMut,
 };
 
 use super::{
@@ -77,7 +77,7 @@ where
     let recv_res_fut = {
         let transport = transport.clone();
         async move {
-            let buf = AggBuf::default();
+            let buf = RollMut::alloc()?;
             let (buf, res) = read_and_parse(
                 super::parse::response,
                 transport.as_ref(),

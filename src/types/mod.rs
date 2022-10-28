@@ -4,14 +4,14 @@ use std::fmt::{self, Debug};
 pub use headers::*;
 use tracing::debug;
 
-use crate::{bufpool::AggSlice, IoChunk};
+use crate::{IoChunk, Roll};
 
 /// An HTTP request
 pub struct Request {
-    pub method: AggSlice,
+    pub method: Roll,
 
     /// Requested entity
-    pub path: AggSlice,
+    pub path: Roll,
 
     /// The 'b' in 'HTTP/1.b'
     pub version: u8,
@@ -38,7 +38,7 @@ pub struct Response {
     pub code: u16,
 
     /// Human-readable string following the status code
-    pub reason: AggSlice,
+    pub reason: Roll,
 
     /// Response headers
     pub headers: Headers,
