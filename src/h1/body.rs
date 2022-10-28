@@ -127,7 +127,7 @@ impl ContentLengthDecoder {
             .ok_or_else(|| BodyErrorReason::CalledNextChunkAfterError.as_err())?;
 
         if buf.is_empty() {
-            buf.reserve();
+            buf.reserve()?;
 
             let res;
             (res, buf) = buf.read_into(usize::MAX, transport).await;
@@ -208,7 +208,7 @@ impl ChunkedDecoder {
                 }
 
                 if buf.is_empty() {
-                    buf.reserve();
+                    buf.reserve()?;
 
                     let res;
                     (res, buf) = buf.read_into(*remain as usize, transport).await;

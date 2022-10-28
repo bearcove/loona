@@ -118,6 +118,7 @@ impl RollMut {
     pub fn grow(&mut self) {
         let old_cap = self.storage.cap();
         let new_cap = old_cap * 2;
+        // TODO: optimize via `MaybeUninit`?
         let b = vec![0; new_cap].into_boxed_slice();
         let mut bs = BoxStorage {
             buf: Rc::new(UnsafeCell::new(b)),
@@ -126,33 +127,64 @@ impl RollMut {
         let src_slice = self.borrow_filled();
         let dst_slice = bs.slice_mut(src_slice.len() as u32);
         dst_slice.copy_from_slice(src_slice);
-        let s = StorageMut::Box(bs);
+        let next_storage = StorageMut::Box(bs);
 
-        self.storage = s;
+        self.storage = next_storage;
     }
 
     /// Reallocates the backing storage for this buffer, copying the filled
-    /// portion into it. Panics if buf.len() == buf.cap(), in which case
+    /// portion into it. Panics if `len() == storage_size()`, in which case
     /// reallocating won't do much good
-    pub fn realloc(&mut self) {
-        todo!("this is maybe a bad API, should it just grow and accept a bound?");
+    pub fn realloc(&mut self) -> eyre::Result<()> {
+        assert!(self.len() != self.storage_size());
+
+        let src_slice = self.borrow_filled();
+        let next_storage = match &self.storage {
+            StorageMut::Buf(_) => {
+                let mut next_b = BufMut::alloc()?;
+                next_b[..src_slice.len()].copy_from_slice(src_slice);
+                StorageMut::Buf(next_b)
+            }
+            StorageMut::Box(b) => {
+                if src_slice.len() > BUF_SIZE as usize {
+                    // TODO: optimize via `MaybeUninit`?
+                    let mut next_b = vec![0; b.cap()].into_boxed_slice();
+                    next_b[..src_slice.len()].copy_from_slice(src_slice);
+                    let next_b = BoxStorage {
+                        buf: Rc::new(UnsafeCell::new(next_b)),
+                        off: 0,
+                    };
+                    StorageMut::Box(next_b)
+                } else {
+                    let mut next_b = BufMut::alloc()?;
+                    next_b[..src_slice.len()].copy_from_slice(src_slice);
+                    StorageMut::Buf(next_b)
+                }
+            }
+        };
+
+        self.storage = next_storage;
+
+        Ok(())
     }
 
     /// Reserve more capacity for this buffer if this buffer is full.
     /// If this buffer's size matches the underlying storage size,
     /// this is equivalent to `grow`. Otherwise, it's equivalent
     /// to `realloc`.
-    pub fn reserve(&mut self) {
+    pub fn reserve(&mut self) -> eyre::Result<()> {
         if self.len() < self.cap() {
-            return;
+            return Ok(());
         }
 
         if self.len() < self.storage_size() {
             // we don't need to go up a buffer size
-            self.realloc()
+            self.realloc()?
         } else {
             self.grow()
         }
+
+        Ok(())
     }
 
     /// The length (filled portion) of this buffer, that can be read
@@ -184,12 +216,16 @@ impl RollMut {
     /// This method takes ownership of `self` because it submits an io_uring
     /// operation, where the kernel owns the read buffer - the only way to
     /// gain ownership of `self` again is to complete the read operation.
+    ///
+    /// Panics if `cap` is zero
     pub async fn read_into(
         self,
         limit: usize,
         r: &impl ReadOwned,
     ) -> (std::io::Result<usize>, Self) {
         let read_cap = std::cmp::min(limit, self.cap());
+        assert!(read_cap > 0, "refusing to do empty read");
+
         let read_off = self.len;
         let read_into = ReadInto {
             buf: self,
@@ -812,6 +848,50 @@ mod tests {
         rm.grow();
         rm.grow();
         test_roll_put_inner(rm);
+    }
+
+    #[test]
+    fn test_roll_put_does_not_fit() {
+        let mut rm = RollMut::alloc().unwrap();
+        rm.put(" ".repeat(rm.cap())).unwrap();
+
+        let err = rm.put("drop").unwrap_err();
+        assert!(format!("{err:?}").contains("DoesNotFit"));
+        assert!(format!("{err}").contains("does not fit"));
+    }
+
+    #[test]
+    fn test_roll_realloc() {
+        fn test_roll_realloc_inner(mut rm: RollMut) {
+            let init_cap = rm.cap();
+            rm.put("hello").unwrap();
+            rm.take_all();
+            assert_eq!(rm.cap(), init_cap - 5);
+
+            rm.realloc().unwrap();
+            assert_eq!(rm.cap(), BUF_SIZE as usize);
+        }
+
+        let rm = RollMut::alloc().unwrap();
+        test_roll_realloc_inner(rm);
+
+        let mut rm = RollMut::alloc().unwrap();
+        rm.grow();
+        test_roll_realloc_inner(rm);
+    }
+
+    #[test]
+    fn test_roll_realloc_big() {
+        let mut rm = RollMut::alloc().unwrap();
+        rm.grow();
+
+        let put = "x".repeat(rm.cap() * 2 / 3);
+        rm.put(&put).unwrap();
+        rm.realloc().unwrap();
+
+        assert_eq!(rm.storage_size(), BUF_SIZE as usize * 2);
+        assert_eq!(rm.len(), put.len());
+        assert_eq!(rm.borrow_filled(), put.as_bytes());
     }
 
     #[test]
