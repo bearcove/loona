@@ -787,6 +787,7 @@ impl InputLength for Roll {
 #[cfg(test)]
 mod tests {
     use nom::IResult;
+    use tokio_uring::net::{TcpListener, TcpStream};
 
     use crate::{ChanRead, Roll, RollMut, BUF_SIZE};
 
@@ -906,6 +907,51 @@ mod tests {
         assert_eq!(v, b"hello");
 
         assert_eq!(roll.to_string_lossy(), "hello");
+    }
+
+    #[test]
+    fn test_roll_iobuf() {
+        async fn test_roll_iobuf_inner(mut rm: RollMut) -> eyre::Result<()> {
+            rm.put(b"hello").unwrap();
+            let roll = rm.take_all();
+
+            let ln = TcpListener::bind("[::]:0".parse()?)?;
+            let local_addr = ln.local_addr()?;
+
+            let send_fut = async move {
+                let stream = TcpStream::connect(local_addr).await?;
+                let res;
+                (res, _) = stream.write_all(roll).await;
+                res?;
+                Ok::<_, eyre::Report>(())
+            };
+
+            let recv_fut = async move {
+                let (stream, addr) = ln.accept().await?;
+                println!("Accepted connection from {addr}");
+
+                let mut buf = Vec::with_capacity(1024);
+                let res;
+                (res, buf) = stream.read(buf).await;
+                res?;
+
+                assert_eq!(buf, b"hello");
+
+                Ok::<_, eyre::Report>(())
+            };
+
+            tokio::try_join!(send_fut, recv_fut)?;
+            Ok(())
+        }
+
+        tokio_uring::start(async move {
+            let rm = RollMut::alloc().unwrap();
+            test_roll_iobuf_inner(rm).await.unwrap();
+
+            let mut rm = RollMut::alloc().unwrap();
+            rm.grow();
+            test_roll_iobuf_inner(rm).await.unwrap();
+        });
     }
 
     #[test]

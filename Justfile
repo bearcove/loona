@@ -11,7 +11,7 @@ ci-test:
 	codecov
 
 cov:
-	cargo llvm-cov nextest --lcov --output-path coverage.lcov
+	cargo llvm-cov nextest --lcov --output-path lcov.info
 
 # Run all tests with cargo nextest
 test *args:
