@@ -111,7 +111,7 @@ fn serve_api() {
             debug!("Got a complete response: {res:?}");
 
             match res.code {
-                Some(101) => {
+                Some(100) => {
                     assert_eq!(res.reason, Some("Continue"));
                     res_buf = res_buf.split_off(body_offset);
                 }
