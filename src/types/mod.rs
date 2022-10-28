@@ -1,6 +1,6 @@
 use std::fmt::{self, Debug};
 
-use http::StatusCode;
+use http::{StatusCode, Version};
 use tracing::debug;
 
 use crate::{Piece, PieceStr};
@@ -18,16 +18,27 @@ pub struct Request {
     /// Requested entity
     pub path: PieceStr,
 
-    /// The 'b' in 'HTTP/1.b'
-    pub version: u8,
+    /// The HTTP version used
+    pub version: Version,
 
     /// Request headers
     pub headers: Headers,
 }
 
+impl Default for Request {
+    fn default() -> Self {
+        Self {
+            method: Method::Get,
+            path: "/".into(),
+            version: Version::HTTP_11,
+            headers: Default::default(),
+        }
+    }
+}
+
 impl Request {
     pub(crate) fn debug_print(&self) {
-        debug!(method = %self.method, path = %self.path, version = %self.version, "got request");
+        debug!(method = %self.method, path = %self.path, version = ?self.version, "got request");
         for h in &self.headers {
             debug!(name = %h.name, value = ?h.value.as_str(), "got header");
         }
@@ -37,7 +48,7 @@ impl Request {
 /// An HTTP response
 pub struct Response {
     /// The 'b' in 'HTTP/1.b'
-    pub version: u8,
+    pub version: Version,
 
     /// Status code (1xx-5xx)
     pub status: StatusCode,
@@ -46,9 +57,19 @@ pub struct Response {
     pub headers: Headers,
 }
 
+impl Default for Response {
+    fn default() -> Self {
+        Self {
+            version: Version::HTTP_11,
+            status: StatusCode::OK,
+            headers: Default::default(),
+        }
+    }
+}
+
 impl Response {
     pub(crate) fn debug_print(&self) {
-        debug!(code = %self.status, version = %self.version, "got response");
+        debug!(code = %self.status, version = ?self.version, "got response");
         for h in &self.headers {
             debug!(name = %h.name, value = ?h.value.as_str(), "got header");
         }

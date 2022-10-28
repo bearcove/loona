@@ -6,8 +6,8 @@ mod helpers;
 
 use bytes::BytesMut;
 use hring::{
-    h1, Body, BodyChunk, ChanRead, ChanWrite, Headers, Method, ReadWritePair, Request, Response,
-    RollMut, WriteOwned,
+    h1, Body, BodyChunk, ChanRead, ChanWrite, Method, ReadWritePair, Request, Response, RollMut,
+    WriteOwned,
 };
 use http::StatusCode;
 use httparse::{Status, EMPTY_HEADER};
@@ -64,8 +64,7 @@ fn serve_api() {
                 let res = res
                     .write_interim_response(Response {
                         status: StatusCode::CONTINUE,
-                        headers: Headers::default(),
-                        version: 1,
+                        ..Default::default()
                     })
                     .await?;
 
@@ -76,8 +75,7 @@ fn serve_api() {
                 let res = res
                     .write_final_response(Response {
                         status: StatusCode::OK,
-                        headers: Headers::default(),
-                        version: 1,
+                        ..Default::default()
                     })
                     .await?;
 
@@ -143,8 +141,7 @@ fn request_api() {
         let req = Request {
             method: Method::Get,
             path: "/".into(),
-            version: 1,
-            headers: Headers::default(),
+            ..Default::default()
         };
 
         struct TestDriver {}

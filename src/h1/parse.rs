@@ -3,7 +3,7 @@
 //! As of June 2022, the authoritative document for HTTP/1.1
 //! is https://www.rfc-editor.org/rfc/rfc9110
 
-use http::StatusCode;
+use http::{StatusCode, Version};
 use nom::{
     bytes::streaming::{tag, take, take_until, take_while1},
     combinator::{map_res, opt},
@@ -115,12 +115,12 @@ fn u64_text_hex(i: Roll) -> IResult<Roll, u64> {
     f(i)
 }
 
-pub fn http_version(i: Roll) -> IResult<Roll, u8> {
+pub fn http_version(i: Roll) -> IResult<Roll, Version> {
     let (i, _) = tag(&b"HTTP/1."[..])(i)?;
     let (i, version) = take(1usize)(i)?;
     let version = match version.iter().next().unwrap() {
-        b'0' => 0,
-        b'1' => 1,
+        b'0' => Version::HTTP_10,
+        b'1' => Version::HTTP_11,
         _ => {
             return Err(nom::Err::Error(nom::error::Error::new(
                 i,

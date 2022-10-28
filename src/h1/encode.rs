@@ -1,3 +1,5 @@
+use http::Version;
+
 use crate::{
     buffet::PieceList,
     types::{Headers, Request, Response},
@@ -8,8 +10,9 @@ pub(crate) fn encode_request(req: Request, list: &mut PieceList) -> eyre::Result
     list.push(" ");
     list.push(req.path);
     match req.version {
-        1 => list.push(" HTTP/1.1\r\n"),
-        _ => return Err(eyre::eyre!("unsupported HTTP version 1.{}", req.version)),
+        Version::HTTP_10 => list.push(" HTTP/1.0\r\n"),
+        Version::HTTP_11 => list.push(" HTTP/1.1\r\n"),
+        _ => return Err(eyre::eyre!("unsupported HTTP version {:?}", req.version)),
     }
     for header in req.headers {
         list.push(header.name);
@@ -23,8 +26,9 @@ pub(crate) fn encode_request(req: Request, list: &mut PieceList) -> eyre::Result
 
 pub(crate) fn encode_response(res: Response, list: &mut PieceList) -> eyre::Result<()> {
     match res.version {
-        1 => list.push(&b"HTTP/1.1 "[..]),
-        _ => return Err(eyre::eyre!("unsupported HTTP version 1.{}", res.version)),
+        Version::HTTP_10 => list.push(&b"HTTP/1.0 "[..]),
+        Version::HTTP_11 => list.push(&b"HTTP/1.1 "[..]),
+        _ => return Err(eyre::eyre!("unsupported HTTP version {:?}", res.version)),
     }
 
     // cf. https://github.com/hyperium/http/pull/569 - it's already 'static,
