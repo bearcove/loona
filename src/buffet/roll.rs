@@ -45,13 +45,6 @@ impl StorageMut {
         }
     }
 
-    fn as_ptr(&self) -> *const u8 {
-        match self {
-            StorageMut::Buf(b) => b.as_ptr(),
-            StorageMut::Box(b) => b.as_ptr(),
-        }
-    }
-
     unsafe fn as_mut_ptr(&mut self) -> *mut u8 {
         match self {
             StorageMut::Buf(b) => b.as_mut_ptr(),
@@ -293,7 +286,7 @@ impl RollMut {
         match (&mut self.storage, &roll.inner) {
             (StorageMut::Buf(ours), RollInner::Buf(theirs)) => {
                 assert_eq!(ours.index, theirs.index, "roll must be from same buffer");
-                assert!(theirs.off >= ours.off, "roll must be from same buffer");
+                assert!(theirs.off >= ours.off, "roll must start within buffer");
                 let skipped = theirs.off - ours.off;
                 self.len -= skipped as u32;
                 ours.off = theirs.off;
@@ -304,13 +297,13 @@ impl RollMut {
                     theirs.b.buf.get(),
                     "roll must be from same buffer"
                 );
-                assert!(theirs.b.off >= ours.off);
+                assert!(theirs.b.off >= ours.off, "roll must start within buffer");
                 let skipped = theirs.b.off - ours.off;
                 self.len -= skipped;
                 ours.off = theirs.b.off;
             }
             _ => {
-                panic!("cannot keep roll from different buffer");
+                panic!("roll must be from same buffer");
             }
         }
     }
@@ -326,12 +319,12 @@ struct ReadInto {
 unsafe impl IoBuf for ReadInto {
     #[inline(always)]
     fn stable_ptr(&self) -> *const u8 {
-        unsafe { self.buf.storage.as_ptr().add(self.off as usize) }
+        unreachable!("ReadInto should never be used as a write buffer")
     }
 
     #[inline(always)]
     fn bytes_init(&self) -> usize {
-        0
+        unreachable!("ReadInto should never be used as a write buffer")
     }
 
     #[inline(always)]
@@ -896,6 +889,69 @@ mod tests {
         let mut rm = RollMut::alloc().unwrap();
         rm.grow();
         test_roll_keep_inner(rm);
+    }
+
+    #[test]
+    #[should_panic(expected = "roll must be from same buffer")]
+    fn test_roll_keep_different_buf() {
+        let mut rm1 = RollMut::alloc().unwrap();
+        rm1.put("hello").unwrap();
+
+        let mut rm2 = RollMut::alloc().unwrap();
+        rm2.put("hello").unwrap();
+        let roll2 = rm2.take_all();
+
+        rm1.keep(roll2);
+    }
+
+    #[test]
+    #[should_panic(expected = "roll must be from same buffer")]
+    fn test_roll_keep_different_box() {
+        let mut rm1 = RollMut::alloc().unwrap();
+        rm1.grow();
+        rm1.put("hello").unwrap();
+
+        let mut rm2 = RollMut::alloc().unwrap();
+        rm2.grow();
+        rm2.put("hello").unwrap();
+        let roll2 = rm2.take_all();
+
+        rm1.keep(roll2);
+    }
+
+    #[test]
+    #[should_panic(expected = "roll must be from same buffer")]
+    fn test_roll_keep_different_type() {
+        let mut rm1 = RollMut::alloc().unwrap();
+        rm1.grow();
+        rm1.put("hello").unwrap();
+
+        let mut rm2 = RollMut::alloc().unwrap();
+        rm2.put("hello").unwrap();
+        let roll2 = rm2.take_all();
+
+        rm1.keep(roll2);
+    }
+
+    #[test]
+    #[should_panic(expected = "roll must start within buffer")]
+    fn test_roll_keep_before_buf() {
+        let mut rm1 = RollMut::alloc().unwrap();
+        rm1.put("hello").unwrap();
+        let roll = rm1.filled();
+        rm1.skip(5);
+        rm1.keep(roll);
+    }
+
+    #[test]
+    #[should_panic(expected = "roll must start within buffer")]
+    fn test_roll_keep_before_box() {
+        let mut rm1 = RollMut::alloc().unwrap();
+        rm1.grow();
+        rm1.put("hello").unwrap();
+        let roll = rm1.filled();
+        rm1.skip(5);
+        rm1.keep(roll);
     }
 
     #[test]
