@@ -139,19 +139,13 @@ impl ContentLengthDecoder {
 
             let res;
             (buf, res) = buf.read_into(usize::MAX, transport).await;
-            let n = res.map_err(|e| BodyErrorReason::ErrorWhileReadingChunkData.with_cx(e))?;
-            if n == 0 {
-                return Err(BodyErrorReason::ClosedWhileReadingContentLength
-                    .as_err()
-                    .into());
-            }
+            res.map_err(|e| BodyErrorReason::ErrorWhileReadingChunkData.with_cx(e))?;
         }
 
-        // TODO: this should probably be a method on `Roll`
-        let taken = std::cmp::min(buf.len(), remain as usize);
-        self.read += taken as u64;
-        let chunk = buf.filled().slice(..taken);
-        buf.skip(taken);
+        let chunk = buf
+            .take_at_most(remain as usize)
+            .ok_or_else(|| BodyErrorReason::ClosedWhileReadingContentLength.as_err())?;
+        self.read += chunk.len() as u64;
         buf_slot.replace(buf);
         Ok(BodyChunk::Chunk(chunk.into()))
     }

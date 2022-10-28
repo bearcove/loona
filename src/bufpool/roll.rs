@@ -164,11 +164,15 @@ impl RollMut {
     }
 
     /// Read at most `limit` bytes from [ReadOwned] into this buffer.
+    ///
+    /// This method takes ownership of `self` because it submits an io_uring
+    /// operation, where the kernel owns the read buffer - the only way to
+    /// gain ownership of `self` again is to complete the read operation.
     pub async fn read_into(
         self,
         limit: usize,
         r: &impl ReadOwned,
-    ) -> (Self, std::io::Result<usize>) {
+    ) -> (std::io::Result<usize>, Self) {
         let read_cap = std::cmp::min(limit, self.cap());
         let read_off = self.len;
         let read_into = ReadInto {
@@ -179,7 +183,7 @@ impl RollMut {
         };
         let (res, mut read_into) = r.read(read_into).await;
         read_into.buf.len += read_into.init;
-        (read_into.buf, res)
+        (res, read_into.buf)
     }
 
     /// Put a slice into this buffer, fails if the slice doesn't fit in the buffer's capacity
@@ -229,6 +233,19 @@ impl RollMut {
             StorageMut::Box(b) => b.off += u32_n,
         }
         self.len -= u32_n;
+    }
+
+    /// Takes the first `n` bytes (up to `len`) as a `Roll`, and advances
+    /// this buffer. Returns `None` if `len` is zero.
+    pub fn take_at_most(&mut self, n: usize) -> Option<Roll> {
+        if self.len == 0 {
+            return None;
+        }
+
+        let n = std::cmp::min(n, self.len as usize);
+        let roll = self.filled().slice(..n);
+        self.skip(n);
+        Some(roll)
     }
 
     /// Advance this buffer, keeping the filled part only starting with
@@ -410,7 +427,7 @@ impl RollBox {
         self.len as usize
     }
 
-    fn slice(&self, range: impl RangeBounds<usize>) -> Self {
+    fn slice(mut self, range: impl RangeBounds<usize>) -> Self {
         let mut new_start = 0;
         let mut new_end = self.len();
 
@@ -429,10 +446,9 @@ impl RollBox {
         assert!(new_start <= new_end);
         assert!(new_end <= self.len());
 
-        let mut new = self.clone();
-        new.b.off += new_start as u32;
-        new.len = (new_end - new_start) as u32;
-        new
+        self.b.off += new_start as u32;
+        self.len = (new_end - new_start) as u32;
+        self
     }
 }
 
@@ -498,7 +514,7 @@ impl Roll {
         (left.into(), right.into())
     }
 
-    pub fn slice(&self, range: impl RangeBounds<usize>) -> Self {
+    pub fn slice(self, range: impl RangeBounds<usize>) -> Self {
         match &self.inner {
             RollInner::Buf(b) => b.slice(range).into(),
             RollInner::Box(b) => b.slice(range).into(),
@@ -799,13 +815,13 @@ mod tests {
             });
 
             let mut res;
-            (rm, res) = rm.read_into(3, &read).await;
+            (res, rm) = rm.read_into(3, &read).await;
             res.unwrap();
 
             assert_eq!(rm.len(), 3);
             assert_eq!(rm.filled().as_ref(), b"123");
 
-            (rm, res) = rm.read_into(3, &read).await;
+            (res, rm) = rm.read_into(3, &read).await;
             res.unwrap();
 
             assert_eq!(rm.len(), 6);

@@ -332,8 +332,8 @@ impl Buf {
         self.len == 0
     }
 
-    /// Slice this buffer
-    pub fn slice(&self, range: impl RangeBounds<usize>) -> Self {
+    /// Take an owned slice of this
+    pub fn slice(mut self, range: impl RangeBounds<usize>) -> Self {
         let mut new_start = 0;
         let mut new_end = self.len();
 
@@ -352,14 +352,9 @@ impl Buf {
         assert!(new_start <= new_end);
         assert!(new_end <= self.len());
 
-        BUF_POOL.inc(1);
-        Buf {
-            index: self.index,
-            off: self.off + new_start as u16,
-            len: (new_end - new_start) as u16,
-
-            _non_send: PhantomData,
-        }
+        self.off += new_start as u16;
+        self.len = (new_end - new_start) as u16;
+        self
     }
 
     /// Split this buffer in twain.

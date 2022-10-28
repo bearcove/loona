@@ -1,49 +1,55 @@
 use eyre::Context;
 use nom::IResult;
+use pretty_hex::PrettyHex;
 use tracing::debug;
 
 use crate::{
-    bufpool::{AggBuf, AggSlice, IoChunkList},
+    bufpool::IoChunkList,
     io::{ReadOwned, WriteOwned},
+    Roll, RollMut,
 };
 
 /// Returns `None` on EOF, error if partially parsed message.
 pub(crate) async fn read_and_parse<Parser, Output>(
     parser: Parser,
     stream: &impl ReadOwned,
-    mut buf: AggBuf,
-    max_len: u32,
-) -> eyre::Result<Option<(AggBuf, Output)>>
+    mut buf: RollMut,
+    max_len: usize,
+) -> eyre::Result<Option<(RollMut, Output)>>
 where
-    Parser: Fn(AggSlice) -> IResult<AggSlice, Output>,
+    Parser: Fn(Roll) -> IResult<Roll, Output>,
 {
     loop {
-        debug!("reading+parsing ({} bytes so far)", buf.read().len());
-        let slice = buf.read().read_slice();
+        debug!("reading+parsing ({} bytes so far)", buf.len());
+        let filled = buf.filled();
 
-        let (rest, req) = match parser(slice) {
-            Ok(t) => t,
+        match parser(filled) {
+            Ok((rest, output)) => {
+                buf.keep(rest);
+                return Ok(Some((buf, output)));
+            }
             Err(err) => {
                 if err.is_incomplete() {
-                    debug!(
-                        "incomplete request, need more data. start of buffer: {:?}",
-                        buf.read()
-                            .slice(0..std::cmp::min(buf.read().len(), 128))
-                            .to_string_lossy()
-                    );
+                    {
+                        let filled = buf.borrow_filled();
+                        debug!(
+                            "incomplete request, need more data. start of buffer: {:?}",
+                            filled[0..std::cmp::min(filled.len(), 128)].hex_dump()
+                        );
+                    }
 
-                    if buf.read().len() >= max_len {
+                    // TODO: handle buf growth
+                    let res;
+                    let read_limit = max_len - buf.len();
+                    if buf.len() >= max_len {
                         return Err(SemanticError::BufferLimitReachedWhileParsing.into());
                     }
 
-                    buf.write().grow_if_needed()?;
+                    (res, buf) = buf.read_into(read_limit, stream).await;
 
-                    let (res, buf_s) = stream.read(buf.write_slice()).await;
                     let n = res.wrap_err("reading request headers from downstream")?;
-                    buf = buf_s.into_inner();
-
                     if n == 0 {
-                        if !buf.read().is_empty() {
+                        if !buf.is_empty() {
                             return Err(eyre::eyre!("unexpected EOF"));
                         } else {
                             return Ok(None);
@@ -60,8 +66,6 @@ where
                 }
             }
         };
-
-        return Ok(Some((buf.split_at(rest), req)));
     }
 }
 
