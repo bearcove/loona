@@ -4,10 +4,10 @@ use eyre::Context;
 use tracing::debug;
 
 use crate::{
-    buffet::IoChunkList,
+    buffet::PieceList,
     io::WriteOwned,
     util::{read_and_parse, write_all_list, SemanticError},
-    Body, Headers, IoChunk, ReadWriteOwned, Request, Response, RollMut,
+    Body, Headers, Piece, ReadWriteOwned, Request, Response, RollMut,
 };
 
 use super::{
@@ -203,7 +203,7 @@ where
     }
 
     async fn write_response_internal(self, res: Response) -> eyre::Result<Self> {
-        let mut list = IoChunkList::default();
+        let mut list = PieceList::default();
         encode_response(res, &mut list)?;
 
         let list = write_all_list(self.transport.as_ref(), list)
@@ -223,10 +223,7 @@ where
 {
     /// Send a response body chunk. Errors out if sending more than the
     /// announced content-length.
-    pub async fn write_chunk(
-        self,
-        chunk: IoChunk,
-    ) -> eyre::Result<Responder<T, ExpectResponseBody>> {
+    pub async fn write_chunk(self, chunk: Piece) -> eyre::Result<Responder<T, ExpectResponseBody>> {
         super::body::write_h1_body_chunk(self.transport.as_ref(), chunk, self.state.mode).await?;
         Ok(self)
     }
@@ -244,7 +241,7 @@ where
 
         if let Some(trailers) = trailers {
             // TODO: check all preconditions
-            let mut list = IoChunkList::default();
+            let mut list = PieceList::default();
             encode_headers(*trailers, &mut list)?;
 
             let list = write_all_list(self.transport.as_ref(), list)

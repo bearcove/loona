@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::{IoChunk, RollStr};
+use crate::{Piece, RollStr};
 
 /// An HTTP method, see https://httpwg.org/specs/rfc9110.html#methods
 #[derive(Clone, Debug)]
@@ -34,7 +34,7 @@ impl fmt::Display for Method {
 }
 
 impl Method {
-    pub fn into_chunk(self) -> IoChunk {
+    pub fn into_chunk(self) -> Piece {
         let s = match self {
             Method::Get => "GET",
             Method::Head => "HEAD",

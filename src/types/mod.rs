@@ -2,7 +2,7 @@ use std::fmt::{self, Debug};
 
 use tracing::debug;
 
-use crate::{IoChunk, Roll};
+use crate::{Piece, Roll};
 
 mod headers;
 pub use headers::*;
@@ -59,7 +59,7 @@ impl Response {
 
 /// A body chunk
 pub enum BodyChunk {
-    Chunk(IoChunk),
+    Chunk(Piece),
 
     /// The body finished, and it matched the announced content-length,
     /// or we were using a framed protocol

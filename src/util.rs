@@ -4,7 +4,7 @@ use pretty_hex::PrettyHex;
 use tracing::debug;
 
 use crate::{
-    buffet::IoChunkList,
+    buffet::PieceList,
     io::{ReadOwned, WriteOwned},
     Roll, RollMut,
 };
@@ -72,10 +72,10 @@ where
 /// buffer re-using the remaining space.
 pub(crate) async fn write_all_list(
     stream: &impl WriteOwned,
-    list: IoChunkList,
-) -> eyre::Result<IoChunkList> {
+    list: PieceList,
+) -> eyre::Result<PieceList> {
     let len = list.len();
-    let num_chunks = list.num_chunks();
+    let num_chunks = list.num_pieces();
     let list = list.into_vec();
     debug!("writing {len} bytes in {num_chunks} chunks");
 

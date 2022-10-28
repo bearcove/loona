@@ -4,7 +4,7 @@ use tracing::debug;
 
 use crate::{
     util::{read_and_parse, write_all_list},
-    Body, BodyChunk, BodyErrorReason, IoChunk, IoChunkList, ReadOwned, RollMut, WriteOwned,
+    Body, BodyChunk, BodyErrorReason, Piece, PieceList, ReadOwned, RollMut, WriteOwned,
 };
 
 /// An HTTP/1.1 body, either chunked or content-length.
@@ -265,12 +265,12 @@ pub(crate) async fn write_h1_body(
 
 pub(crate) async fn write_h1_body_chunk(
     transport: &impl WriteOwned,
-    chunk: IoChunk,
+    chunk: Piece,
     mode: BodyWriteMode,
 ) -> eyre::Result<()> {
     match mode {
         BodyWriteMode::Chunked => {
-            let mut list = IoChunkList::default();
+            let mut list = PieceList::default();
             list.push(format!("{:x}\r\n", chunk.len()).into_bytes());
             list.push(chunk);
             list.push("\r\n");
@@ -292,7 +292,7 @@ pub(crate) async fn write_h1_body_end(
 ) -> eyre::Result<()> {
     match mode {
         BodyWriteMode::Chunked => {
-            let mut list = IoChunkList::default();
+            let mut list = PieceList::default();
             list.push("0\r\n\r\n");
             _ = write_all_list(transport, list).await?;
         }

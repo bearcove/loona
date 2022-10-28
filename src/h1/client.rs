@@ -4,7 +4,7 @@ use eyre::Context;
 use tracing::debug;
 
 use crate::{
-    buffet::IoChunkList,
+    buffet::PieceList,
     io::ReadWriteOwned,
     types::Request,
     util::{read_and_parse, write_all_list},
@@ -49,7 +49,7 @@ where
         BodyWriteMode::ContentLength
     };
 
-    let mut list = IoChunkList::default();
+    let mut list = PieceList::default();
     encode_request(req, &mut list)?;
     _ = write_all_list(transport.as_ref(), list)
         .await
