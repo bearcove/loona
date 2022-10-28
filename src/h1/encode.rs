@@ -4,7 +4,7 @@ use crate::{
 };
 
 pub(crate) fn encode_request(req: Request, list: &mut IoChunkList) -> eyre::Result<()> {
-    list.push(req.method);
+    list.push(req.method.into_chunk());
     list.push(" ");
     list.push(req.path);
     match req.version {

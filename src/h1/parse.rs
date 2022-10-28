@@ -12,7 +12,7 @@ use nom::{
 
 use crate::{
     types::{Header, Headers, Request, Response},
-    Roll,
+    Method, Roll,
 };
 
 const CRLF: &[u8] = b"\r\n";
@@ -29,7 +29,7 @@ pub fn crlf(i: Roll) -> IResult<Roll, ()> {
 
 // Looks like `GET /path HTTP/1.1\r\n`, then headers
 pub fn request(i: Roll) -> IResult<Roll, Request> {
-    let (i, method) = take_until_and_consume(b" ")(i)?;
+    let (i, method) = method_and_spacing(i)?;
     let (i, path) = take_until_and_consume(b" ")(i)?;
     let (i, version) = terminated(http_version, tag(CRLF))(i)?;
     let (i, headers) = headers_and_crlf(i)?;
@@ -41,6 +41,11 @@ pub fn request(i: Roll) -> IResult<Roll, Request> {
         headers,
     };
     Ok((i, request))
+}
+
+pub fn method_and_spacing(i: Roll) -> IResult<Roll, Method> {
+    let (i, method) = take_until_and_consume(b" ")(i)?;
+    Ok((i, method.into()))
 }
 
 // Looks like `HTTP/1.1 200 OK\r\n` or `HTTP/1.1 404 Not Found\r\n`, then headers

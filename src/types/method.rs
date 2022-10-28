@@ -2,6 +2,7 @@ use std::fmt;
 
 use crate::{IoChunk, Roll};
 
+/// An HTTP method, see https://httpwg.org/specs/rfc9110.html#methods
 #[derive(Clone, Debug)]
 pub enum Method {
     Get,
@@ -34,7 +35,7 @@ impl fmt::Display for Method {
 }
 
 impl Method {
-    fn into_chunk(self) -> IoChunk {
+    pub fn into_chunk(self) -> IoChunk {
         let s = match self {
             Method::Get => "GET",
             Method::Head => "HEAD",
@@ -44,8 +45,24 @@ impl Method {
             Method::Connect => "CONNECT",
             Method::Options => "OPTIONS",
             Method::Trace => "TRACE",
-            Method::Other(chunk) => return chunk.clone().into(),
+            Method::Other(chunk) => return chunk.into(),
         };
         s.into()
+    }
+}
+
+impl From<Roll> for Method {
+    fn from(roll: Roll) -> Self {
+        match &roll[..] {
+            b"GET" => Method::Get,
+            b"HEAD" => Method::Head,
+            b"POST" => Method::Post,
+            b"PUT" => Method::Put,
+            b"DELETE" => Method::Delete,
+            b"CONNECT" => Method::Connect,
+            b"OPTIONS" => Method::Options,
+            b"TRACE" => Method::Trace,
+            _ => Method::Other(roll),
+        }
     }
 }
