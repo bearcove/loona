@@ -50,10 +50,8 @@ impl Headers {
     pub fn content_length(&self) -> Option<u64> {
         for h in self {
             if h.name.eq_ignore_ascii_case("content-length") {
-                if let Ok(s) = std::str::from_utf8(&h.value[..]) {
-                    if let Ok(l) = s.parse() {
-                        return Some(l);
-                    }
+                if let Some(l) = from_digits(&h.value[..]) {
+                    return Some(l);
                 }
             }
         }
@@ -82,4 +80,31 @@ impl IntoIterator for Headers {
 pub struct Header {
     pub name: PieceStr,
     pub value: Piece,
+}
+
+fn from_digits(bytes: &[u8]) -> Option<u64> {
+    // cannot use FromStr for u64, since it allows a signed prefix
+    let mut result = 0u64;
+    const RADIX: u64 = 10;
+
+    if bytes.is_empty() {
+        return None;
+    }
+
+    for &b in bytes {
+        // can't use char::to_digit, since we haven't verified these bytes
+        // are utf-8.
+        match b {
+            b'0'..=b'9' => {
+                result = result.checked_mul(RADIX)?;
+                result = result.checked_add((b - b'0') as u64)?;
+            }
+            _ => {
+                // not a DIGIT, get outta here!
+                return None;
+            }
+        }
+    }
+
+    Some(result)
 }
