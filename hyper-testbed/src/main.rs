@@ -32,6 +32,8 @@ impl Service<Request<Body>> for TestService {
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         async move {
             let (parts, body) = req.into_parts();
+            println!("Handling {parts:?}");
+
             let path = parts.uri.path();
             match path {
                 "/echo-body" => {

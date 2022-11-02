@@ -12,6 +12,7 @@ mod method;
 pub use method::*;
 
 /// An HTTP request
+#[derive(Clone)]
 pub struct Request {
     pub method: Method,
 
@@ -46,6 +47,7 @@ impl Request {
 }
 
 /// An HTTP response
+#[derive(Clone)]
 pub struct Response {
     /// The 'b' in 'HTTP/1.b'
     pub version: Version,
@@ -73,6 +75,14 @@ impl Response {
         for (name, value) in &self.headers {
             debug!(%name, value = ?value.as_str(), "got header");
         }
+    }
+
+    /// 204 and 304 responses must not have a body
+    pub fn means_empty_body(&self) -> bool {
+        matches!(
+            self.status,
+            StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED
+        )
     }
 }
 
@@ -136,6 +146,10 @@ pub enum BodyErrorReason {
     // then that much data, but then encountered something other than
     // a CRLF
     InvalidChunkTerminator,
+
+    // `write_chunk` was called but no content-length was announced, and
+    // no chunked transfer-encoding was announced
+    CalledWriteBodyChunkWhenNoBodyWasExpected,
 }
 
 impl BodyErrorReason {

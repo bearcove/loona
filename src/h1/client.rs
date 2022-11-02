@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use eyre::Context;
+use http::header;
 use tracing::debug;
 
 use crate::{
@@ -21,7 +22,7 @@ pub struct ClientConf {}
 pub trait ClientDriver {
     type Return;
 
-    async fn on_informational_response(&self, res: Response) -> eyre::Result<()>;
+    async fn on_informational_response(&mut self, res: Response) -> eyre::Result<()>;
     async fn on_final_response(
         self,
         res: Response,
@@ -34,7 +35,7 @@ pub trait ClientDriver {
 /// The transport will be returned unless the server requested connection close.
 pub async fn request<T, D>(
     transport: Rc<T>,
-    req: Request,
+    mut req: Request,
     body: &mut impl Body,
     driver: D,
 ) -> eyre::Result<(Option<Rc<T>>, D::Return)>
@@ -42,11 +43,16 @@ where
     T: ReadWriteOwned,
     D: ClientDriver,
 {
-    // TODO: set content-length if body isn't empty / missing
-    let mode = if body.content_len().is_none() {
-        BodyWriteMode::Chunked
-    } else {
-        BodyWriteMode::ContentLength
+    let mode = match body.content_len() {
+        Some(0) => BodyWriteMode::Empty,
+        Some(len) => {
+            // TODO: we can probably save a heap allocation here - we could format
+            // directly to a `RollMut`, without going through `format!` machinery
+            req.headers
+                .insert(header::CONTENT_LENGTH, len.to_string().into_bytes().into());
+            BodyWriteMode::ContentLength
+        }
+        None => BodyWriteMode::Chunked,
     };
 
     let mut list = PieceList::default();
@@ -88,11 +94,15 @@ where
             .await
             .map_err(|e| eyre::eyre!("error reading response headers from server: {e:?}"))?
             .ok_or_else(|| eyre::eyre!("server went away before sending response headers"))?;
+            debug!("client received response");
             res.debug_print();
 
-            // TODO: handle informational responses
+            if res.status.is_informational() {
+                todo!("handle informational responses");
+            }
 
             let chunked = res.headers.is_chunked_transfer_encoding();
+
             // TODO: handle 204/304 separately
             let content_len = res.headers.content_length().unwrap_or_default();
 
