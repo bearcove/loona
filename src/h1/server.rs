@@ -7,7 +7,7 @@ use crate::{
     buffet::PieceList,
     io::WriteOwned,
     util::{read_and_parse, write_all_list, SemanticError},
-    Body, Headers, HeadersExt, Piece, ReadWriteOwned, Request, Response, RollMut,
+    Body, BodyChunk, Headers, HeadersExt, Piece, ReadWriteOwned, Request, Response, RollMut,
 };
 
 use super::{
@@ -162,23 +162,20 @@ where
 
     /// Send an informational status code, cf. https://httpwg.org/specs/rfc9110.html#status.1xx
     /// Errors out if the response status is not 1xx
-    pub async fn write_interim_response(
-        self,
-        res: Response,
-    ) -> eyre::Result<Responder<T, ExpectResponseHeaders>> {
+    pub async fn write_interim_response(&mut self, res: Response) -> eyre::Result<()> {
         if !res.status.is_informational() {
             return Err(eyre::eyre!("interim response must have status code 1xx"));
         }
 
-        let this = self.write_response_internal(res).await?;
-        Ok(this)
+        self.write_response_internal(res).await?;
+        Ok(())
     }
 
     /// Send the final response headers
     /// Errors out if the response status is < 200.
     /// Errors out if the client sent `expect: 100-continue`
     pub async fn write_final_response(
-        self,
+        mut self,
         res: Response,
     ) -> eyre::Result<Responder<T, ExpectResponseBody>> {
         let mode = if res.headers.content_length().is_some() {
@@ -195,14 +192,38 @@ where
             return Err(eyre::eyre!("final response must have status code >= 200"));
         }
 
-        let this = self.write_response_internal(res).await?;
+        self.write_response_internal(res).await?;
         Ok(Responder {
             state: ExpectResponseBody { mode },
-            transport: this.transport,
+            transport: self.transport,
         })
     }
 
-    async fn write_response_internal(self, res: Response) -> eyre::Result<Self> {
+    /// Writes a response with the given body
+    pub async fn write_final_response_with_body(
+        self,
+        res: Response,
+        body: &mut impl Body,
+    ) -> eyre::Result<Responder<T, ResponseDone>> {
+        let mut this = self.write_final_response(res).await?;
+
+        loop {
+            match body.next_chunk().await? {
+                BodyChunk::Chunk(chunk) => {
+                    debug!("proxying chunk of length {}", chunk.len());
+                    this.write_chunk(chunk).await?;
+                }
+                BodyChunk::Done { trailers } => {
+                    debug!("done proxying body");
+                    // TODO: should we do something here in case of
+                    // content-length mismatches?
+                    return this.finish_body(trailers).await;
+                }
+            }
+        }
+    }
+
+    async fn write_response_internal(&mut self, res: Response) -> eyre::Result<()> {
         let mut list = PieceList::default();
         encode_response(res, &mut list)?;
 
@@ -213,7 +234,7 @@ where
         // TODO: can we re-use that list? pool it?
         drop(list);
 
-        Ok(self)
+        Ok(())
     }
 }
 
@@ -223,9 +244,9 @@ where
 {
     /// Send a response body chunk. Errors out if sending more than the
     /// announced content-length.
-    pub async fn write_chunk(self, chunk: Piece) -> eyre::Result<Responder<T, ExpectResponseBody>> {
+    pub async fn write_chunk(&mut self, chunk: Piece) -> eyre::Result<()> {
         super::body::write_h1_body_chunk(self.transport.as_ref(), chunk, self.state.mode).await?;
-        Ok(self)
+        Ok(())
     }
 
     /// Finish the body, with optional trailers, cf. https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/TE
@@ -252,7 +273,7 @@ where
             drop(list);
         }
 
-        // TODO: check content-length side, write empty buf is doing chunked transfer encoding, etc.
+        // TODO: check announced content-length size vs actual, etc.
 
         Ok(Responder {
             state: ResponseDone,

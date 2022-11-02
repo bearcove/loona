@@ -60,7 +60,7 @@ where
 {
     type Return = h1::Responder<T, h1::ResponseDone>;
 
-    async fn on_informational_response(&self, res: Response) -> eyre::Result<()> {
+    async fn on_informational_response(&mut self, res: Response) -> eyre::Result<()> {
         debug!("Got informational response {}", res.status);
         Ok(())
     }
@@ -76,7 +76,7 @@ where
         let trailers = loop {
             match body.next_chunk().await? {
                 BodyChunk::Chunk(chunk) => {
-                    respond = respond.write_chunk(chunk).await?;
+                    respond.write_chunk(chunk).await?;
                 }
                 BodyChunk::Done { trailers } => {
                     // should we do something here in case of

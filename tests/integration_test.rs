@@ -5,16 +5,16 @@
 mod helpers;
 
 use bytes::BytesMut;
-use curl::easy::Easy;
+use curl::easy::{Easy, List};
 use hring::{
-    h1, Body, BodyChunk, ChanRead, ChanWrite, HeadersExt, Method, ReadWritePair, Request, Response,
-    RollMut, WriteOwned,
+    h1, Body, BodyChunk, ChanRead, ChanWrite, Headers, HeadersExt, Method, ReadWritePair, Request,
+    Response, RollMut, WriteOwned,
 };
-use http::StatusCode;
+use http::{header, StatusCode};
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
 use pretty_hex::PrettyHex;
-use std::{net::SocketAddr, rc::Rc, time::Duration};
+use std::{future::Future, net::SocketAddr, rc::Rc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -56,18 +56,17 @@ fn serve_api() {
                 &self,
                 _req: hring::Request,
                 _req_body: &mut impl Body,
-                res: h1::Responder<T, h1::ExpectResponseHeaders>,
+                mut res: h1::Responder<T, h1::ExpectResponseHeaders>,
             ) -> eyre::Result<h1::Responder<T, h1::ResponseDone>> {
                 let mut buf = RollMut::alloc()?;
 
                 buf.put(b"Continue")?;
 
-                let res = res
-                    .write_interim_response(Response {
-                        status: StatusCode::CONTINUE,
-                        ..Default::default()
-                    })
-                    .await?;
+                res.write_interim_response(Response {
+                    status: StatusCode::CONTINUE,
+                    ..Default::default()
+                })
+                .await?;
 
                 buf.put(b"OK")?;
 
@@ -150,7 +149,7 @@ fn request_api() {
         impl h1::ClientDriver for TestDriver {
             type Return = ();
 
-            async fn on_informational_response(&self, _res: Response) -> eyre::Result<()> {
+            async fn on_informational_response(&mut self, _res: Response) -> eyre::Result<()> {
                 todo!("got informational response!")
             }
 
@@ -553,6 +552,12 @@ fn curl_echo_body(typ: BodyType) {
         }
 
         {
+            let mut list = List::new();
+            list.append("content-type: application/octet-stream")?;
+            handle.http_headers(list)?;
+        }
+
+        {
             let mut transfer = handle.transfer();
             transfer.read_function(|chunk: &mut [u8]| {
                 let n = std::cmp::min(chunk.len(), req_body.len() - req_body_offset);
@@ -588,6 +593,183 @@ fn curl_echo_body(typ: BodyType) {
     helpers::run(async move {
         let (upstream_addr, _upstream_guard) = testbed::start().await?;
         let (ln_addr, guard, proxy_fut) = proxy::start(upstream_addr).await?;
+        let client_fut = async move {
+            tokio::task::spawn_blocking(move || client(typ, ln_addr, guard))
+                .await
+                .unwrap()
+        };
+
+        tokio::try_join!(proxy_fut, client_fut)?;
+        debug!("everything has been joined");
+
+        Ok(())
+    });
+}
+
+#[test]
+fn curl_echo_body_noproxy_content_len() {
+    curl_echo_body_noproxy(BodyType::ContentLen)
+}
+
+#[test]
+fn curl_echo_body_noproxy_chunked() {
+    curl_echo_body_noproxy(BodyType::Chunked)
+}
+
+fn curl_echo_body_noproxy(typ: BodyType) {
+    eyre::set_hook(Box::new(|e| eyre::DefaultHandler::default_with(e))).unwrap();
+
+    #[allow(drop_bounds)]
+    fn client(typ: BodyType, ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
+        let req_body = "Please return to sender".as_bytes();
+        let mut req_body_offset = 0;
+
+        let mut res_body = Vec::new();
+
+        let mut handle = Easy::new();
+        handle.tcp_nodelay(true)?;
+        handle.url(&format!("http://{ln_addr}/echo-body"))?;
+        handle.post(true)?;
+
+        if let BodyType::ContentLen = typ {
+            handle.post_field_size(req_body.len() as u64)?;
+        }
+
+        {
+            let mut list = List::new();
+            list.append("content-type: application/octet-stream")?;
+            handle.http_headers(list)?;
+        }
+
+        {
+            let mut transfer = handle.transfer();
+            transfer.read_function(|chunk: &mut [u8]| {
+                let n = std::cmp::min(chunk.len(), req_body.len() - req_body_offset);
+                debug!("sending {n} bytes");
+                chunk[..n].copy_from_slice(&req_body[req_body_offset..][..n]);
+                req_body_offset += n;
+                Ok(n)
+            })?;
+            transfer.write_function(|chunk| {
+                debug!("receiving {} bytes", chunk.len());
+                res_body.extend_from_slice(chunk);
+                Ok(chunk.len())
+            })?;
+            transfer.header_function(|h| {
+                debug!("curl read header: {:?}", h.hex_dump());
+                true
+            })?;
+            transfer.debug_function(|typ, data| {
+                debug!("Got debug: {:?} {:?}", typ, data.hex_dump());
+            })?;
+            transfer.perform()?;
+        }
+
+        let status = handle.response_code()?;
+        assert_eq!(status, 200);
+        debug!("Got HTTP {}, body: {:?}", status, res_body.hex_dump());
+        assert_eq!(res_body.len(), req_body.len());
+        assert_eq!(res_body, req_body);
+
+        Ok(())
+    }
+
+    async fn start_server() -> eyre::Result<(
+        SocketAddr,
+        impl Drop,
+        impl Future<Output = eyre::Result<()>>,
+    )> {
+        let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
+
+        let ln = tokio_uring::net::TcpListener::bind("[::]:0".parse()?)?;
+        let ln_addr = ln.local_addr()?;
+
+        struct ServerDriver;
+
+        impl h1::ServerDriver for ServerDriver {
+            async fn handle<T: WriteOwned>(
+                &self,
+                req: Request,
+                req_body: &mut impl Body,
+                mut respond: h1::Responder<T, h1::ExpectResponseHeaders>,
+            ) -> eyre::Result<h1::Responder<T, h1::ResponseDone>> {
+                if req.headers.expects_100_continue() {
+                    debug!("Sending 100-continue");
+                    let res = Response {
+                        status: StatusCode::CONTINUE,
+                        ..Default::default()
+                    };
+                    respond.write_interim_response(res).await?;
+                }
+
+                debug!("Writing final response");
+                let res = Response {
+                    status: StatusCode::OK,
+                    headers: {
+                        let mut headers = Headers::default();
+                        headers.insert(header::SERVER, "integration-test/1.0".into());
+                        headers
+                    },
+                    ..Default::default()
+                };
+                let respond = respond
+                    .write_final_response_with_body(res, req_body)
+                    .await?;
+
+                debug!("Wrote final response");
+                Ok(respond)
+            }
+        }
+
+        let proxy_fut = async move {
+            let conf = Rc::new(h1::ServerConf::default());
+
+            enum Event {
+                Accepted((tokio_uring::net::TcpStream, SocketAddr)),
+                ShuttingDown,
+            }
+
+            loop {
+                let ev = tokio::select! {
+                    accept_res = ln.accept() => {
+                        Event::Accepted(accept_res?)
+                    },
+                    _ = &mut rx => {
+                        Event::ShuttingDown
+                    }
+                };
+
+                match ev {
+                    Event::Accepted((transport, remote_addr)) => {
+                        debug!("Accepted connection from {remote_addr}");
+
+                        let conf = conf.clone();
+
+                        tokio_uring::spawn(async move {
+                            let driver = ServerDriver;
+                            h1::serve(transport, conf, RollMut::alloc().unwrap(), driver)
+                                .await
+                                .unwrap();
+                            debug!("Done serving h1 connection");
+                        });
+                    }
+                    Event::ShuttingDown => {
+                        debug!("Shutting down server");
+                        break;
+                    }
+                }
+            }
+
+            debug!("Server shutting down.");
+
+            Ok(())
+        };
+
+        Ok((ln_addr, tx, proxy_fut))
+    }
+
+    helpers::run(async move {
+        let (ln_addr, guard, proxy_fut) = start_server().await?;
         let client_fut = async move {
             tokio::task::spawn_blocking(move || client(typ, ln_addr, guard))
                 .await

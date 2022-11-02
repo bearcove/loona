@@ -15,6 +15,9 @@ pub trait HeadersExt {
 
     /// Returns true if we have a `transfer-encoding: chunked` header
     fn is_chunked_transfer_encoding(&self) -> bool;
+
+    /// Returns true if the client expects a `100-continue` response
+    fn expects_100_continue(&self) -> bool;
 }
 
 impl HeadersExt for HeaderMap<Piece> {
@@ -32,6 +35,11 @@ impl HeadersExt for HeaderMap<Piece> {
     fn is_chunked_transfer_encoding(&self) -> bool {
         self.get(header::TRANSFER_ENCODING)
             .map_or(false, |value| value.eq_ignore_ascii_case(b"chunked"))
+    }
+
+    fn expects_100_continue(&self) -> bool {
+        self.get(header::EXPECT)
+            .map_or(false, |value| value.eq_ignore_ascii_case(b"100-continue"))
     }
 }
 

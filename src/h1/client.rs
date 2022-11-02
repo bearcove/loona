@@ -21,7 +21,7 @@ pub struct ClientConf {}
 pub trait ClientDriver {
     type Return;
 
-    async fn on_informational_response(&self, res: Response) -> eyre::Result<()>;
+    async fn on_informational_response(&mut self, res: Response) -> eyre::Result<()>;
     async fn on_final_response(
         self,
         res: Response,
@@ -88,6 +88,7 @@ where
             .await
             .map_err(|e| eyre::eyre!("error reading response headers from server: {e:?}"))?
             .ok_or_else(|| eyre::eyre!("server went away before sending response headers"))?;
+            debug!("client received response");
             res.debug_print();
 
             // TODO: handle informational responses
