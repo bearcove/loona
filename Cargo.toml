@@ -21,7 +21,7 @@ smallvec = { version = "1.10.0", default-features = false, features = ["const_ge
 thiserror = { version = "1.0.37", default-features = false }
 tokio = { version = "1.21.2", features = ["macros", "sync"] }
 # `as-raw-fd` branch
-tokio-uring = { git = "https://github.com/fasterthanlime/tokio-uring", rev = "428529a3037e6c36680cfdfa3305c5a1709fb8bd" }
+tokio-uring = { git = "https://github.com/tokio-rs/tokio-uring", rev = "f81ba93" }
 tracing = { version = "0.1.37", default-features = false }
 
 [dev-dependencies]

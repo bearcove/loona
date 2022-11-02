@@ -9,7 +9,5 @@ pub(crate) fn run(test: impl Future<Output = eyre::Result<()>>) {
         if let Err(e) = test.await {
             panic!("Error: {e:?}");
         }
-
-        std::process::exit(0);
     });
 }
