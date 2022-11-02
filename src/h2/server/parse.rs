@@ -3,6 +3,8 @@
 //! HTTP/2 https://httpwg.org/specs/rfc9113.html
 //! HTTP semantics https://httpwg.org/specs/rfc9110.html
 
+use std::fmt;
+
 use enum_repr::EnumRepr;
 use enumflags2::{bitflags, BitFlags};
 use nom::{
@@ -117,18 +119,54 @@ impl FrameType {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StreamId(u32);
+
+impl StreamId {
+    /// Stream ID used for connection control frames
+    pub const CONNECTION: Self = Self(0);
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("invalid stream id: {0}")]
+pub struct StreamIdOutOfRange(u32);
+
+impl TryFrom<u32> for StreamId {
+    type Error = StreamIdOutOfRange;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        if value & 0x8000_0000 != 0 {
+            Err(StreamIdOutOfRange(value))
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+
+impl fmt::Debug for StreamId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl fmt::Display for StreamId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
 /// See https://httpwg.org/specs/rfc9113.html#FrameHeader
 #[derive(Debug)]
 pub struct Frame {
     pub frame_type: FrameType,
     pub reserved: u8,
-    pub stream_id: u32,
+    pub stream_id: StreamId,
     pub len: u32,
 }
 
 impl Frame {
     /// Create a new frame with the given type and stream ID.
-    pub fn new(frame_type: FrameType, stream_id: u32) -> Self {
+    pub fn new(frame_type: FrameType, stream_id: StreamId) -> Self {
         Self {
             frame_type,
             reserved: 0,
@@ -171,7 +209,8 @@ impl Frame {
             let (ty, flags) = self.frame_type.encode();
             header.write_u8(ty.repr())?;
             header.write_u8(flags)?;
-            header.write_u32::<BigEndian>(self.stream_id)?;
+            // TODO: do we ever need to write the reserved bit?
+            header.write_u32::<BigEndian>(self.stream_id.0)?;
         }
 
         let (res, _) = w.write_all(header).await;
@@ -182,13 +221,13 @@ impl Frame {
 
 /// See https://httpwg.org/specs/rfc9113.html#FrameHeader - the first bit
 /// is reserved, and the rest is a 32-bit stream id
-fn parse_reserved_and_stream_id(i: Roll) -> IResult<Roll, (u8, u32)> {
+fn parse_reserved_and_stream_id(i: Roll) -> IResult<Roll, (u8, StreamId)> {
     fn reserved(i: (Roll, usize)) -> IResult<(Roll, usize), u8> {
         nom::bits::streaming::take(1_usize)(i)
     }
 
-    fn stream_id(i: (Roll, usize)) -> IResult<(Roll, usize), u32> {
-        nom::bits::streaming::take(31_usize)(i)
+    fn stream_id(i: (Roll, usize)) -> IResult<(Roll, usize), StreamId> {
+        nom::combinator::map(nom::bits::streaming::take(31_usize), StreamId)(i)
     }
 
     nom::bits::bits(tuple((reserved, stream_id)))(i)

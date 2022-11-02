@@ -1,12 +1,14 @@
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
+use http::{header::HeaderName, Version};
 use pretty_hex::PrettyHex;
+use tokio::sync::mpsc;
 use tracing::debug;
 
 use crate::{
-    h2::parse::{DataFlags, Frame, FrameType, HeadersFlags, SettingsFlags},
+    h2::parse::{DataFlags, Frame, FrameType, HeadersFlags, SettingsFlags, StreamId},
     util::read_and_parse,
-    ReadWriteOwned, RollMut,
+    Headers, Method, Piece, PieceStr, ReadWriteOwned, Request, Roll, RollMut,
 };
 
 /// HTTP/2 server configuration
@@ -22,12 +24,28 @@ impl Default for ServerConf {
 
 pub(crate) mod parse;
 
+#[derive(Default)]
+struct ConnState {
+    streams: HashMap<StreamId, StreamState>,
+}
+
+struct StreamState {
+    rx_stage: StreamRxStage,
+}
+
+enum StreamRxStage {
+    Headers(Headers),
+    Body(mpsc::Sender<eyre::Result<Roll>>),
+}
+
 pub async fn serve(
     transport: impl ReadWriteOwned,
     conf: Rc<ServerConf>,
     mut client_buf: RollMut,
 ) -> eyre::Result<()> {
     debug!("TODO: enforce max_streams {}", conf.max_streams);
+
+    let mut state = ConnState::default();
 
     const MAX_FRAME_LEN: usize = 64 * 1024;
 
@@ -92,10 +110,11 @@ pub async fn serve(
                     todo!("padded headers are not supported");
                 }
 
-                if !flags.contains(HeadersFlags::EndHeaders) {
-                    todo!("handle continuation frames");
+                if state.streams.contains_key(&frame.stream_id) {
+                    todo!("handle connection error: received headers for existing stream");
                 }
 
+                let mut headers = Headers::default();
                 debug!("receiving headers for stream {}", frame.stream_id);
 
                 let payload;
@@ -114,6 +133,9 @@ pub async fn serve(
                     }
                 };
 
+                let mut path: Option<PieceStr> = None;
+                let mut method: Option<Method> = None;
+
                 hpack_dec
                     .decode_with_cb(&payload[..], |key, value| {
                         debug!(
@@ -121,8 +143,59 @@ pub async fn serve(
                             key.hex_dump(),
                             value.hex_dump()
                         );
+
+                        if &key[..1] == b":" {
+                            // it's a pseudo-header!
+                            match &key[1..] {
+                                b"path" => {
+                                    let value: PieceStr =
+                                        Piece::from(value.to_vec()).to_string().unwrap();
+                                    path = Some(value);
+                                }
+                                b"method" => {
+                                    // TODO: error handling
+                                    let value: PieceStr =
+                                        Piece::from(value.to_vec()).to_string().unwrap();
+                                    method = Some(Method::try_from(value).unwrap());
+                                }
+                                other => {
+                                    debug!("ignoring pseudo-header {:?}", other.hex_dump());
+                                }
+                            }
+                        } else {
+                            // TODO: what do we do in case of malformed header names?
+                            // ignore it? return a 400?
+                            let name =
+                                HeaderName::from_bytes(&key[..]).expect("malformed header name");
+                            let value: Piece = value.to_vec().into();
+                            headers.append(name, value);
+                        }
                     })
                     .map_err(|e| eyre::eyre!("hpack error: {e:?}"))?;
+
+                // TODO: proper error handling (return 400)
+                let path = path.unwrap();
+                let method = method.unwrap();
+
+                let req = Request {
+                    method,
+                    path,
+                    version: Version::HTTP_2,
+                    headers,
+                };
+
+                todo!("Call ServerDriver with req {req:?}");
+
+                if !flags.contains(HeadersFlags::EndHeaders) {
+                    todo!("handle continuation frames");
+                }
+
+                if flags.contains(HeadersFlags::EndStream) {
+                    todo!("handle requests with no request body");
+                }
+
+                // at this point we've fully read the headers, we can start
+                // reading the body.
             }
             FrameType::Priority => todo!(),
             FrameType::RstStream => todo!(),
@@ -147,7 +220,10 @@ pub async fn serve(
                     // TODO: actually apply settings
 
                     debug!("acknowledging new settings");
-                    let res_frame = Frame::new(FrameType::Settings(SettingsFlags::Ack.into()), 0);
+                    let res_frame = Frame::new(
+                        FrameType::Settings(SettingsFlags::Ack.into()),
+                        StreamId::CONNECTION,
+                    );
                     res_frame.write(transport.as_ref()).await?;
                 }
             }

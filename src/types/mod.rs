@@ -17,6 +17,7 @@ pub struct Request {
     pub method: Method,
 
     /// Requested entity
+    /// TODO: use `Uri` here, this isn't http2-friendly
     pub path: PieceStr,
 
     /// The HTTP version used
@@ -37,12 +38,21 @@ impl Default for Request {
     }
 }
 
-impl Request {
-    pub(crate) fn debug_print(&self) {
-        debug!(method = %self.method, path = %self.path, version = ?self.version, "got request");
+impl fmt::Debug for Request {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // TODO: make this better
+
+        f.debug_struct("Request")
+            .field("method", &self.method)
+            .field("path", &self.path)
+            .field("version", &self.version)
+            .finish()?;
+
         for (name, value) in &self.headers {
-            debug!(%name, value = ?value.as_str(), "got header");
+            debug!(%name, value = ?value.as_str(), "header");
         }
+
+        Ok(())
     }
 }
 

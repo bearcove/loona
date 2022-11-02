@@ -90,7 +90,7 @@ pub async fn serve(
                 return Ok(ServeOutcome::ClientDidntSpeakHttp11);
             }
         };
-        req.debug_print();
+        debug!("got request {req:?}");
 
         let chunked = req.headers.is_chunked_transfer_encoding();
         let connection_close = req.headers.is_connection_close();
