@@ -5,6 +5,7 @@
 mod helpers;
 
 use bytes::BytesMut;
+use curl::easy::Easy;
 use hring::{
     h1, Body, BodyChunk, ChanRead, ChanWrite, HeadersExt, Method, ReadWritePair, Request, Response,
     RollMut, WriteOwned,
@@ -509,6 +510,89 @@ fn proxy_echo_body_chunked() {
         let (upstream_addr, _upstream_guard) = testbed::start().await?;
         let (ln_addr, guard, proxy_fut) = proxy::start(upstream_addr).await?;
         let client_fut = client(ln_addr, guard);
+
+        tokio::try_join!(proxy_fut, client_fut)?;
+        debug!("everything has been joined");
+
+        Ok(())
+    });
+}
+
+enum BodyType {
+    ContentLen,
+    Chunked,
+}
+
+#[test]
+fn curl_echo_body_content_len() {
+    curl_echo_body(BodyType::ContentLen)
+}
+
+#[test]
+fn curl_echo_body_chunked() {
+    curl_echo_body(BodyType::Chunked)
+}
+
+fn curl_echo_body(typ: BodyType) {
+    eyre::set_hook(Box::new(|e| eyre::DefaultHandler::default_with(e))).unwrap();
+
+    #[allow(drop_bounds)]
+    fn client(typ: BodyType, ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
+        let req_body = "Please return to sender".as_bytes();
+        let mut req_body_offset = 0;
+
+        let mut res_body = Vec::new();
+
+        let mut handle = Easy::new();
+        handle.tcp_nodelay(true)?;
+        handle.url(&format!("http://{ln_addr}/echo-body"))?;
+        handle.post(true)?;
+
+        if let BodyType::ContentLen = typ {
+            handle.post_field_size(req_body.len() as u64)?;
+        }
+
+        {
+            let mut transfer = handle.transfer();
+            transfer.read_function(|chunk: &mut [u8]| {
+                let n = std::cmp::min(chunk.len(), req_body.len() - req_body_offset);
+                debug!("sending {n} bytes");
+                chunk[..n].copy_from_slice(&req_body[req_body_offset..][..n]);
+                req_body_offset += n;
+                Ok(n)
+            })?;
+            transfer.write_function(|chunk| {
+                debug!("receiving {} bytes", chunk.len());
+                res_body.extend_from_slice(chunk);
+                Ok(chunk.len())
+            })?;
+            transfer.header_function(|h| {
+                debug!("curl read header: {:?}", h.hex_dump());
+                true
+            })?;
+            transfer.debug_function(|typ, data| {
+                debug!("Got debug: {:?} {:?}", typ, data.hex_dump());
+            })?;
+            transfer.perform()?;
+        }
+
+        let status = handle.response_code()?;
+        assert_eq!(status, 200);
+        debug!("Got HTTP {}, body: {:?}", status, res_body.hex_dump());
+        assert_eq!(res_body.len(), req_body.len());
+        assert_eq!(res_body, req_body);
+
+        Ok(())
+    }
+
+    helpers::run(async move {
+        let (upstream_addr, _upstream_guard) = testbed::start().await?;
+        let (ln_addr, guard, proxy_fut) = proxy::start(upstream_addr).await?;
+        let client_fut = async move {
+            tokio::task::spawn_blocking(move || client(typ, ln_addr, guard))
+                .await
+                .unwrap()
+        };
 
         tokio::try_join!(proxy_fut, client_fut)?;
         debug!("everything has been joined");

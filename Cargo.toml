@@ -32,6 +32,7 @@ tracing-subscriber = { version = "0.3.16", default-features = false, features = 
 httparse = { version = "1.8.0", default-features = false, features = ["std"] }
 tokio = { version = "1.21.2", default-features = false, features = ["io-util", "process", "time"] }
 futures-util = { version = "0.3.25", default-features = false, features = ["std"] }
+curl = { version = "0.4.44", default-features = false, features = ["http2"] }
 
 [profile.dev.package."*"]
 opt-level = 2
