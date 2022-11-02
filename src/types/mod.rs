@@ -12,6 +12,7 @@ mod method;
 pub use method::*;
 
 /// An HTTP request
+#[derive(Clone)]
 pub struct Request {
     pub method: Method,
 
@@ -46,6 +47,7 @@ impl Request {
 }
 
 /// An HTTP response
+#[derive(Clone)]
 pub struct Response {
     /// The 'b' in 'HTTP/1.b'
     pub version: Version,

@@ -210,12 +210,23 @@ where
         })
     }
 
-    /// Writes a response with the given body
+    /// Writes a response with the given body. Sets `content-length` or
+    /// `transfer-encoding` as needed.
     pub async fn write_final_response_with_body(
         self,
-        res: Response,
+        mut res: Response,
         body: &mut impl Body,
     ) -> eyre::Result<Responder<T, ResponseDone>> {
+        if let Some(clen) = body.content_len() {
+            res.headers
+                .entry(header::CONTENT_LENGTH)
+                .or_insert_with(|| {
+                    // TODO: can probably get rid of this heap allocation, also
+                    // use `itoa`
+                    format!("{clen}").into_bytes().into()
+                });
+        }
+
         let mut this = self.write_final_response(res).await?;
 
         loop {
