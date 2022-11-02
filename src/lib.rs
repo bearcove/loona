@@ -16,6 +16,7 @@ mod types;
 pub use types::*;
 
 pub mod h1;
+pub mod h2;
 
 /// re-exported so consumers can use whatever forked version we use
 pub use tokio_uring;

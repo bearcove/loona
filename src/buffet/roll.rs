@@ -10,7 +10,7 @@ use std::{
 
 use nom::{
     Compare, CompareResult, FindSubstring, InputIter, InputLength, InputTake, InputTakeAtPosition,
-    Needed,
+    Needed, Slice,
 };
 use tokio_uring::buf::{IoBuf, IoBufMut};
 
@@ -816,6 +816,15 @@ impl InputLength for Roll {
     #[inline]
     fn input_len(&self) -> usize {
         self.len()
+    }
+}
+
+impl<S> Slice<S> for Roll
+where
+    S: RangeBounds<usize>,
+{
+    fn slice(&self, range: S) -> Self {
+        Roll::slice(self.clone(), range)
     }
 }
 
