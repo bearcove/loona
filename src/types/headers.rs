@@ -1,85 +1,38 @@
 //! Types for HTTP headers
 
-use smallvec::SmallVec;
+use http::{header, HeaderMap};
 
-use crate::{Piece, PieceStr};
+use crate::Piece;
 
-const HEADERS_SMALLVEC_CAPACITY: usize = 32;
+pub type Headers = HeaderMap<Piece>;
 
-#[derive(Default)]
-pub struct Headers {
-    // TODO: this could/should be a multimap. http's multimap is neat but doesn't
-    // support `Piece`/`PieceStr`. The `HeaderName` type should probably have three
-    // variants:
-    //   WellKnown (TransferEncoding, Connection, etc.)
-    //   &'static [u8] (custom)
-    //   AggSlice (proxied)
-    headers: SmallVec<[Header; HEADERS_SMALLVEC_CAPACITY]>,
-}
-
-impl Headers {
-    /// Append a new header. Does not replace anything.
-    pub fn push(&mut self, header: Header) {
-        self.headers.push(header);
-    }
-
-    /// Returns true if we have this key/value combination
-    pub fn has_kv(&self, k: impl AsRef<str>, v: impl AsRef<[u8]>) -> bool {
-        let k = k.as_ref();
-        let v = v.as_ref();
-
-        for h in self {
-            if h.name.eq_ignore_ascii_case(k) && h.value.eq_ignore_ascii_case(v) {
-                return true;
-            }
-        }
-        false
-    }
+pub trait HeadersExt {
+    /// Returns the content-length header
+    fn content_length(&self) -> Option<u64>;
 
     /// Returns true if we have a `connection: close` header
-    pub fn is_connection_close(&self) -> bool {
-        self.has_kv("connection", "close")
-    }
+    fn is_connection_close(&self) -> bool;
 
     /// Returns true if we have a `transfer-encoding: chunked` header
-    pub fn is_chunked_transfer_encoding(&self) -> bool {
-        self.has_kv("transfer-encoding", "chunked")
-    }
+    fn is_chunked_transfer_encoding(&self) -> bool;
+}
 
+impl HeadersExt for HeaderMap<Piece> {
     /// Returns the content-length header
-    pub fn content_length(&self) -> Option<u64> {
-        for h in self {
-            if h.name.eq_ignore_ascii_case("content-length") {
-                if let Some(l) = from_digits(&h.value[..]) {
-                    return Some(l);
-                }
-            }
-        }
-        None
+    fn content_length(&self) -> Option<u64> {
+        self.get(header::CONTENT_LENGTH)
+            .and_then(|s| from_digits(s))
     }
-}
 
-impl<'a> IntoIterator for &'a Headers {
-    type Item = &'a Header;
-    type IntoIter = impl Iterator<Item = Self::Item>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.headers.iter()
+    fn is_connection_close(&self) -> bool {
+        self.get(header::CONNECTION)
+            .map_or(false, |value| value.eq_ignore_ascii_case(b"close"))
     }
-}
 
-impl IntoIterator for Headers {
-    type Item = Header;
-    type IntoIter = impl Iterator<Item = Self::Item>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.headers.into_iter()
+    fn is_chunked_transfer_encoding(&self) -> bool {
+        self.get(header::TRANSFER_ENCODING)
+            .map_or(false, |value| value.eq_ignore_ascii_case(b"chunked"))
     }
-}
-
-pub struct Header {
-    pub name: PieceStr,
-    pub value: Piece,
 }
 
 fn from_digits(bytes: &[u8]) -> Option<u64> {

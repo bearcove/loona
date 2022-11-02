@@ -7,7 +7,7 @@ use crate::{
     buffet::PieceList,
     io::WriteOwned,
     util::{read_and_parse, write_all_list, SemanticError},
-    Body, Headers, Piece, ReadWriteOwned, Request, Response, RollMut,
+    Body, Headers, HeadersExt, Piece, ReadWriteOwned, Request, Response, RollMut,
 };
 
 use super::{

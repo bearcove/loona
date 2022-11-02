@@ -14,12 +14,8 @@ pub(crate) fn encode_request(req: Request, list: &mut PieceList) -> eyre::Result
         Version::HTTP_11 => list.push(" HTTP/1.1\r\n"),
         _ => return Err(eyre::eyre!("unsupported HTTP version {:?}", req.version)),
     }
-    for header in req.headers {
-        list.push(header.name);
-        list.push(": ");
-        list.push(header.value);
-        list.push("\r\n");
-    }
+
+    encode_headers(req.headers, list)?;
     list.push("\r\n");
     Ok(())
 }
@@ -41,12 +37,26 @@ pub(crate) fn encode_response(res: Response, list: &mut PieceList) -> eyre::Resu
 }
 
 pub(crate) fn encode_headers(headers: Headers, list: &mut PieceList) -> eyre::Result<()> {
-    for header in headers {
-        list.push(header.name);
+    let mut last_header_name = None;
+    for (name, value) in headers {
+        match name {
+            Some(name) => {
+                last_header_name = Some(name.clone());
+                list.push(name);
+            }
+            None => {
+                let name = match last_header_name {
+                    Some(ref name) => name.clone(),
+                    None => unreachable!("HeaderMap's IntoIter violated its contract"),
+                };
+                list.push(name);
+            }
+        }
         list.push(": ");
-        list.push(header.value);
+        list.push(value);
         list.push("\r\n");
     }
+
     Ok(())
 }
 
