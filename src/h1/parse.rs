@@ -3,7 +3,7 @@
 //! As of June 2022, the authoritative document for HTTP/1.1
 //! is https://www.rfc-editor.org/rfc/rfc9110
 
-use http::{StatusCode, Version};
+use http::{header::HeaderName, StatusCode, Version};
 use nom::{
     bytes::streaming::{tag, take, take_until, take_while1},
     combinator::{map_res, opt},
@@ -12,7 +12,7 @@ use nom::{
 };
 
 use crate::{
-    types::{Header, Headers, Request, Response},
+    types::{Headers, Request, Response},
     Method, PieceStr, Roll, RollStr,
 };
 
@@ -141,18 +141,17 @@ pub fn headers_and_crlf(mut i: Roll) -> IResult<Roll, Headers> {
             return Ok((i, headers));
         }
 
-        let (i2, (name, value)) = header(i)?;
-        headers.push(Header {
-            name: name.into(),
-            value: value.into(),
-        });
-        i = i2;
+        let (i_next, (name, value)) = header(i)?;
+        headers.append(name, value.into());
+        i = i_next;
     }
 }
 
 /// Parse a single header line
-fn header(i: Roll) -> IResult<Roll, (RollStr, Roll)> {
-    let (i, name) = map_res(take_until_and_consume(b":"), |s: Roll| s.to_string())(i)?;
+fn header(i: Roll) -> IResult<Roll, (HeaderName, Roll)> {
+    let (i, name) = map_res(take_until_and_consume(b":"), |s: Roll| {
+        HeaderName::from_bytes(&s[..])
+    })(i)?;
     let (i, value) = preceded(space1, take_until_and_consume(CRLF))(i)?;
 
     Ok((i, (name, value)))

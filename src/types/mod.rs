@@ -39,8 +39,8 @@ impl Default for Request {
 impl Request {
     pub(crate) fn debug_print(&self) {
         debug!(method = %self.method, path = %self.path, version = ?self.version, "got request");
-        for h in &self.headers {
-            debug!(name = %h.name, value = ?h.value.as_str(), "got header");
+        for (name, value) in &self.headers {
+            debug!(%name, value = ?value.as_str(), "got header");
         }
     }
 }
@@ -70,8 +70,8 @@ impl Default for Response {
 impl Response {
     pub(crate) fn debug_print(&self) {
         debug!(code = %self.status, version = ?self.version, "got response");
-        for h in &self.headers {
-            debug!(name = %h.name, value = ?h.value.as_str(), "got header");
+        for (name, value) in &self.headers {
+            debug!(%name, value = ?value.as_str(), "got header");
         }
     }
 }

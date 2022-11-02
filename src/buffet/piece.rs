@@ -2,6 +2,7 @@
 
 use std::{fmt, ops::Deref, str::Utf8Error};
 
+use http::header::HeaderName;
 use tokio_uring::buf::IoBuf;
 
 use crate::{Roll, RollStr};
@@ -13,6 +14,7 @@ pub enum Piece {
     Static(&'static [u8]),
     Vec(Vec<u8>),
     Roll(Roll),
+    HeaderName(HeaderName),
 }
 
 impl From<&'static [u8]> for Piece {
@@ -45,6 +47,12 @@ impl From<PieceStr> for Piece {
     }
 }
 
+impl From<HeaderName> for Piece {
+    fn from(name: HeaderName) -> Self {
+        Piece::HeaderName(name)
+    }
+}
+
 impl Deref for Piece {
     type Target = [u8];
 
@@ -59,20 +67,12 @@ impl AsRef<[u8]> for Piece {
             Piece::Static(slice) => slice,
             Piece::Vec(vec) => vec.as_ref(),
             Piece::Roll(roll) => roll.as_ref(),
+            Piece::HeaderName(name) => name.as_str().as_bytes(),
         }
     }
 }
 
 impl Piece {
-    #[inline(always)]
-    pub fn as_io_buf(&self) -> &dyn IoBuf {
-        match self {
-            Piece::Static(slice) => slice,
-            Piece::Vec(vec) => vec,
-            Piece::Roll(roll) => roll,
-        }
-    }
-
     /// Decode as utf-8 (borrowed)
     pub fn as_str(&self) -> Result<&str, Utf8Error> {
         std::str::from_utf8(self.as_ref())
@@ -96,15 +96,30 @@ impl Piece {
 unsafe impl IoBuf for Piece {
     #[inline(always)]
     fn stable_ptr(&self) -> *const u8 {
-        IoBuf::stable_ptr(self.as_io_buf())
+        match self {
+            Piece::Static(s) => IoBuf::stable_ptr(s),
+            Piece::Vec(s) => IoBuf::stable_ptr(s),
+            Piece::Roll(s) => IoBuf::stable_ptr(s),
+            Piece::HeaderName(s) => s.as_str().as_ptr(),
+        }
     }
 
     fn bytes_init(&self) -> usize {
-        IoBuf::bytes_init(self.as_io_buf())
+        match self {
+            Piece::Static(s) => IoBuf::bytes_init(s),
+            Piece::Vec(s) => IoBuf::bytes_init(s),
+            Piece::Roll(s) => IoBuf::bytes_init(s),
+            Piece::HeaderName(s) => s.as_str().len(),
+        }
     }
 
     fn bytes_total(&self) -> usize {
-        IoBuf::bytes_total(self.as_io_buf())
+        match self {
+            Piece::Static(s) => IoBuf::bytes_total(s),
+            Piece::Vec(s) => IoBuf::bytes_total(s),
+            Piece::Roll(s) => IoBuf::bytes_total(s),
+            Piece::HeaderName(s) => s.as_str().len(),
+        }
     }
 }
 
@@ -160,7 +175,7 @@ impl From<Vec<Piece>> for PieceList {
     }
 }
 
-/// A piece of data with a stablea ddress that's _also_
+/// A piece of data with a stable address that's _also_
 /// valid utf-8.
 #[derive(Clone)]
 pub struct PieceStr {

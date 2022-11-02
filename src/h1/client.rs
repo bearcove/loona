@@ -8,7 +8,7 @@ use crate::{
     io::ReadWriteOwned,
     types::Request,
     util::{read_and_parse, write_all_list},
-    Body, Response, RollMut,
+    Body, HeadersExt, Response, RollMut,
 };
 
 use super::{

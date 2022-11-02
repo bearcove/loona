@@ -6,8 +6,8 @@ mod helpers;
 
 use bytes::BytesMut;
 use hring::{
-    h1, Body, BodyChunk, ChanRead, ChanWrite, Method, ReadWritePair, Request, Response, RollMut,
-    WriteOwned,
+    h1, Body, BodyChunk, ChanRead, ChanWrite, HeadersExt, Method, ReadWritePair, Request, Response,
+    RollMut, WriteOwned,
 };
 use http::StatusCode;
 use httparse::{Status, EMPTY_HEADER};
