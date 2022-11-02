@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use eyre::Context;
+use http::header;
 use tracing::debug;
 
 use crate::{
@@ -176,23 +177,33 @@ where
     /// Errors out if the client sent `expect: 100-continue`
     pub async fn write_final_response(
         mut self,
-        res: Response,
+        mut res: Response,
     ) -> eyre::Result<Responder<T, ExpectResponseBody>> {
-        let mode = if res.headers.content_length().is_some() {
-            if !res.headers.is_chunked_transfer_encoding() {
-                BodyWriteMode::ContentLength
-            } else {
-                BodyWriteMode::Chunked
-            }
-        } else {
-            BodyWriteMode::Chunked
-        };
-
         if res.status.is_informational() {
             return Err(eyre::eyre!("final response must have status code >= 200"));
         }
 
+        let mode = if res.means_empty_body() {
+            // do nothing
+            BodyWriteMode::Empty
+        } else {
+            match res.headers.content_length() {
+                Some(0) => BodyWriteMode::Empty,
+                Some(len) => {
+                    // TODO: can probably save that heap allocation
+                    res.headers
+                        .insert(header::CONTENT_LENGTH, format!("{len}").into_bytes().into());
+                    BodyWriteMode::ContentLength
+                }
+                None => {
+                    res.headers
+                        .insert(header::TRANSFER_ENCODING, "chunked".into());
+                    BodyWriteMode::Chunked
+                }
+            }
+        };
         self.write_response_internal(res).await?;
+
         Ok(Responder {
             state: ExpectResponseBody { mode },
             transport: self.transport,

@@ -239,8 +239,15 @@ impl ChunkedDecoder {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BodyWriteMode {
+    // we're doing chunked transfer encoding
     Chunked,
+
+    // we set a length and are writing exactly the number of bytes we promised
     ContentLength,
+
+    // we didn't set a content-length and we're not doing chunked transfer
+    // encoding, so we're not sending a body at all.
+    Empty,
 }
 
 pub(crate) async fn write_h1_body(
@@ -282,6 +289,11 @@ pub(crate) async fn write_h1_body_chunk(
             let (res, _) = transport.write_all(chunk).await;
             res?;
         }
+        BodyWriteMode::Empty => {
+            return Err(BodyErrorReason::CalledWriteBodyChunkWhenNoBodyWasExpected
+                .as_err()
+                .into());
+        }
     }
     Ok(())
 }
@@ -297,6 +309,9 @@ pub(crate) async fn write_h1_body_end(
             _ = write_all_list(transport, list).await?;
         }
         BodyWriteMode::ContentLength => {
+            // nothing to do
+        }
+        BodyWriteMode::Empty => {
             // nothing to do
         }
     }

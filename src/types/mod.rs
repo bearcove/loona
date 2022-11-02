@@ -74,6 +74,14 @@ impl Response {
             debug!(%name, value = ?value.as_str(), "got header");
         }
     }
+
+    /// 204 and 304 responses must not have a body
+    pub fn means_empty_body(&self) -> bool {
+        matches!(
+            self.status,
+            StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED
+        )
+    }
 }
 
 /// A body chunk
@@ -136,6 +144,10 @@ pub enum BodyErrorReason {
     // then that much data, but then encountered something other than
     // a CRLF
     InvalidChunkTerminator,
+
+    // `write_chunk` was called but no content-length was announced, and
+    // no chunked transfer-encoding was announced
+    CalledWriteBodyChunkWhenNoBodyWasExpected,
 }
 
 impl BodyErrorReason {
