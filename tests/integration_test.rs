@@ -7,8 +7,8 @@ mod helpers;
 use bytes::BytesMut;
 use curl::easy::{Easy, HttpVersion, List};
 use hring::{
-    h1, h2, Body, BodyChunk, ChanRead, ChanWrite, Headers, HeadersExt, Method, ReadWritePair,
-    Request, Response, RollMut, WriteOwned,
+    h1, h2, Body, BodyChunk, ChanRead, ChanWrite, ExpectResponseHeaders, Headers, HeadersExt,
+    Method, ReadWritePair, Request, Responder, Response, ResponseDone, RollMut, WriteOwned,
 };
 use http::{header, StatusCode};
 use httparse::{Status, EMPTY_HEADER};
@@ -56,8 +56,8 @@ fn serve_api() {
                 &self,
                 _req: hring::Request,
                 _req_body: &mut impl Body,
-                mut res: h1::Responder<T, h1::ExpectResponseHeaders>,
-            ) -> eyre::Result<h1::Responder<T, h1::ResponseDone>> {
+                mut res: Responder<T, ExpectResponseHeaders>,
+            ) -> eyre::Result<Responder<T, ResponseDone>> {
                 let mut buf = RollMut::alloc()?;
 
                 buf.put(b"Continue")?;
@@ -691,8 +691,8 @@ fn curl_echo_body_noproxy(typ: BodyType) {
                 &self,
                 req: Request,
                 req_body: &mut impl Body,
-                mut respond: h1::Responder<T, h1::ExpectResponseHeaders>,
-            ) -> eyre::Result<h1::Responder<T, h1::ResponseDone>> {
+                mut respond: Responder<T, ExpectResponseHeaders>,
+            ) -> eyre::Result<Responder<T, ResponseDone>> {
                 if req.headers.expects_100_continue() {
                     debug!("Sending 100-continue");
                     let res = Response {
