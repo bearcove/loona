@@ -23,3 +23,12 @@ pub use responder::*;
 
 /// re-exported so consumers can use whatever forked version we use
 pub use tokio_uring;
+
+pub trait ServerDriver {
+    async fn handle<E: Encoder>(
+        &self,
+        req: Request,
+        req_body: &mut impl Body,
+        respond: Responder<E, ExpectResponseHeaders>,
+    ) -> eyre::Result<Responder<E, ResponseDone>>;
+}

@@ -8,7 +8,7 @@ use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::Subscriber
 pub(crate) fn setup_tracing() {
     let filter_layer = Targets::new()
         .with_default(Level::TRACE)
-        .with_target("hring::io", Level::TRACE)
+        .with_target("hring", Level::TRACE)
         .with_target("want", Level::INFO);
 
     let fmt_layer = tracing_subscriber::fmt::layer()

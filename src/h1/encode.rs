@@ -1,9 +1,16 @@
+use std::rc::Rc;
+
+use eyre::Context;
 use http::{StatusCode, Version};
 
 use crate::{
     buffet::PieceList,
     types::{Headers, Request, Response},
+    util::write_all_list,
+    Encoder, Piece, WriteOwned,
 };
+
+use super::body::{write_h1_body_chunk, write_h1_body_end, BodyWriteMode};
 
 pub(crate) fn encode_request(req: Request, list: &mut PieceList) -> eyre::Result<()> {
     list.push(req.method.into_chunk());
@@ -20,7 +27,7 @@ pub(crate) fn encode_request(req: Request, list: &mut PieceList) -> eyre::Result
     Ok(())
 }
 
-pub(crate) fn encode_response(res: Response, list: &mut PieceList) -> eyre::Result<()> {
+fn encode_response(res: Response, list: &mut PieceList) -> eyre::Result<()> {
     match res.version {
         Version::HTTP_10 => list.push(&b"HTTP/1.0 "[..]),
         Version::HTTP_11 => list.push(&b"HTTP/1.1 "[..]),
@@ -126,3 +133,55 @@ const CODE_DIGITS: &str = "\
 940941942943944945946947948949950951952953954955956957958959\
 960961962963964965966967968969970971972973974975976977978979\
 980981982983984985986987988989990991992993994995996997998999";
+
+pub struct H1Encoder<T>
+where
+    T: WriteOwned,
+{
+    pub(crate) transport: Rc<T>,
+}
+
+impl<T> Encoder for H1Encoder<T>
+where
+    T: WriteOwned,
+{
+    async fn write_response(&mut self, res: Response) -> eyre::Result<()> {
+        let mut list = PieceList::default();
+        encode_response(res, &mut list)?;
+
+        let list = write_all_list(self.transport.as_ref(), list)
+            .await
+            .wrap_err("writing response headers upstream")?;
+
+        // TODO: can we re-use that list? pool it?
+        drop(list);
+
+        Ok(())
+    }
+
+    // TODO: move `mode` into `H1Encoder`? we don't need it for h2
+    async fn write_body_chunk(&mut self, chunk: Piece, mode: BodyWriteMode) -> eyre::Result<()> {
+        // TODO: inline
+        write_h1_body_chunk(self.transport.as_ref(), chunk, mode).await
+    }
+
+    async fn write_body_end(&mut self, mode: BodyWriteMode) -> eyre::Result<()> {
+        // TODO: inline
+        write_h1_body_end(self.transport.as_ref(), mode).await
+    }
+
+    async fn write_trailers(&mut self, trailers: Box<Headers>) -> eyre::Result<()> {
+        // TODO: check all preconditions
+        let mut list = PieceList::default();
+        encode_headers(*trailers, &mut list)?;
+
+        let list = write_all_list(self.transport.as_ref(), list)
+            .await
+            .wrap_err("writing response headers upstream")?;
+
+        // TODO: can we re-use that list? pool it?
+        drop(list);
+
+        Ok(())
+    }
+}

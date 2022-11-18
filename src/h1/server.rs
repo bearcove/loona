@@ -5,11 +5,11 @@ use tracing::debug;
 
 use crate::{
     h1::body::{H1Body, H1BodyKind},
-    io::WriteOwned,
     util::{read_and_parse, SemanticError},
-    Body, ExpectResponseHeaders, HeadersExt, ReadWriteOwned, Request, Responder, ResponseDone,
-    RollMut,
+    ExpectResponseHeaders, HeadersExt, ReadWriteOwned, Responder, RollMut, ServerDriver,
 };
+
+use super::encode::H1Encoder;
 
 pub struct ServerConf {
     /// Max length of the request line + HTTP headers
@@ -30,15 +30,6 @@ impl Default for ServerConf {
             max_header_records: 128,
         }
     }
-}
-
-pub trait ServerDriver {
-    async fn handle<T: WriteOwned>(
-        &self,
-        req: Request,
-        req_body: &mut impl Body,
-        respond: Responder<T, ExpectResponseHeaders>,
-    ) -> eyre::Result<Responder<T, ResponseDone>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,7 +92,12 @@ pub async fn serve(
             },
         );
 
-        let res_handle = Responder::new(transport.clone());
+        let res_handle = Responder {
+            encoder: H1Encoder {
+                transport: transport.clone(),
+            },
+            state: ExpectResponseHeaders,
+        };
 
         let resp = driver
             .handle(req, &mut req_body, res_handle)

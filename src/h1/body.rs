@@ -238,7 +238,7 @@ impl ChunkedDecoder {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BodyWriteMode {
+pub enum BodyWriteMode {
     // we're doing chunked transfer encoding
     Chunked,
 
@@ -302,6 +302,7 @@ pub(crate) async fn write_h1_body_end(
     transport: &impl WriteOwned,
     mode: BodyWriteMode,
 ) -> eyre::Result<()> {
+    debug!(?mode, "writing h1 body end");
     match mode {
         BodyWriteMode::Chunked => {
             let mut list = PieceList::default();

@@ -1,19 +1,7 @@
-use std::rc::Rc;
-
-use eyre::Context;
 use http::header;
 use tracing::debug;
 
-use crate::{
-    buffet::PieceList,
-    h1::{
-        body::BodyWriteMode,
-        encode::{encode_headers, encode_response},
-    },
-    io::WriteOwned,
-    util::write_all_list,
-    Body, BodyChunk, Headers, HeadersExt, Piece, Response,
-};
+use crate::{h1::body::BodyWriteMode, Body, BodyChunk, Headers, HeadersExt, Piece, Response};
 
 pub trait ResponseState {}
 
@@ -28,27 +16,19 @@ impl ResponseState for ExpectResponseBody {}
 pub struct ResponseDone;
 impl ResponseState for ResponseDone {}
 
-pub struct Responder<T, S>
+pub struct Responder<E, S>
 where
+    E: Encoder,
     S: ResponseState,
-    T: WriteOwned,
 {
-    #[allow(dead_code)]
-    state: S,
-    transport: Rc<T>,
+    pub(crate) encoder: E,
+    pub(crate) state: S,
 }
 
-impl<T> Responder<T, ExpectResponseHeaders>
+impl<E> Responder<E, ExpectResponseHeaders>
 where
-    T: WriteOwned,
+    E: Encoder,
 {
-    pub(crate) fn new(transport: Rc<T>) -> Self {
-        Self {
-            state: ExpectResponseHeaders,
-            transport,
-        }
-    }
-
     /// Send an informational status code, cf. https://httpwg.org/specs/rfc9110.html#status.1xx
     /// Errors out if the response status is not 1xx
     pub async fn write_interim_response(&mut self, res: Response) -> eyre::Result<()> {
@@ -56,7 +36,7 @@ where
             return Err(eyre::eyre!("interim response must have status code 1xx"));
         }
 
-        self.write_response_internal(res).await?;
+        self.encoder.write_response(res).await?;
         Ok(())
     }
 
@@ -66,7 +46,7 @@ where
     pub async fn write_final_response(
         mut self,
         mut res: Response,
-    ) -> eyre::Result<Responder<T, ExpectResponseBody>> {
+    ) -> eyre::Result<Responder<E, ExpectResponseBody>> {
         if res.status.is_informational() {
             return Err(eyre::eyre!("final response must have status code >= 200"));
         }
@@ -90,11 +70,11 @@ where
                 }
             }
         };
-        self.write_response_internal(res).await?;
+        self.encoder.write_response(res).await?;
 
         Ok(Responder {
             state: ExpectResponseBody { mode },
-            transport: self.transport,
+            encoder: self.encoder,
         })
     }
 
@@ -104,7 +84,9 @@ where
         self,
         mut res: Response,
         body: &mut impl Body,
-    ) -> eyre::Result<Responder<T, ResponseDone>> {
+    ) -> eyre::Result<Responder<E, ResponseDone>> {
+        debug!("write final response with body");
+
         if let Some(clen) = body.content_len() {
             res.headers
                 .entry(header::CONTENT_LENGTH)
@@ -116,6 +98,7 @@ where
         }
 
         let mut this = self.write_final_response(res).await?;
+        debug!("wrote final response");
 
         loop {
             match body.next_chunk().await? {
@@ -124,7 +107,7 @@ where
                     this.write_chunk(chunk).await?;
                 }
                 BodyChunk::Done { trailers } => {
-                    debug!("done proxying body");
+                    debug!(mode = ?this.state.mode, "done proxying body");
                     // TODO: should we do something here in case of
                     // content-length mismatches?
                     return this.finish_body(trailers).await;
@@ -132,32 +115,16 @@ where
             }
         }
     }
-
-    async fn write_response_internal(&mut self, res: Response) -> eyre::Result<()> {
-        let mut list = PieceList::default();
-        encode_response(res, &mut list)?;
-
-        let list = write_all_list(self.transport.as_ref(), list)
-            .await
-            .wrap_err("writing response headers upstream")?;
-
-        // TODO: can we re-use that list? pool it?
-        drop(list);
-
-        Ok(())
-    }
 }
 
-impl<T> Responder<T, ExpectResponseBody>
+impl<E> Responder<E, ExpectResponseBody>
 where
-    T: WriteOwned,
+    E: Encoder,
 {
     /// Send a response body chunk. Errors out if sending more than the
     /// announced content-length.
     pub async fn write_chunk(&mut self, chunk: Piece) -> eyre::Result<()> {
-        crate::h1::body::write_h1_body_chunk(self.transport.as_ref(), chunk, self.state.mode)
-            .await?;
-        Ok(())
+        self.encoder.write_body_chunk(chunk, self.state.mode).await
     }
 
     /// Finish the body, with optional trailers, cf. https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/TE
@@ -166,29 +133,27 @@ where
     /// didn't explicitly announce it accepted trailers, or if the response is a 204,
     /// 205 or 304, or if the body wasn't sent with chunked transfer encoding.
     pub async fn finish_body(
-        self,
+        mut self,
         trailers: Option<Box<Headers>>,
-    ) -> eyre::Result<Responder<T, ResponseDone>> {
-        crate::h1::body::write_h1_body_end(self.transport.as_ref(), self.state.mode).await?;
+    ) -> eyre::Result<Responder<E, ResponseDone>> {
+        self.encoder.write_body_end(self.state.mode).await?;
 
         if let Some(trailers) = trailers {
-            // TODO: check all preconditions
-            let mut list = PieceList::default();
-            encode_headers(*trailers, &mut list)?;
-
-            let list = write_all_list(self.transport.as_ref(), list)
-                .await
-                .wrap_err("writing response headers upstream")?;
-
-            // TODO: can we re-use that list? pool it?
-            drop(list);
+            self.encoder.write_trailers(trailers).await?;
         }
 
         // TODO: check announced content-length size vs actual, etc.
 
         Ok(Responder {
             state: ResponseDone,
-            transport: self.transport,
+            encoder: self.encoder,
         })
     }
+}
+
+pub trait Encoder {
+    async fn write_response(&mut self, res: Response) -> eyre::Result<()>;
+    async fn write_body_chunk(&mut self, chunk: Piece, mode: BodyWriteMode) -> eyre::Result<()>;
+    async fn write_body_end(&mut self, mode: BodyWriteMode) -> eyre::Result<()>;
+    async fn write_trailers(&mut self, trailers: Box<Headers>) -> eyre::Result<()>;
 }

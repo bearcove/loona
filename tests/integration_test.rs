@@ -7,8 +7,9 @@ mod helpers;
 use bytes::BytesMut;
 use curl::easy::{Easy, HttpVersion, List};
 use hring::{
-    h1, h2, Body, BodyChunk, ChanRead, ChanWrite, ExpectResponseHeaders, Headers, HeadersExt,
-    Method, ReadWritePair, Request, Responder, Response, ResponseDone, RollMut, WriteOwned,
+    h1, h2, Body, BodyChunk, ChanRead, ChanWrite, Encoder, ExpectResponseHeaders, Headers,
+    HeadersExt, Method, ReadWritePair, Request, Responder, Response, ResponseDone, RollMut,
+    ServerDriver,
 };
 use http::{header, StatusCode};
 use httparse::{Status, EMPTY_HEADER};
@@ -51,13 +52,13 @@ fn serve_api() {
 
         struct TestDriver {}
 
-        impl h1::ServerDriver for TestDriver {
-            async fn handle<T: WriteOwned>(
+        impl ServerDriver for TestDriver {
+            async fn handle<E: Encoder>(
                 &self,
                 _req: hring::Request,
                 _req_body: &mut impl Body,
-                mut res: Responder<T, ExpectResponseHeaders>,
-            ) -> eyre::Result<Responder<T, ResponseDone>> {
+                mut res: Responder<E, ExpectResponseHeaders>,
+            ) -> eyre::Result<Responder<E, ResponseDone>> {
                 let mut buf = RollMut::alloc()?;
 
                 buf.put(b"Continue")?;
@@ -684,15 +685,15 @@ fn curl_echo_body_noproxy(typ: BodyType) {
         let ln = tokio_uring::net::TcpListener::bind("[::]:0".parse()?)?;
         let ln_addr = ln.local_addr()?;
 
-        struct ServerDriver;
+        struct TestDriver;
 
-        impl h1::ServerDriver for ServerDriver {
-            async fn handle<T: WriteOwned>(
+        impl ServerDriver for TestDriver {
+            async fn handle<E: Encoder>(
                 &self,
                 req: Request,
                 req_body: &mut impl Body,
-                mut respond: Responder<T, ExpectResponseHeaders>,
-            ) -> eyre::Result<Responder<T, ResponseDone>> {
+                mut respond: Responder<E, ExpectResponseHeaders>,
+            ) -> eyre::Result<Responder<E, ResponseDone>> {
                 if req.headers.expects_100_continue() {
                     debug!("Sending 100-continue");
                     let res = Response {
@@ -746,7 +747,7 @@ fn curl_echo_body_noproxy(typ: BodyType) {
                         let conf = conf.clone();
 
                         tokio_uring::spawn(async move {
-                            let driver = ServerDriver;
+                            let driver = TestDriver;
                             h1::serve(transport, conf, RollMut::alloc().unwrap(), driver)
                                 .await
                                 .unwrap();
