@@ -1,7 +1,7 @@
 use eyre::Context;
 use nom::IResult;
 use pretty_hex::PrettyHex;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::{
     buffet::PieceList,
@@ -20,7 +20,7 @@ where
     Parser: Fn(Roll) -> IResult<Roll, Output>,
 {
     loop {
-        debug!("reading+parsing ({} bytes so far)", buf.len());
+        trace!("reading+parsing ({} bytes so far)", buf.len());
         let filled = buf.filled();
 
         match parser(filled) {
@@ -31,7 +31,7 @@ where
             Err(err) => {
                 if err.is_incomplete() {
                     {
-                        debug!(
+                        trace!(
                             "incomplete request, need more data. start of buffer: {:?}",
                             &buf[..std::cmp::min(buf.len(), 128)].hex_dump()
                         );

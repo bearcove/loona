@@ -92,7 +92,7 @@ pub async fn serve(
             },
         );
 
-        let res_handle = Responder {
+        let responder = Responder {
             encoder: H1Encoder {
                 transport: transport.clone(),
             },
@@ -100,7 +100,7 @@ pub async fn serve(
         };
 
         let resp = driver
-            .handle(req, &mut req_body, res_handle)
+            .handle(req, &mut req_body, responder)
             .await
             .wrap_err("handling request")?;
 

@@ -41,7 +41,7 @@ pub enum RawFrameType {
 }
 
 /// Typed flags for various frame types
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum FrameType {
     Data(BitFlags<DataFlags>),
     Headers(BitFlags<HeadersFlags>),
