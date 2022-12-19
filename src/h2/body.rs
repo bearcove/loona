@@ -1,13 +1,13 @@
 use tokio::sync::mpsc;
 
-use crate::{Body, BodyChunk, Roll};
+use crate::{Body, BodyChunk, Piece};
 
 #[derive(Debug)]
 pub(crate) struct H2Body {
     pub(crate) content_length: Option<u64>,
     pub(crate) eof: bool,
     // TODO: more specific error handling
-    pub(crate) rx: mpsc::Receiver<eyre::Result<Roll>>,
+    pub(crate) rx: mpsc::Receiver<eyre::Result<Piece>>,
 }
 
 impl Body for H2Body {
@@ -24,7 +24,7 @@ impl Body for H2Body {
             BodyChunk::Done { trailers: None }
         } else {
             match self.rx.recv().await {
-                Some(roll) => BodyChunk::Chunk(roll?.into()),
+                Some(piece) => BodyChunk::Chunk(piece?),
                 // TODO: handle trailers
                 None => {
                     self.eof = true;

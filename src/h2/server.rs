@@ -1,5 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
+use enumflags2::BitFlags;
 use http::{header::HeaderName, Version};
 use pretty_hex::PrettyHex;
 use tokio::sync::mpsc;
@@ -13,7 +14,7 @@ use crate::{
     },
     util::read_and_parse,
     ExpectResponseHeaders, Headers, Method, Piece, PieceStr, ReadWriteOwned, Request, Responder,
-    Roll, RollMut, ServerDriver,
+    RollMut, ServerDriver,
 };
 
 /// HTTP/2 server configuration
@@ -40,7 +41,8 @@ struct StreamState {
 
 enum StreamRxStage {
     Headers(Request),
-    Body(mpsc::Sender<eyre::Result<Roll>>),
+    Body(mpsc::Sender<eyre::Result<Piece>>),
+    Done,
 }
 
 pub async fn serve(
@@ -124,23 +126,33 @@ async fn h2_read_loop(
                     todo!("handle padded data frame");
                 }
 
-                let mut remain = frame.len as usize;
-                while remain > 0 {
-                    debug!("reading frame payload, {remain} remains");
-
-                    if client_buf.is_empty() {
-                        let res;
-                        (res, client_buf) = client_buf.read_into(remain, transport.as_ref()).await;
-                        let n = res?;
-                        debug!("read {n} bytes for frame payload");
+                // TODO: not sure if worth, but: `read_and_parse` might have to
+                // issue several `read` operations, and we could send those as
+                // soon as we have them through `ev_tx`. We also have to pass
+                // flags, so this complicates things.
+                let payload;
+                (client_buf, payload) = match read_and_parse(
+                    nom::bytes::streaming::take(frame.len as usize),
+                    transport.as_ref(),
+                    client_buf,
+                    frame.len as usize,
+                )
+                .await?
+                {
+                    Some((client_buf, frame)) => (client_buf, frame),
+                    None => {
+                        debug!("h2 client closed connection while reading data body");
+                        return Ok(());
                     }
-                    let roll = client_buf.take_at_most(remain).unwrap();
-                    debug!("read {} of frame payload", roll.len());
-                    remain -= roll.len();
-                }
-                debug!("done reading frame payload");
+                };
 
-                // TODO: handle `EndStream`
+                if (ev_tx
+                    .send(H2ConnEvent::ClientFrame(frame, payload.into()))
+                    .await)
+                    .is_err()
+                {
+                    return Err(eyre::eyre!("could not send H2 event"));
+                }
             }
             FrameType::Headers(flags) => {
                 if flags.contains(HeadersFlags::Padded) {
@@ -331,7 +343,7 @@ async fn h2_write_loop(
                         todo!("handle requests with no request body");
                     }
 
-                    let (piece_tx, piece_rx) = mpsc::channel::<eyre::Result<Roll>>(1);
+                    let (piece_tx, piece_rx) = mpsc::channel::<eyre::Result<Piece>>(1);
                     {
                         let mut state = state.borrow_mut();
                         state.streams.insert(
@@ -362,12 +374,47 @@ async fn h2_write_loop(
                                 }
                                 Err(e) => {
                                     // TODO: actually handle that error
-                                    debug!("Handler returned an error: {e:?}")
+                                    debug!("Handler returned an error: {e}")
                                 }
                             }
                         }
                     });
                     debug!("Calling handler with the given body... it returned!");
+                }
+                FrameType::Data(flags) => {
+                    if flags.contains(DataFlags::Padded) {
+                        todo!("padded data is not supported");
+                    }
+
+                    let tx = {
+                        let mut state = state.borrow_mut();
+                        let stream = state
+                            .streams
+                            .get_mut(&frame.stream_id)
+                            // TODO: proper error handling (connection error)
+                            .expect("received data for unknown stream");
+                        match &mut stream.rx_stage {
+                            StreamRxStage::Headers(_) => {
+                                // TODO: proper error handling (stream error)
+                                panic!("received data for stream before headers")
+                            }
+                            StreamRxStage::Body(tx) => {
+                                // TODO: we can get rid of that clone sometimes
+                                let tx = tx.clone();
+                                if flags.contains(DataFlags::EndStream) {
+                                    stream.rx_stage = StreamRxStage::Done;
+                                }
+                                tx
+                            }
+                            StreamRxStage::Done => {
+                                // TODO: proper error handling (stream error)
+                                panic!("received data for stream after completion");
+                            }
+                        }
+                    };
+                    if tx.send(Ok(payload)).await.is_err() {
+                        return Err(eyre::eyre!("ev_tx receiver dropped"));
+                    }
                 }
                 _ => {
                     todo!("handle client frame: {frame:?}");
@@ -400,7 +447,13 @@ async fn h2_write_loop(
                         let (res, _headers_encoded) = transport.write_all(headers_encoded).await;
                         res?;
                     }
-                    H2EventPayload::BodyChunk(_) => todo!("send body chunk"),
+                    H2EventPayload::BodyChunk(piece) => {
+                        let flags = BitFlags::<DataFlags>::default();
+                        let frame = Frame::new(FrameType::Data(flags), ev.stream_id);
+                        frame.write(transport.as_ref()).await?;
+                        let (res, _) = transport.write_all(piece).await;
+                        res?;
+                    }
                     H2EventPayload::BodyEnd => {
                         let flags = DataFlags::EndStream;
                         let frame = Frame::new(FrameType::Data(flags.into()), ev.stream_id);
