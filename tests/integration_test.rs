@@ -50,7 +50,7 @@ fn serve_api() {
         let conf = h1::ServerConf::default();
         let conf = Rc::new(conf);
 
-        struct TestDriver {}
+        struct TestDriver;
 
         impl ServerDriver for TestDriver {
             async fn handle<E: Encoder>(
@@ -90,7 +90,7 @@ fn serve_api() {
         let (mut rx, write) = ChanWrite::new();
         let transport = ReadWritePair(read, write);
         let client_buf = RollMut::alloc()?;
-        let driver = TestDriver {};
+        let driver = TestDriver;
         let serve_fut = tokio_uring::spawn(h1::serve(transport, conf, client_buf, driver));
 
         tx.send("GET / HTTP/1.1\r\n\r\n").await?;
@@ -145,7 +145,7 @@ fn request_api() {
             ..Default::default()
         };
 
-        struct TestDriver {}
+        struct TestDriver;
 
         impl h1::ClientDriver for TestDriver {
             type Return = ();
@@ -173,7 +173,7 @@ fn request_api() {
             }
         }
 
-        let driver = TestDriver {};
+        let driver = TestDriver;
         let request_fut = tokio_uring::spawn(async {
             #[allow(clippy::let_unit_value)]
             let mut body = ();
@@ -852,6 +852,36 @@ fn h2_basic() {
         let ln = tokio_uring::net::TcpListener::bind("[::]:0".parse()?)?;
         let ln_addr = ln.local_addr()?;
 
+        struct TestDriver;
+
+        impl ServerDriver for TestDriver {
+            async fn handle<E: Encoder>(
+                &self,
+                req: Request,
+                req_body: &mut impl Body,
+                respond: Responder<E, ExpectResponseHeaders>,
+            ) -> eyre::Result<Responder<E, ResponseDone>> {
+                debug!("Writing final response");
+                let res = Response {
+                    status: StatusCode::OK,
+                    headers: {
+                        let mut headers = Headers::default();
+                        headers.insert(header::SERVER, "integration-test/1.0".into());
+                        headers
+                    },
+                    ..Default::default()
+                };
+                let respond = respond
+                    .write_final_response_with_body(res, req_body)
+                    .await?;
+
+                debug!("Wrote final response");
+                Ok(respond)
+            }
+        }
+
+        let driver = Rc::new(TestDriver);
+
         let server_fut = async move {
             let conf = Rc::new(h2::ServerConf::default());
 
@@ -875,9 +905,10 @@ fn h2_basic() {
                         debug!("Accepted connection from {remote_addr}");
 
                         let conf = conf.clone();
+                        let driver = driver.clone();
 
                         tokio_uring::spawn(async move {
-                            h2::serve(transport, conf, RollMut::alloc().unwrap())
+                            h2::serve(transport, conf, RollMut::alloc().unwrap(), driver)
                                 .await
                                 .unwrap();
                             debug!("Done serving h1 connection");
