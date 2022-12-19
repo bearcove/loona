@@ -157,9 +157,10 @@ async fn handle_io(
                     }
                 };
 
-                if let Err(e) = ev_tx
+                if (ev_tx
                     .send(H2ConnEvent::ClientFrame(frame, payload.into()))
-                    .await
+                    .await)
+                    .is_err()
                 {
                     return Err(eyre::eyre!("could not send H2 event"));
                 }
@@ -194,15 +195,14 @@ async fn handle_io(
                     }
                 };
 
-                if !s.contains(SettingsFlags::Ack) {
+                if s.contains(SettingsFlags::Ack) {
+                    debug!("Peer has acknowledge our settings, cool");
+                } else {
                     // TODO: actually apply settings
 
-                    debug!("acknowledging new settings");
-                    let res_frame = Frame::new(
-                        FrameType::Settings(SettingsFlags::Ack.into()),
-                        StreamId::CONNECTION,
-                    );
-                    res_frame.write(transport.as_ref()).await?;
+                    if ev_tx.send(H2ConnEvent::AcknowledgeSettings).await.is_err() {
+                        return Err(eyre::eyre!("could not send H2 event"));
+                    }
                 }
             }
             FrameType::PushPromise => todo!("push promise not implemented"),
@@ -243,8 +243,26 @@ async fn handle_events(
 
     while let Some(ev) = ev_rx.recv().await {
         match ev {
+            H2ConnEvent::AcknowledgeSettings => {
+                debug!("acknowledging new settings");
+                let res_frame = Frame::new(
+                    FrameType::Settings(SettingsFlags::Ack.into()),
+                    StreamId::CONNECTION,
+                );
+                res_frame.write(transport.as_ref()).await?;
+            }
             H2ConnEvent::ClientFrame(frame, payload) => match frame.frame_type {
                 FrameType::Headers(flags) => {
+                    if flags.contains(HeadersFlags::Padded) {
+                        todo!("padded headers are not supported");
+                    }
+                    if !flags.contains(HeadersFlags::EndHeaders) {
+                        todo!("handle continuation frames");
+                    }
+                    if flags.contains(HeadersFlags::EndStream) {
+                        todo!("handle requests with no request body");
+                    }
+
                     let mut path: Option<PieceStr> = None;
                     let mut method: Option<Method> = None;
 

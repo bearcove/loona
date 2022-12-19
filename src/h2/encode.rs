@@ -9,6 +9,7 @@ use super::parse::{Frame, StreamId};
 pub(crate) enum H2ConnEvent {
     ClientFrame(Frame, Piece),
     ServerEvent(H2Event),
+    AcknowledgeSettings,
 }
 
 #[derive(Debug)]
