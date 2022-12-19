@@ -861,6 +861,8 @@ fn h2_basic() {
                 req_body: &mut impl Body,
                 respond: Responder<E, ExpectResponseHeaders>,
             ) -> eyre::Result<Responder<E, ResponseDone>> {
+                debug!("Got request {req:#?}");
+
                 debug!("Writing final response");
                 let res = Response {
                     status: StatusCode::OK,

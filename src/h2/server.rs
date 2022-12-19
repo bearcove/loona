@@ -8,7 +8,7 @@ use tracing::debug;
 use crate::{
     h2::{
         body::H2Body,
-        encode::{H2ConnEvent, H2Encoder, H2Event, H2EventPayload},
+        encode::{H2ConnEvent, H2Encoder, H2EventPayload},
         parse::{DataFlags, Frame, FrameType, HeadersFlags, SettingsFlags, StreamId},
     },
     util::read_and_parse,
@@ -51,8 +51,6 @@ pub async fn serve(
 ) -> eyre::Result<()> {
     debug!("TODO: enforce max_streams {}", conf.max_streams);
 
-    let (tx, rx) = tokio::sync::mpsc::channel::<H2Event>(32);
-
     let state = ConnState::default();
 
     const MAX_FRAME_LEN: usize = 64 * 1024;
@@ -77,19 +75,19 @@ pub async fn serve(
 
     let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<H2ConnEvent>(32);
 
-    let io_task = {
+    let read_task = {
         let ev_tx = ev_tx.clone();
         let transport = transport.clone();
 
-        handle_io(ev_tx, transport, client_buf, state)
+        h2_read_loop(ev_tx, transport, client_buf, state)
     };
 
-    let ev_task = handle_events(driver, ev_tx, ev_rx, transport);
-    tokio::try_join!(io_task, ev_task)?;
+    let write_task = h2_write_loop(driver, ev_tx, ev_rx, transport);
+    tokio::try_join!(read_task, write_task)?;
     Ok(())
 }
 
-async fn handle_io(
+async fn h2_read_loop(
     ev_tx: mpsc::Sender<H2ConnEvent>,
     transport: Rc<impl ReadWriteOwned>,
     mut client_buf: RollMut,
@@ -232,7 +230,7 @@ async fn handle_io(
     }
 }
 
-async fn handle_events(
+async fn h2_write_loop(
     driver: Rc<impl ServerDriver + 'static>,
     ev_tx: mpsc::Sender<H2ConnEvent>,
     mut ev_rx: mpsc::Receiver<H2ConnEvent>,
@@ -325,9 +323,10 @@ async fn handle_events(
                         state: ExpectResponseHeaders,
                     };
 
-                    let (piece_tx, piece_rx) = mpsc::channel::<Piece>(1);
+                    // TODO: send received pieces somewhere
+                    let (_piece_tx, piece_rx) = mpsc::channel::<Piece>(1);
 
-                    let mut req_body = H2Body {
+                    let req_body = H2Body {
                         // FIXME: that's not right
                         content_length: None,
                         eof: false,

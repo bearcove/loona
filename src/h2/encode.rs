@@ -51,7 +51,7 @@ impl H2Encoder {
         self.tx
             .send(self.event(payload))
             .await
-            .map_err(|e| eyre::eyre!("could not send event to h2 connection handler"))?;
+            .map_err(|_| eyre::eyre!("could not send event to h2 connection handler"))?;
         Ok(())
     }
 }
@@ -66,19 +66,20 @@ impl Encoder for H2Encoder {
     async fn write_body_chunk(
         &mut self,
         chunk: crate::Piece,
-        mode: h1::body::BodyWriteMode,
+        _mode: h1::body::BodyWriteMode,
     ) -> eyre::Result<()> {
         self.send(H2EventPayload::BodyChunk(chunk)).await?;
         Ok(())
     }
 
     // TODO: BodyWriteMode is not relevant for h2
-    async fn write_body_end(&mut self, mode: h1::body::BodyWriteMode) -> eyre::Result<()> {
+    async fn write_body_end(&mut self, _mode: h1::body::BodyWriteMode) -> eyre::Result<()> {
         self.send(H2EventPayload::BodyEnd).await?;
         Ok(())
     }
 
-    async fn write_trailers(&mut self, trailers: Box<crate::Headers>) -> eyre::Result<()> {
+    // TODO: handle trailers
+    async fn write_trailers(&mut self, _trailers: Box<crate::Headers>) -> eyre::Result<()> {
         todo!("write trailers")
     }
 }
