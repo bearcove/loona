@@ -449,7 +449,8 @@ async fn h2_write_loop(
                     }
                     H2EventPayload::BodyChunk(piece) => {
                         let flags = BitFlags::<DataFlags>::default();
-                        let frame = Frame::new(FrameType::Data(flags), ev.stream_id);
+                        let mut frame = Frame::new(FrameType::Data(flags), ev.stream_id);
+                        frame.len = piece.len() as u32;
                         frame.write(transport.as_ref()).await?;
                         let (res, _) = transport.write_all(piece).await;
                         res?;
