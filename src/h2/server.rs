@@ -73,6 +73,16 @@ pub async fn serve(
     };
     debug!("read preface");
 
+    // we have to send a settings frame
+    {
+        let frame = Frame::new(
+            FrameType::Settings(Default::default()),
+            StreamId::CONNECTION,
+        );
+        frame.write(transport.as_ref()).await?;
+        debug!("sent settings frame");
+    }
+
     let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<H2ConnEvent>(32);
 
     let read_task = {
