@@ -391,7 +391,11 @@ async fn h2_write_loop(
                         res?;
                     }
                     H2EventPayload::BodyChunk(_) => todo!("send body chunk"),
-                    H2EventPayload::BodyEnd => todo!("end body"),
+                    H2EventPayload::BodyEnd => {
+                        let flags = DataFlags::EndStream;
+                        let frame = Frame::new(FrameType::Data(flags.into()), ev.stream_id);
+                        frame.write(transport.as_ref()).await?;
+                    }
                 }
             }
         }

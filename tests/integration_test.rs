@@ -849,7 +849,11 @@ fn h2_basic() {
     )> {
         let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
 
-        let ln = tokio_uring::net::TcpListener::bind("[::]:0".parse()?)?;
+        let listen_port: u16 = std::env::var("LISTEN_PORT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_default();
+        let ln = tokio_uring::net::TcpListener::bind(format!("[::]:{listen_port}").parse()?)?;
         let ln_addr = ln.local_addr()?;
 
         struct TestDriver;
