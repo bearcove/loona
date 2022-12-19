@@ -26,16 +26,16 @@ pub(crate) enum H2EventPayload {
 impl fmt::Debug for H2EventPayload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Headers(arg0) => f.debug_tuple("Headers").finish(),
-            Self::BodyChunk(arg0) => f.debug_tuple("BodyChunk").finish(),
+            Self::Headers(_) => f.debug_tuple("Headers").finish(),
+            Self::BodyChunk(_) => f.debug_tuple("BodyChunk").finish(),
             Self::BodyEnd => write!(f, "BodyEnd"),
         }
     }
 }
 
 pub struct H2Encoder {
-    stream_id: StreamId,
-    tx: mpsc::Sender<H2ConnEvent>,
+    pub(crate) stream_id: StreamId,
+    pub(crate) tx: mpsc::Sender<H2ConnEvent>,
 }
 
 impl H2Encoder {

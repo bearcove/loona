@@ -19,7 +19,7 @@ impl Body for H2Body {
     }
 
     async fn next_chunk(&mut self) -> eyre::Result<BodyChunk> {
-        let chunk = if eof {
+        let chunk = if self.eof {
             BodyChunk::Done { trailers: None }
         } else {
             match self.rx.recv().await {
