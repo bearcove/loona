@@ -381,6 +381,10 @@ async fn h2_write_loop(
                         let mut headers: Vec<(&[u8], &[u8])> = vec![];
                         headers.push((b":status", res.status.as_str().as_bytes()));
                         for (name, value) in res.headers.iter() {
+                            if name == http::header::TRANSFER_ENCODING {
+                                // do not set transfer-encoding: chunked when doing HTTP/2
+                                continue;
+                            }
                             headers.push((name.as_str().as_bytes(), value));
                         }
                         let headers_encoded = hpack_enc.encode(headers);
