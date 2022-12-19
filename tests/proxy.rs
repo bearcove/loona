@@ -3,7 +3,10 @@
 #![feature(type_alias_impl_trait)]
 #![feature(async_fn_in_trait)]
 
-use hring::{h1, Body, BodyChunk, Response, RollMut, WriteOwned};
+use hring::{
+    h1, Body, BodyChunk, Encoder, ExpectResponseHeaders, Responder, Response, ResponseDone,
+    RollMut, ServerDriver,
+};
 use std::{cell::RefCell, future::Future, net::SocketAddr, rc::Rc};
 use tracing::debug;
 
@@ -14,13 +17,13 @@ pub struct ProxyDriver {
     pub pool: TransportPool,
 }
 
-impl h1::ServerDriver for ProxyDriver {
-    async fn handle<T: WriteOwned>(
+impl ServerDriver for ProxyDriver {
+    async fn handle<E: Encoder>(
         &self,
         req: hring::Request,
         req_body: &mut impl Body,
-        respond: h1::Responder<T, h1::ExpectResponseHeaders>,
-    ) -> eyre::Result<h1::Responder<T, h1::ResponseDone>> {
+        respond: Responder<E, ExpectResponseHeaders>,
+    ) -> eyre::Result<Responder<E, ResponseDone>> {
         let transport = {
             let mut pool = self.pool.borrow_mut();
             pool.pop()
@@ -47,18 +50,18 @@ impl h1::ServerDriver for ProxyDriver {
     }
 }
 
-struct ProxyClientDriver<T>
+struct ProxyClientDriver<E>
 where
-    T: WriteOwned,
+    E: Encoder,
 {
-    respond: h1::Responder<T, h1::ExpectResponseHeaders>,
+    respond: Responder<E, ExpectResponseHeaders>,
 }
 
-impl<T> h1::ClientDriver for ProxyClientDriver<T>
+impl<E> h1::ClientDriver for ProxyClientDriver<E>
 where
-    T: WriteOwned,
+    E: Encoder,
 {
-    type Return = h1::Responder<T, h1::ResponseDone>;
+    type Return = Responder<E, ResponseDone>;
 
     async fn on_informational_response(&mut self, res: Response) -> eyre::Result<()> {
         debug!("Got informational response {}", res.status);

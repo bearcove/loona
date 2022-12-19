@@ -1,7 +1,7 @@
 //! HTTP/1.1 parser
 //!
-//! As of June 2022, the authoritative document for HTTP/1.1
-//! is https://www.rfc-editor.org/rfc/rfc9110
+//! HTTP/1.1 https://httpwg.org/specs/rfc9112.html
+//! HTTP semantics https://httpwg.org/specs/rfc9110.html
 
 use http::{header::HeaderName, StatusCode, Version};
 use nom::{
