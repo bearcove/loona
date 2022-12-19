@@ -853,7 +853,7 @@ fn h2_basic() {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or_default();
-        let ln = tokio_uring::net::TcpListener::bind(format!("[::]:{listen_port}").parse()?)?;
+        let ln = tokio_uring::net::TcpListener::bind(format!("127.0.0.2:{listen_port}").parse()?)?;
         let ln_addr = ln.local_addr()?;
 
         struct TestDriver;
