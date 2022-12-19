@@ -8,7 +8,7 @@ use tracing::debug;
 use crate::{
     h2::{
         body::H2Body,
-        encode::{H2ConnEvent, H2Encoder, H2Event},
+        encode::{H2ConnEvent, H2Encoder, H2Event, H2EventPayload},
         parse::{DataFlags, Frame, FrameType, HeadersFlags, SettingsFlags, StreamId},
     },
     util::read_and_parse,
@@ -84,7 +84,7 @@ pub async fn serve(
         handle_io(ev_tx, transport, client_buf, state)
     };
 
-    let ev_task = handle_events(driver, ev_tx, ev_rx);
+    let ev_task = handle_events(driver, ev_tx, ev_rx, transport);
     tokio::try_join!(io_task, ev_task)?;
     Ok(())
 }
@@ -236,9 +236,10 @@ async fn handle_events(
     driver: Rc<impl ServerDriver + 'static>,
     ev_tx: mpsc::Sender<H2ConnEvent>,
     mut ev_rx: mpsc::Receiver<H2ConnEvent>,
+    transport: Rc<impl ReadWriteOwned>,
 ) -> eyre::Result<()> {
     let mut hpack_dec = hpack::Decoder::new();
-    let hpack_enc = hpack::Encoder::new();
+    let mut hpack_enc = hpack::Encoder::new();
 
     while let Some(ev) = ev_rx.recv().await {
         match ev {
@@ -340,7 +341,31 @@ async fn handle_events(
                 }
             },
             H2ConnEvent::ServerEvent(ev) => {
-                todo!("send server event: {ev:?}");
+                debug!("Sending server event: {ev:?}");
+
+                match ev.payload {
+                    H2EventPayload::Headers(res) => {
+                        debug!("Sending headers on stream {}", ev.stream_id);
+                        let flags = HeadersFlags::EndHeaders;
+                        let mut frame = Frame::new(FrameType::Headers(flags.into()), ev.stream_id);
+
+                        // TODO: don't allocate so much for headers
+                        // TODO: limt header size
+                        let mut headers: Vec<(&[u8], &[u8])> = vec![];
+                        headers.push((b":status", res.status.as_str().as_bytes()));
+                        for (name, value) in res.headers.iter() {
+                            headers.push((name.as_str().as_bytes(), value));
+                        }
+                        let headers_encoded = hpack_enc.encode(headers);
+                        frame.len = headers_encoded.len() as u32;
+                        frame.write(transport.as_ref()).await?;
+
+                        let (res, _headers_encoded) = transport.write_all(headers_encoded).await;
+                        res?;
+                    }
+                    H2EventPayload::BodyChunk(_) => todo!("send body chunk"),
+                    H2EventPayload::BodyEnd => todo!("end body"),
+                }
             }
         }
     }
