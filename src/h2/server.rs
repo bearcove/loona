@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use http::{header::HeaderName, Version};
 use pretty_hex::PrettyHex;
@@ -39,7 +39,7 @@ struct StreamState {
 }
 
 enum StreamRxStage {
-    Headers(Headers),
+    Headers(Request),
     Body(mpsc::Sender<eyre::Result<Roll>>),
 }
 
@@ -52,6 +52,7 @@ pub async fn serve(
     debug!("TODO: enforce max_streams {}", conf.max_streams);
 
     let state = ConnState::default();
+    let state = Rc::new(RefCell::new(state));
 
     const MAX_FRAME_LEN: usize = 64 * 1024;
 
@@ -88,11 +89,12 @@ pub async fn serve(
     let read_task = {
         let ev_tx = ev_tx.clone();
         let transport = transport.clone();
+        let state = state.clone();
 
         h2_read_loop(ev_tx, transport, client_buf, state)
     };
 
-    let write_task = h2_write_loop(driver, ev_tx, ev_rx, transport);
+    let write_task = h2_write_loop(driver, ev_tx, ev_rx, transport, state);
     tokio::try_join!(read_task, write_task)?;
     Ok(())
 }
@@ -101,7 +103,7 @@ async fn h2_read_loop(
     ev_tx: mpsc::Sender<H2ConnEvent>,
     transport: Rc<impl ReadWriteOwned>,
     mut client_buf: RollMut,
-    state: ConnState,
+    state: Rc<RefCell<ConnState>>,
 ) -> eyre::Result<()> {
     loop {
         let frame;
@@ -145,8 +147,11 @@ async fn h2_read_loop(
                     todo!("padded headers are not supported");
                 }
 
-                if state.streams.contains_key(&frame.stream_id) {
-                    todo!("handle connection error: received headers for existing stream");
+                {
+                    let state = state.borrow();
+                    if state.streams.contains_key(&frame.stream_id) {
+                        todo!("handle connection error: received headers for existing stream");
+                    }
                 }
 
                 let payload;
@@ -160,7 +165,7 @@ async fn h2_read_loop(
                 {
                     Some((client_buf, frame)) => (client_buf, frame),
                     None => {
-                        debug!("h2 client closed connection while reading settings body");
+                        debug!("h2 client closed connection while reading headers body");
                         return Ok(());
                     }
                 };
@@ -172,17 +177,6 @@ async fn h2_read_loop(
                 {
                     return Err(eyre::eyre!("could not send H2 event"));
                 }
-
-                if !flags.contains(HeadersFlags::EndHeaders) {
-                    todo!("handle continuation frames");
-                }
-
-                if flags.contains(HeadersFlags::EndStream) {
-                    todo!("handle requests with no request body");
-                }
-
-                // at this point we've fully read the headers, we can start
-                // reading the body.
             }
             FrameType::Priority => todo!(),
             FrameType::RstStream => todo!(),
@@ -245,6 +239,7 @@ async fn h2_write_loop(
     ev_tx: mpsc::Sender<H2ConnEvent>,
     mut ev_rx: mpsc::Receiver<H2ConnEvent>,
     transport: Rc<impl ReadWriteOwned>,
+    state: Rc<RefCell<ConnState>>,
 ) -> eyre::Result<()> {
     let mut hpack_dec = hpack::Decoder::new();
     let mut hpack_enc = hpack::Encoder::new();
@@ -263,12 +258,6 @@ async fn h2_write_loop(
                 FrameType::Headers(flags) => {
                     if flags.contains(HeadersFlags::Padded) {
                         todo!("padded headers are not supported");
-                    }
-                    if !flags.contains(HeadersFlags::EndHeaders) {
-                        todo!("handle continuation frames");
-                    }
-                    if flags.contains(HeadersFlags::EndStream) {
-                        todo!("handle requests with no request body");
                     }
 
                     let mut path: Option<PieceStr> = None;
@@ -318,6 +307,11 @@ async fn h2_write_loop(
                     let path = path.unwrap();
                     let method = method.unwrap();
 
+                    // TODO: this might not be the end of headers
+                    if !flags.contains(HeadersFlags::EndHeaders) {
+                        todo!("handle continuation frames");
+                    }
+
                     let req = Request {
                         method,
                         path,
@@ -333,8 +327,20 @@ async fn h2_write_loop(
                         state: ExpectResponseHeaders,
                     };
 
-                    // TODO: send received pieces somewhere
-                    let (_piece_tx, piece_rx) = mpsc::channel::<Piece>(1);
+                    if flags.contains(HeadersFlags::EndStream) {
+                        todo!("handle requests with no request body");
+                    }
+
+                    let (piece_tx, piece_rx) = mpsc::channel::<eyre::Result<Roll>>(1);
+                    {
+                        let mut state = state.borrow_mut();
+                        state.streams.insert(
+                            frame.stream_id,
+                            StreamState {
+                                rx_stage: StreamRxStage::Body(piece_tx),
+                            },
+                        );
+                    }
 
                     let req_body = H2Body {
                         // FIXME: that's not right
