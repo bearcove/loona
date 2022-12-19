@@ -315,7 +315,7 @@ async fn handle_events(
                         rx: piece_rx,
                     };
 
-                    debug!("Calling handlerwith the given body");
+                    debug!("Calling handler with the given body");
                     tokio_uring::spawn({
                         let driver = driver.clone();
                         async move {
