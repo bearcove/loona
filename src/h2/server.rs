@@ -360,25 +360,29 @@ async fn h2_write_loop(
                         state: ExpectResponseHeaders,
                     };
 
-                    if flags.contains(HeadersFlags::EndStream) {
-                        todo!("handle requests with no request body");
-                    }
-
                     let (piece_tx, piece_rx) = mpsc::channel::<eyre::Result<Piece>>(1);
+                    let is_end_stream = flags.contains(HeadersFlags::EndStream);
+
                     {
                         let mut state = state.borrow_mut();
-                        state.streams.insert(
-                            frame.stream_id,
+
+                        let ss = if is_end_stream {
+                            StreamState {
+                                rx_stage: StreamRxStage::Done,
+                            }
+                        } else {
                             StreamState {
                                 rx_stage: StreamRxStage::Body(piece_tx),
-                            },
-                        );
+                            }
+                        };
+                        state.streams.insert(frame.stream_id, ss);
                     }
 
                     let req_body = H2Body {
-                        // FIXME: that's not right
-                        content_length: None,
-                        eof: false,
+                        // FIXME: that's not right. h2 requests can still specify
+                        // a content-length
+                        content_length: if is_end_stream { Some(0) } else { None },
+                        eof: is_end_stream,
                         rx: piece_rx,
                     };
 
