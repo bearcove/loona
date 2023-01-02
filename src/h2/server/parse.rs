@@ -8,7 +8,7 @@ use std::fmt;
 use enum_repr::EnumRepr;
 use enumflags2::{bitflags, BitFlags};
 use nom::{
-    combinator::map_res,
+    combinator::{map, map_res},
     number::streaming::{be_u24, be_u8},
     sequence::tuple,
     IResult,
@@ -231,4 +231,24 @@ fn parse_reserved_and_stream_id(i: Roll) -> IResult<Roll, (u8, StreamId)> {
     }
 
     nom::bits::bits(tuple((reserved, stream_id)))(i)
+}
+
+// cf. https://httpwg.org/specs/rfc9113.html#HEADERS
+#[derive(Debug)]
+pub(crate) struct HeadersPriority {
+    pub exclusive: bool,
+    pub stream_dependency: StreamId,
+    // 0-255 => 1-256
+    pub weight: u8,
+}
+
+pub(crate) fn parse_headers_priority(i: Roll) -> IResult<Roll, HeadersPriority> {
+    map(
+        tuple((parse_reserved_and_stream_id, be_u8)),
+        |((exclusive, stream_dependency), weight)| HeadersPriority {
+            exclusive: exclusive != 0,
+            stream_dependency,
+            weight,
+        },
+    )(i)
 }

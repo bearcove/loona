@@ -2,6 +2,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use enumflags2::BitFlags;
 use http::{header::HeaderName, Version};
+use nom::Finish;
 use pretty_hex::PrettyHex;
 use tokio::sync::mpsc;
 use tracing::debug;
@@ -10,7 +11,10 @@ use crate::{
     h2::{
         body::H2Body,
         encode::{H2ConnEvent, H2Encoder, H2EventPayload},
-        parse::{DataFlags, Frame, FrameType, HeadersFlags, SettingsFlags, StreamId},
+        parse::{
+            parse_headers_priority, DataFlags, Frame, FrameType, HeadersFlags, SettingsFlags,
+            StreamId,
+        },
     },
     util::read_and_parse,
     ExpectResponseHeaders, Headers, Method, Piece, PieceStr, ReadWriteOwned, Request, Responder,
@@ -266,10 +270,27 @@ async fn h2_write_loop(
                 );
                 res_frame.write(transport.as_ref()).await?;
             }
-            H2ConnEvent::ClientFrame(frame, payload) => match frame.frame_type {
+            H2ConnEvent::ClientFrame(frame, mut payload) => match frame.frame_type {
                 FrameType::Headers(flags) => {
                     if flags.contains(HeadersFlags::Padded) {
                         todo!("padded headers are not supported");
+                    }
+
+                    if flags.contains(HeadersFlags::Priority) {
+                        let roll = match payload {
+                            Piece::Roll(roll) => roll,
+                            Piece::Static(_) => unreachable!(),
+                            Piece::Vec(_) => unreachable!(),
+                            Piece::HeaderName(_) => unreachable!(),
+                        };
+                        let roll_out;
+                        let prio;
+                        // TODO: proper error handling (stream error probably)
+                        (roll_out, prio) = parse_headers_priority(roll)
+                            .finish()
+                            .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
+                        payload = Piece::Roll(roll_out);
+                        debug!("got priority: {:?}", prio);
                     }
 
                     let mut path: Option<PieceStr> = None;
