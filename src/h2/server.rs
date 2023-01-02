@@ -10,7 +10,7 @@ use tracing::debug;
 use crate::{
     h2::{
         body::H2Body,
-        encode::{H2ConnEvent, H2Encoder, H2EventPayload},
+        encode::{EncoderState, H2ConnEvent, H2Encoder, H2EventPayload},
         parse::{
             parse_headers_priority, DataFlags, Frame, FrameType, HeadersFlags, SettingsFlags,
             StreamId,
@@ -214,7 +214,7 @@ async fn h2_read_loop(
                 };
 
                 if s.contains(SettingsFlags::Ack) {
-                    debug!("Peer has acknowledge our settings, cool");
+                    debug!("Peer has acknowledged our settings, cool");
                 } else {
                     // TODO: actually apply settings
 
@@ -356,6 +356,7 @@ async fn h2_write_loop(
                         encoder: H2Encoder {
                             stream_id: frame.stream_id,
                             tx: ev_tx.clone(),
+                            state: EncoderState::ExpectResponseHeaders,
                         },
                         state: ExpectResponseHeaders,
                     };
@@ -398,7 +399,7 @@ async fn h2_write_loop(
                                     debug!("Handler completed successfully, gave us a responder");
                                 }
                                 Err(e) => {
-                                    // TODO: actually handle that error
+                                    // TODO: actually handle that error.
                                     debug!("Handler returned an error: {e}")
                                 }
                             }
