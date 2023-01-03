@@ -22,6 +22,9 @@ mod responder;
 pub use responder::*;
 
 /// re-exported so consumers can use whatever forked version we use
+pub use http;
+
+/// re-exported so consumers can use whatever forked version we use
 pub use tokio_uring;
 
 pub trait ServerDriver {

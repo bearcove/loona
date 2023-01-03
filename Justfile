@@ -28,5 +28,8 @@ single-test *args:
 bench *args:
 	RUST_BACKTRACE=1 cargo bench {{args}} -- --plotting-backend plotters
 
+h2spec-server:
+	cargo run --manifest-path h2spec-server/Cargo.toml
+
 check:
 	cargo clippy --all-targets
