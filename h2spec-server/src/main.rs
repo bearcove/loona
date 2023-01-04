@@ -9,6 +9,7 @@ use hring::{
     Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, Request, Responder, Response,
     ResponseDone, RollMut, ServerDriver,
 };
+use tokio::process::Command;
 use tracing_subscriber::EnvFilter;
 
 fn main() {
@@ -82,6 +83,25 @@ async fn real_main() -> color_eyre::Result<()> {
     let ln = TcpListener::bind(addr)?;
     tracing::info!("Listening on {}", ln.local_addr()?);
 
+    let _task = tokio_uring::spawn(async move { run_server(ln).await.unwrap() });
+
+    let args = std::env::args().collect::<Vec<_>>();
+    tracing::info!("Custom args: {args:?}");
+
+    Command::new("h2spec")
+        .arg("-p")
+        .arg("8888")
+        .arg("-o")
+        .arg("1")
+        .args(&args[1..])
+        .spawn()?
+        .wait()
+        .await?;
+
+    Ok(())
+}
+
+async fn run_server(ln: TcpListener) -> color_eyre::Result<()> {
     loop {
         let (stream, addr) = ln.accept().await?;
         tracing::info!(%addr, "Accepted connection from");

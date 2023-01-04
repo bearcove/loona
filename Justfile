@@ -28,13 +28,9 @@ single-test *args:
 bench *args:
 	RUST_BACKTRACE=1 cargo bench {{args}} -- --plotting-backend plotters
 
-h2spec-server:
-	cargo run --manifest-path h2spec-server/Cargo.toml
-
-h2spec:
+h2spec *args:
 	echo "This requires h2spec to be installed: https://github.com/summerwind/h2spec"
-	echo "...and the h2spec server to be running: just h2spec-server"
-	h2spec -p 8888 -o 1
+	cargo run --manifest-path h2spec-server/Cargo.toml {{args}}
 
 check:
 	cargo clippy --all-targets
