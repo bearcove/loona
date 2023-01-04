@@ -275,20 +275,22 @@ fn parse_reserved_and_stream_id(i: Roll) -> IResult<Roll, (u8, StreamId)> {
 
 // cf. https://httpwg.org/specs/rfc9113.html#HEADERS
 #[derive(Debug)]
-pub(crate) struct HeadersPriority {
+pub(crate) struct PrioritySpec {
     pub exclusive: bool,
     pub stream_dependency: StreamId,
     // 0-255 => 1-256
     pub weight: u8,
 }
 
-pub(crate) fn parse_headers_priority(i: Roll) -> IResult<Roll, HeadersPriority> {
-    map(
-        tuple((parse_reserved_and_stream_id, be_u8)),
-        |((exclusive, stream_dependency), weight)| HeadersPriority {
-            exclusive: exclusive != 0,
-            stream_dependency,
-            weight,
-        },
-    )(i)
+impl PrioritySpec {
+    pub(crate) fn parse(i: Roll) -> IResult<Roll, Self> {
+        map(
+            tuple((parse_reserved_and_stream_id, be_u8)),
+            |((exclusive, stream_dependency), weight)| Self {
+                exclusive: exclusive != 0,
+                stream_dependency,
+                weight,
+            },
+        )(i)
+    }
 }

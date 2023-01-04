@@ -12,7 +12,7 @@ use crate::{
         body::H2Body,
         encode::{EncoderState, H2ConnEvent, H2Encoder, H2EventPayload},
         parse::{
-            self, parse_headers_priority, DataFlags, Frame, FrameType, HeadersFlags, PingFlags,
+            self, DataFlags, Frame, FrameType, HeadersFlags, PingFlags, PrioritySpec,
             SettingsFlags, StreamId,
         },
     },
@@ -176,7 +176,7 @@ async fn h2_read_loop(
                     return Err(eyre::eyre!("could not send H2 event"));
                 }
             }
-            FrameType::Priority => todo!(),
+            FrameType::Priority => {}
             FrameType::RstStream => todo!(),
             FrameType::Settings(s) => {
                 if s.contains(SettingsFlags::Ack) {
@@ -255,18 +255,21 @@ async fn h2_write_loop(
                     if flags.contains(HeadersFlags::Priority) {
                         let roll = match payload {
                             Piece::Roll(roll) => roll,
-                            Piece::Static(_) => unreachable!(),
-                            Piece::Vec(_) => unreachable!(),
-                            Piece::HeaderName(_) => unreachable!(),
+                            _ => {
+                                // TODO: actually this is reachable: if the payload is empty
+                                // we'll get a `Piece::Static` with an empty slice, and that's
+                                // a connection error probably.
+                                unreachable!()
+                            }
                         };
                         let roll_out;
-                        let prio;
-                        // TODO: proper error handling (stream error probably)
-                        (roll_out, prio) = parse_headers_priority(roll)
+                        let pri_spec;
+                        // TODO: proper error handling (connection error probably)
+                        (roll_out, pri_spec) = PrioritySpec::parse(roll)
                             .finish()
                             .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
                         payload = Piece::Roll(roll_out);
-                        debug!(exclusive = %prio.exclusive, stream_dependency = ?prio.stream_dependency, weight = %prio.weight, "received priority, exclusive");
+                        debug!(exclusive = %pri_spec.exclusive, stream_dependency = ?pri_spec.stream_dependency, weight = %pri_spec.weight, "received priority, exclusive");
                     }
 
                     let mut path: Option<PieceStr> = None;
