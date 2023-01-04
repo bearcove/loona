@@ -25,7 +25,7 @@ jobs:
           cargo clippy
           mkdir tools
           export PATH=$PATH:${PWD}/tools
-          (pushd && curl https://github.com/summerwind/h2spec/releases/download/v2.6.0/h2spec_linux_amd64.tar.gz | tar -xz && popd)
+          (pushd tools && curl https://github.com/summerwind/h2spec/releases/download/v2.6.0/h2spec_linux_amd64.tar.gz | tar -xz && popd)
           just ci-test
           sccache --show-stats
       - name: Upload h2spec Report
