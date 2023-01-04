@@ -8,7 +8,7 @@ ci-test:
 	#!/bin/bash -eux
 	just build-testbed
 	cargo llvm-cov --no-report nextest
-	cargo llvm-cov --no-report run --manifest-path h2spec-server/Cargo.toml -- -j 'target/junit.xml'
+	cargo llvm-cov --no-report run --manifest-path h2spec-server/Cargo.toml -- -j 'target/h2spec-junit.xml'
 	cargo llvm-cov report --lcov --output-path coverage.lcov
 	codecov
 
