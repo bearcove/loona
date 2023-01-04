@@ -1,7 +1,7 @@
 #![allow(incomplete_features)]
 #![feature(async_fn_in_trait)]
 
-use std::{net::SocketAddr, rc::Rc};
+use std::{collections::VecDeque, net::SocketAddr, rc::Rc};
 
 use hring::{
     http::{StatusCode, Version},
@@ -85,7 +85,10 @@ async fn real_main() -> color_eyre::Result<()> {
 
     let _task = tokio_uring::spawn(async move { run_server(ln).await.unwrap() });
 
-    let args = std::env::args().collect::<Vec<_>>();
+    let mut args = std::env::args().skip(1).collect::<VecDeque<_>>();
+    if matches!(args.get(0).map(|s| s.as_str()), Some("--")) {
+        args.pop_front();
+    }
     tracing::info!("Custom args: {args:?}");
 
     Command::new("h2spec")
@@ -93,7 +96,7 @@ async fn real_main() -> color_eyre::Result<()> {
         .arg("8888")
         .arg("-o")
         .arg("1")
-        .args(&args[1..])
+        .args(&args)
         .spawn()?
         .wait()
         .await?;

@@ -7,7 +7,9 @@ _default:
 ci-test:
 	#!/bin/bash -eux
 	just build-testbed
-	cargo llvm-cov nextest --lcov --output-path coverage.lcov
+	cargo llvm-cov --no-report nextest
+	cargo llvm-cov --no-report run --manifest-path h2spec-server/Cargo.toml -- -j 'target/junit.xml'
+	cargo llvm-cov report --lcov --output-path coverage.lcov
 	codecov
 
 cov:
@@ -30,7 +32,7 @@ bench *args:
 
 h2spec *args:
 	echo "This requires h2spec to be installed: https://github.com/summerwind/h2spec"
-	cargo run --manifest-path h2spec-server/Cargo.toml {{args}}
+	cargo run --manifest-path h2spec-server/Cargo.toml -- {{args}}
 
 check:
 	cargo clippy --all-targets
