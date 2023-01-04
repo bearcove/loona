@@ -12,8 +12,8 @@ use crate::{
         body::H2Body,
         encode::{EncoderState, H2ConnEvent, H2Encoder, H2EventPayload},
         parse::{
-            parse_headers_priority, DataFlags, Frame, FrameType, HeadersFlags, SettingsFlags,
-            StreamId,
+            parse_headers_priority, DataFlags, Frame, FrameType, HeadersFlags, PingFlags,
+            SettingsFlags, StreamId,
         },
     },
     util::read_and_parse,
@@ -219,12 +219,43 @@ async fn h2_read_loop(
                     // TODO: actually apply settings
 
                     if ev_tx.send(H2ConnEvent::AcknowledgeSettings).await.is_err() {
-                        return Err(eyre::eyre!("could not send H2 event"));
+                        return Err(eyre::eyre!("could not send H2 acknowledge settings event"));
                     }
                 }
             }
             FrameType::PushPromise => todo!("push promise not implemented"),
-            FrameType::Ping => todo!(),
+            FrameType::Ping(flags) => {
+                if frame.stream_id != StreamId::CONNECTION {
+                    todo!("handle connection error: ping frame with non-zero stream id");
+                }
+
+                // ping opaque data is 64 bits, which is 8 bytes,
+                // cf. https://httpwg.org/specs/rfc9113.html#PING
+                let payload;
+                (client_buf, payload) = match read_and_parse(
+                    nom::bytes::streaming::take(8_usize),
+                    transport.as_ref(),
+                    client_buf,
+                    frame.len as usize,
+                )
+                .await?
+                {
+                    Some((client_buf, frame)) => (client_buf, frame),
+                    None => {
+                        debug!("h2 client closed connection while reading settings body");
+                        return Ok(());
+                    }
+                };
+
+                if flags.contains(PingFlags::Ack) {
+                    debug!("received ping ack");
+                    continue;
+                }
+
+                if ev_tx.send(H2ConnEvent::Ping(payload.into())).await.is_err() {
+                    return Err(eyre::eyre!("could not send H2 ping event"));
+                }
+            }
             FrameType::GoAway => todo!(),
             FrameType::WindowUpdate => {
                 debug!("ignoring window update");
@@ -475,8 +506,8 @@ async fn h2_write_loop(
                     }
                     H2EventPayload::BodyChunk(piece) => {
                         let flags = BitFlags::<DataFlags>::default();
-                        let mut frame = Frame::new(FrameType::Data(flags), ev.stream_id);
-                        frame.len = piece.len() as u32;
+                        let frame = Frame::new(FrameType::Data(flags), ev.stream_id)
+                            .with_len(piece.len().try_into().unwrap());
                         frame.write(transport.as_ref()).await?;
                         let (res, _) = transport.write_all(piece).await;
                         res?;
@@ -487,6 +518,15 @@ async fn h2_write_loop(
                         frame.write(transport.as_ref()).await?;
                     }
                 }
+            }
+            H2ConnEvent::Ping(payload) => {
+                // send pong frame
+                let flags = PingFlags::Ack.into();
+                let frame = Frame::new(FrameType::Ping(flags), StreamId::CONNECTION)
+                    .with_len(payload.len() as u32);
+                frame.write(transport.as_ref()).await?;
+                let (res, _) = transport.write_all(payload).await;
+                res?;
             }
         }
     }

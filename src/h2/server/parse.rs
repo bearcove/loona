@@ -49,7 +49,7 @@ pub enum FrameType {
     RstStream,
     Settings(BitFlags<SettingsFlags>),
     PushPromise,
-    Ping,
+    Ping(BitFlags<PingFlags>),
     GoAway,
     WindowUpdate,
     Continuation,
@@ -83,6 +83,14 @@ pub enum SettingsFlags {
     Ack = 0x01,
 }
 
+/// See https://httpwg.org/specs/rfc9113.html#PING
+#[bitflags]
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PingFlags {
+    Ack = 0x01,
+}
+
 impl FrameType {
     pub(crate) fn encode(&self) -> (RawFrameType, u8) {
         match self {
@@ -92,7 +100,7 @@ impl FrameType {
             FrameType::RstStream => (RawFrameType::RstStream, 0),
             FrameType::Settings(f) => (RawFrameType::Settings, f.bits()),
             FrameType::PushPromise => (RawFrameType::PushPromise, 0),
-            FrameType::Ping => (RawFrameType::Ping, 0),
+            FrameType::Ping(f) => (RawFrameType::Ping, f.bits()),
             FrameType::GoAway => (RawFrameType::GoAway, 0),
             FrameType::WindowUpdate => (RawFrameType::WindowUpdate, 0),
             FrameType::Continuation => (RawFrameType::Continuation, 0),
@@ -111,7 +119,7 @@ impl FrameType {
                 FrameType::Settings(BitFlags::<SettingsFlags>::from_bits_truncate(flags))
             }
             RawFrameType::PushPromise => FrameType::PushPromise,
-            RawFrameType::Ping => FrameType::Ping,
+            RawFrameType::Ping => FrameType::Ping(BitFlags::<PingFlags>::from_bits_truncate(flags)),
             RawFrameType::GoAway => FrameType::GoAway,
             RawFrameType::WindowUpdate => FrameType::WindowUpdate,
             RawFrameType::Continuation => FrameType::Continuation,
@@ -173,6 +181,12 @@ impl Frame {
             stream_id,
             len: 0,
         }
+    }
+
+    /// Set the frame's length.
+    pub fn with_len(mut self, len: u32) -> Self {
+        self.len = len;
+        self
     }
 
     /// Parse a frame from the given slice. This also takes the payload from the

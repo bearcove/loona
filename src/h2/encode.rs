@@ -9,6 +9,7 @@ use crate::{h1::body::BodyWriteMode, Encoder, Piece, Response};
 use super::parse::{Frame, StreamId};
 
 pub(crate) enum H2ConnEvent {
+    Ping(Piece),
     ClientFrame(Frame, Piece),
     ServerEvent(H2Event),
     AcknowledgeSettings,
