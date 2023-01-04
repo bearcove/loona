@@ -6,13 +6,18 @@ use tracing::warn;
 
 use crate::{h1::body::BodyWriteMode, Encoder, Piece, Response, Roll};
 
-use super::parse::{Frame, StreamId};
+use super::parse::{Frame, KnownErrorCode, StreamId};
 
 pub(crate) enum H2ConnEvent {
     Ping(Roll),
     ClientFrame(Frame, Option<Roll>),
     ServerEvent(H2Event),
     AcknowledgeSettings,
+    GoAway {
+        error_code: KnownErrorCode,
+        last_stream_id: StreamId,
+        additional_debug_data: Piece,
+    },
 }
 
 #[derive(Debug)]
