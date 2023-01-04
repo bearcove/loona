@@ -31,5 +31,10 @@ bench *args:
 h2spec-server:
 	cargo run --manifest-path h2spec-server/Cargo.toml
 
+h2spec:
+	echo "This requires h2spec to be installed: https://github.com/summerwind/h2spec"
+	echo "...and the h2spec server to be running: just h2spec-server"
+	h2spec -p 8888 -o 1
+
 check:
 	cargo clippy --all-targets
