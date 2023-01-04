@@ -2,3 +2,4 @@ target
 Cargo.lock
 *.lcov
 lcov.info
+junit.xml
