@@ -4,13 +4,13 @@ use http::{StatusCode, Version};
 use tokio::sync::mpsc;
 use tracing::warn;
 
-use crate::{h1::body::BodyWriteMode, Encoder, Piece, Response};
+use crate::{h1::body::BodyWriteMode, Encoder, Piece, Response, Roll};
 
 use super::parse::{Frame, StreamId};
 
 pub(crate) enum H2ConnEvent {
-    Ping(Piece),
-    ClientFrame(Frame, Piece),
+    Ping(Roll),
+    ClientFrame(Frame, Option<Roll>),
     ServerEvent(H2Event),
     AcknowledgeSettings,
 }
