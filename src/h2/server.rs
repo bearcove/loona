@@ -12,7 +12,7 @@ use crate::{
         body::H2Body,
         encode::{EncoderState, H2ConnEvent, H2Encoder, H2EventPayload},
         parse::{
-            parse_headers_priority, DataFlags, Frame, FrameType, HeadersFlags, PingFlags,
+            self, parse_headers_priority, DataFlags, Frame, FrameType, HeadersFlags, PingFlags,
             SettingsFlags, StreamId,
         },
     },
@@ -31,8 +31,6 @@ impl Default for ServerConf {
         Self { max_streams: 32 }
     }
 }
-
-pub(crate) mod parse;
 
 #[derive(Default)]
 struct ConnState {
