@@ -12,13 +12,13 @@ use crate::{
         body::H2Body,
         encode::{EncoderState, H2ConnEvent, H2Encoder, H2EventPayload},
         parse::{
-            parse_headers_priority, DataFlags, Frame, FrameType, HeadersFlags, PingFlags,
+            self, DataFlags, Frame, FrameType, HeadersFlags, PingFlags, PrioritySpec,
             SettingsFlags, StreamId,
         },
     },
     util::read_and_parse,
     ExpectResponseHeaders, Headers, Method, Piece, PieceStr, ReadWriteOwned, Request, Responder,
-    RollMut, ServerDriver,
+    Roll, RollMut, ServerDriver,
 };
 
 /// HTTP/2 server configuration
@@ -31,8 +31,6 @@ impl Default for ServerConf {
         Self { max_streams: 32 }
     }
 }
-
-pub(crate) mod parse;
 
 #[derive(Default)]
 struct ConnState {
@@ -127,8 +125,8 @@ async fn h2_read_loop(
         // TODO: there might be optimizations to be done for `Data` frames later
         // on, but for now, let's unconditionally read the payload (if it's not
         // empty).
-        let payload = if frame.len == 0 {
-            Piece::Static(&[])
+        let payload: Option<Roll> = if frame.len == 0 {
+            None
         } else {
             let payload_roll;
             (client_buf, payload_roll) = match read_and_parse(
@@ -149,7 +147,7 @@ async fn h2_read_loop(
                 }
             };
 
-            payload_roll.into()
+            Some(payload_roll)
         };
 
         match frame.frame_type {
@@ -178,7 +176,19 @@ async fn h2_read_loop(
                     return Err(eyre::eyre!("could not send H2 event"));
                 }
             }
-            FrameType::Priority => todo!(),
+            FrameType::Priority => {
+                let payload = if let Some(payload) = payload {
+                    payload
+                } else {
+                    todo!("handle connection error: priority frame with no payload");
+                };
+
+                let pri_spec = match PrioritySpec::parse(payload) {
+                    Ok((_rest, pri_spec)) => pri_spec,
+                    Err(e) => todo!("handle connection error: invalid priority frame {e}"),
+                };
+                debug!(?pri_spec, "received priority frame");
+            }
             FrameType::RstStream => todo!(),
             FrameType::Settings(s) => {
                 if s.contains(SettingsFlags::Ack) {
@@ -208,7 +218,14 @@ async fn h2_read_loop(
                     continue;
                 }
 
-                if ev_tx.send(H2ConnEvent::Ping(payload.into())).await.is_err() {
+                let payload = match payload {
+                    Some(payload) => payload,
+                    None => {
+                        todo!("handle connection error: ping frame with no payload");
+                    }
+                };
+
+                if ev_tx.send(H2ConnEvent::Ping(payload)).await.is_err() {
                     return Err(eyre::eyre!("could not send H2 ping event"));
                 }
             }
@@ -255,20 +272,21 @@ async fn h2_write_loop(
                     }
 
                     if flags.contains(HeadersFlags::Priority) {
-                        let roll = match payload {
-                            Piece::Roll(roll) => roll,
-                            Piece::Static(_) => unreachable!(),
-                            Piece::Vec(_) => unreachable!(),
-                            Piece::HeaderName(_) => unreachable!(),
+                        let pri_spec;
+
+                        // TODO: proper error handling (connection error probably)
+                        let payload_in = match payload {
+                            Some(payload) => payload,
+                            None => {
+                                todo!("handle connection error: priority flag set, but no payload");
+                            }
                         };
-                        let roll_out;
-                        let prio;
-                        // TODO: proper error handling (stream error probably)
-                        (roll_out, prio) = parse_headers_priority(roll)
+                        let payload_out;
+                        (payload_out, pri_spec) = PrioritySpec::parse(payload_in)
                             .finish()
                             .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
-                        payload = Piece::Roll(roll_out);
-                        debug!(exclusive = %prio.exclusive, stream_dependency = ?prio.stream_dependency, weight = %prio.weight, "received priority, exclusive");
+                        debug!(exclusive = %pri_spec.exclusive, stream_dependency = ?pri_spec.stream_dependency, weight = %pri_spec.weight, "received priority, exclusive");
+                        payload = Some(payload_out);
                     }
 
                     let mut path: Option<PieceStr> = None;
@@ -277,42 +295,47 @@ async fn h2_write_loop(
                     let mut headers = Headers::default();
                     debug!("receiving headers for stream {}", frame.stream_id);
 
-                    hpack_dec
-                        .decode_with_cb(&payload[..], |key, value| {
-                            debug!(
-                                "got key: {:?}\nvalue: {:?}",
-                                key.hex_dump(),
-                                value.hex_dump()
-                            );
+                    if let Some(payload) = payload {
+                        hpack_dec
+                            .decode_with_cb(&payload[..], |key, value| {
+                                debug!(
+                                    "got key: {:?}\nvalue: {:?}",
+                                    key.hex_dump(),
+                                    value.hex_dump()
+                                );
 
-                            if &key[..1] == b":" {
-                                // it's a pseudo-header!
-                                match &key[1..] {
-                                    b"path" => {
-                                        let value: PieceStr =
-                                            Piece::from(value.to_vec()).to_string().unwrap();
-                                        path = Some(value);
+                                if &key[..1] == b":" {
+                                    // it's a pseudo-header!
+                                    match &key[1..] {
+                                        b"path" => {
+                                            let value: PieceStr =
+                                                Piece::from(value.to_vec()).to_string().unwrap();
+                                            path = Some(value);
+                                        }
+                                        b"method" => {
+                                            // TODO: error handling
+                                            let value: PieceStr =
+                                                Piece::from(value.to_vec()).to_string().unwrap();
+                                            method = Some(Method::try_from(value).unwrap());
+                                        }
+                                        other => {
+                                            debug!("ignoring pseudo-header {:?}", other.hex_dump());
+                                        }
                                     }
-                                    b"method" => {
-                                        // TODO: error handling
-                                        let value: PieceStr =
-                                            Piece::from(value.to_vec()).to_string().unwrap();
-                                        method = Some(Method::try_from(value).unwrap());
-                                    }
-                                    other => {
-                                        debug!("ignoring pseudo-header {:?}", other.hex_dump());
-                                    }
+                                } else {
+                                    // TODO: what do we do in case of malformed header names?
+                                    // ignore it? return a 400?
+                                    let name = HeaderName::from_bytes(&key[..])
+                                        .expect("malformed header name");
+                                    let value: Piece = value.to_vec().into();
+                                    headers.append(name, value);
                                 }
-                            } else {
-                                // TODO: what do we do in case of malformed header names?
-                                // ignore it? return a 400?
-                                let name = HeaderName::from_bytes(&key[..])
-                                    .expect("malformed header name");
-                                let value: Piece = value.to_vec().into();
-                                headers.append(name, value);
-                            }
-                        })
-                        .map_err(|e| eyre::eyre!("hpack error: {e:?}"))?;
+                            })
+                            .map_err(|e| eyre::eyre!("hpack error: {e:?}"))?;
+
+                        // TODO: hpack errors are COMPRESSION_ERROR, cf.
+                        // https://httpwg.org/specs/rfc9113.html#ErrorCodes
+                    }
 
                     // TODO: proper error handling (return 400)
                     let path = path.unwrap();
@@ -390,7 +413,7 @@ async fn h2_write_loop(
                         todo!("padded data is not supported");
                     }
 
-                    let tx = {
+                    let body_tx = {
                         let mut state = state.borrow_mut();
                         let stream = state
                             .streams
@@ -416,8 +439,11 @@ async fn h2_write_loop(
                             }
                         }
                     };
-                    if tx.send(Ok(payload)).await.is_err() {
-                        return Err(eyre::eyre!("ev_tx receiver dropped"));
+
+                    if let Some(payload) = payload {
+                        if body_tx.send(Ok(payload.into())).await.is_err() {
+                            return Err(eyre::eyre!("ev_tx receiver dropped"));
+                        }
                     }
                 }
                 _ => {
