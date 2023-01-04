@@ -5,15 +5,15 @@ use http::{header::HeaderName, Version};
 use nom::Finish;
 use pretty_hex::PrettyHex;
 use tokio::sync::mpsc;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use crate::{
     h2::{
         body::H2Body,
         encode::{EncoderState, H2ConnEvent, H2Encoder, H2EventPayload},
         parse::{
-            self, DataFlags, Frame, FrameType, HeadersFlags, PingFlags, PrioritySpec,
-            SettingsFlags, StreamId,
+            self, DataFlags, Frame, FrameType, HeadersFlags, KnownErrorCode, PingFlags,
+            PrioritySpec, SettingsFlags, StreamId,
         },
     },
     util::read_and_parse,
@@ -100,6 +100,8 @@ pub async fn serve(
 
     let write_task = h2_write_loop(driver, ev_tx, ev_rx, transport, state);
     tokio::try_join!(read_task, write_task)?;
+    debug!("joined read_task / write_task");
+
     Ok(())
 }
 
@@ -256,6 +258,7 @@ async fn h2_write_loop(
     let mut hpack_enc = hpack::Encoder::new();
 
     while let Some(ev) = ev_rx.recv().await {
+        trace!("h2_write_loop: received H2 event");
         match ev {
             H2ConnEvent::AcknowledgeSettings => {
                 debug!("acknowledging new settings");
@@ -296,45 +299,74 @@ async fn h2_write_loop(
                     debug!("receiving headers for stream {}", frame.stream_id);
 
                     if let Some(payload) = payload {
-                        hpack_dec
-                            .decode_with_cb(&payload[..], |key, value| {
-                                debug!(
-                                    "got key: {:?}\nvalue: {:?}",
-                                    key.hex_dump(),
-                                    value.hex_dump()
-                                );
+                        if let Err(e) = hpack_dec.decode_with_cb(&payload[..], |key, value| {
+                            debug!(
+                                "got key: {:?}\nvalue: {:?}",
+                                key.hex_dump(),
+                                value.hex_dump()
+                            );
 
-                                if &key[..1] == b":" {
-                                    // it's a pseudo-header!
-                                    match &key[1..] {
-                                        b"path" => {
-                                            let value: PieceStr =
-                                                Piece::from(value.to_vec()).to_string().unwrap();
-                                            path = Some(value);
-                                        }
-                                        b"method" => {
-                                            // TODO: error handling
-                                            let value: PieceStr =
-                                                Piece::from(value.to_vec()).to_string().unwrap();
-                                            method = Some(Method::try_from(value).unwrap());
-                                        }
-                                        other => {
-                                            debug!("ignoring pseudo-header {:?}", other.hex_dump());
-                                        }
+                            if &key[..1] == b":" {
+                                // it's a pseudo-header!
+                                match &key[1..] {
+                                    b"path" => {
+                                        let value: PieceStr =
+                                            Piece::from(value.to_vec()).to_string().unwrap();
+                                        path = Some(value);
                                     }
-                                } else {
-                                    // TODO: what do we do in case of malformed header names?
-                                    // ignore it? return a 400?
-                                    let name = HeaderName::from_bytes(&key[..])
-                                        .expect("malformed header name");
-                                    let value: Piece = value.to_vec().into();
-                                    headers.append(name, value);
+                                    b"method" => {
+                                        // TODO: error handling
+                                        let value: PieceStr =
+                                            Piece::from(value.to_vec()).to_string().unwrap();
+                                        method = Some(Method::try_from(value).unwrap());
+                                    }
+                                    other => {
+                                        debug!("ignoring pseudo-header {:?}", other.hex_dump());
+                                    }
                                 }
-                            })
-                            .map_err(|e| eyre::eyre!("hpack error: {e:?}"))?;
+                            } else {
+                                // TODO: what do we do in case of malformed header names?
+                                // ignore it? return a 400?
+                                let name = HeaderName::from_bytes(&key[..])
+                                    .expect("malformed header name");
+                                let value: Piece = value.to_vec().into();
+                                headers.append(name, value);
+                            }
+                        }) {
+                            warn!("hpack error: {e:?}");
+                            let error_code = KnownErrorCode::CompressionError;
+                            debug!("error_code = {error_code:?}");
+                            // FIXME: this is almost definitely wrong. we must separate
+                            // client-initiated streams from server-initiated streams, and
+                            // take stream state into account
+                            let last_stream_id = state
+                                .borrow()
+                                .streams
+                                .keys()
+                                .copied()
+                                .max()
+                                .unwrap_or(StreamId::CONNECTION);
+                            debug!("last_stream_id = {last_stream_id}");
+                            // TODO: is this a good idea?
+                            let additional_debug_data = format!("hpack error: {e:?}").into_bytes();
 
-                        // TODO: hpack errors are COMPRESSION_ERROR, cf.
-                        // https://httpwg.org/specs/rfc9113.html#ErrorCodes
+                            if ev_tx
+                                .send(H2ConnEvent::GoAway {
+                                    error_code,
+                                    last_stream_id,
+                                    additional_debug_data: Piece::Vec(additional_debug_data),
+                                })
+                                .await
+                                .is_err()
+                            {
+                                debug!("error sending goaway");
+                            }
+                            // TODO: move most processing to `h2_read_loop`?
+                            // It's confusing to be doing parsing here.  and we
+                            // can't return because we just sent something to
+                            // `ev_tx` which _we're the ones reading_
+                            continue;
+                        }
                     }
 
                     // TODO: proper error handling (return 400)
@@ -501,7 +533,36 @@ async fn h2_write_loop(
                 let (res, _) = transport.write_all(payload).await;
                 res?;
             }
+            H2ConnEvent::GoAway {
+                error_code,
+                last_stream_id,
+                additional_debug_data,
+            } => {
+                debug!("must send goaway");
+                let mut header = vec![0u8; 8];
+                {
+                    use byteorder::{BigEndian, WriteBytesExt};
+                    let mut header = &mut header[..];
+                    // TODO: do we ever need to write the reserved bit?
+                    header.write_u32::<BigEndian>(last_stream_id.0)?;
+                    header.write_u32::<BigEndian>(error_code.repr())?;
+                }
+
+                debug!("sending goaway frame");
+                let frame = Frame::new(FrameType::GoAway, StreamId::CONNECTION).with_len(
+                    (header.len() + additional_debug_data.len())
+                        .try_into()
+                        .unwrap(),
+                );
+                frame.write(transport.as_ref()).await?;
+                let (res, _) = transport.write_all(header).await;
+                res?;
+                let (res, _) = transport.write_all(additional_debug_data).await;
+                res?;
+            }
         }
     }
+    debug!("h2_write_loop is done");
+
     Ok(())
 }

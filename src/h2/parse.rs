@@ -28,16 +28,16 @@ pub fn preface(i: Roll) -> IResult<Roll, ()> {
 #[EnumRepr(type = "u8")]
 #[derive(Debug, Clone, Copy)]
 pub enum RawFrameType {
-    Data = 0,
-    Headers = 1,
-    Priority = 2,
-    RstStream = 3,
-    Settings = 4,
-    PushPromise = 5,
-    Ping = 6,
-    GoAway = 7,
-    WindowUpdate = 8,
-    Continuation = 9,
+    Data = 0x00,
+    Headers = 0x01,
+    Priority = 0x02,
+    RstStream = 0x03,
+    Settings = 0x04,
+    PushPromise = 0x05,
+    Ping = 0x06,
+    GoAway = 0x07,
+    WindowUpdate = 0x08,
+    Continuation = 0x09,
 }
 
 /// Typed flags for various frame types
@@ -158,8 +158,8 @@ impl FrameType {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct StreamId(u32);
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct StreamId(pub(crate) u32);
 
 impl StreamId {
     /// Stream ID used for connection control frames
@@ -241,6 +241,8 @@ impl Frame {
 
     /// Write a frame (without payload)
     pub async fn write(&self, w: &impl WriteOwned) -> eyre::Result<()> {
+        // TODO: we need an owned type here, but do we need to re-allocate it
+        // here? can we have a pool of them?
         let mut header = vec![0u8; 9];
         {
             use byteorder::{BigEndian, WriteBytesExt};
@@ -292,5 +294,91 @@ impl PrioritySpec {
                 weight,
             },
         )(i)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct ErrorCode(u32);
+
+impl fmt::Debug for ErrorCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match KnownErrorCode::from_repr(self.0) {
+            Some(e) => fmt::Debug::fmt(&e, f),
+            None => write!(f, "ErrorCode(0x{:02x})", self.0),
+        }
+    }
+}
+
+impl From<KnownErrorCode> for ErrorCode {
+    fn from(e: KnownErrorCode) -> Self {
+        Self(e as u32)
+    }
+}
+
+#[EnumRepr(type = "u32")]
+#[derive(Debug, Clone, Copy)]
+pub enum KnownErrorCode {
+    /// The associated condition is not a result of an error. For example, a
+    /// GOAWAY might include this code to indicate graceful shutdown of a
+    /// connection.
+    NoError = 0x00,
+
+    /// The endpoint detected an unspecific protocol error. This error is for
+    /// use when a more specific error code is not available.
+    ProtocolError = 0x01,
+
+    /// The endpoint encountered an unexpected internal error.
+    InternalError = 0x02,
+
+    /// The endpoint detected that its peer violated the flow-control protocol.
+    FlowControlError = 0x03,
+
+    /// The endpoint sent a SETTINGS frame but did not receive a response in a
+    /// timely manner. See Section 6.5.3 ("Settings Synchronization").
+    /// https://httpwg.org/specs/rfc9113.html#SettingsSync
+    SettingsTimeout = 0x04,
+
+    /// The endpoint received a frame after a stream was half-closed.
+    StreamClosed = 0x05,
+
+    /// The endpoint received a frame with an invalid size.
+    FrameSizeError = 0x06,
+
+    /// The endpoint refused the stream prior to performing any application
+    /// processing (see Section 8.7 for details).
+    /// https://httpwg.org/specs/rfc9113.html#Reliability
+    RefusedStream = 0x07,
+
+    /// The endpoint uses this error code to indicate that the stream is no
+    /// longer needed.
+    Cancel = 0x08,
+
+    /// The endpoint is unable to maintain the field section compression context
+    /// for the connection.
+    CompressionError = 0x09,
+
+    /// The connection established in response to a CONNECT request (Section
+    /// 8.5) was reset or abnormally closed.
+    /// https://httpwg.org/specs/rfc9113.html#CONNECT
+    ConnectError = 0x0a,
+
+    /// The endpoint detected that its peer is exhibiting a behavior that might
+    /// be generating excessive load.
+    EnhanceYourCalm = 0x0b,
+
+    /// The underlying transport has properties that do not meet minimum
+    /// security requirements (see Section 9.2).
+    /// https://httpwg.org/specs/rfc9113.html#TLSUsage
+    InadequateSecurity = 0x0c,
+
+    /// The endpoint requires that HTTP/1.1 be used instead of HTTP/2.
+    Http1_1Required = 0x0d,
+}
+
+impl TryFrom<ErrorCode> for KnownErrorCode {
+    type Error = ();
+
+    fn try_from(e: ErrorCode) -> Result<Self, Self::Error> {
+        KnownErrorCode::from_repr(e.0).ok_or(())
     }
 }
