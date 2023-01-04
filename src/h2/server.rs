@@ -125,24 +125,31 @@ async fn h2_read_loop(
         debug!(?frame, "received h2 frame");
 
         // TODO: there might be optimizations to be done for `Data` frames later
-        // on, but for now, let's unconditionally read the payload
-        let payload;
-        (client_buf, payload) = match read_and_parse(
-            nom::bytes::streaming::take(frame.len as usize),
-            transport.as_ref(),
-            client_buf,
-            frame.len as usize,
-        )
-        .await?
-        {
-            Some((client_buf, frame)) => (client_buf, frame),
-            None => {
-                debug!(
-                    "h2 client closed connection while reading payload for {:?}",
-                    frame.frame_type
-                );
-                return Ok(());
-            }
+        // on, but for now, let's unconditionally read the payload (if it's not
+        // empty).
+        let payload = if frame.len == 0 {
+            Piece::Static(&[])
+        } else {
+            let payload_roll;
+            (client_buf, payload_roll) = match read_and_parse(
+                nom::bytes::streaming::take(frame.len as usize),
+                transport.as_ref(),
+                client_buf,
+                frame.len as usize,
+            )
+            .await?
+            {
+                Some((client_buf, payload)) => (client_buf, payload),
+                None => {
+                    debug!(
+                        "h2 client closed connection while reading payload for {:?}",
+                        frame.frame_type
+                    );
+                    return Ok(());
+                }
+            };
+
+            payload_roll.into()
         };
 
         match frame.frame_type {
@@ -151,11 +158,7 @@ async fn h2_read_loop(
                     todo!("handle padded data frame");
                 }
 
-                if (ev_tx
-                    .send(H2ConnEvent::ClientFrame(frame, payload.into()))
-                    .await)
-                    .is_err()
-                {
+                if (ev_tx.send(H2ConnEvent::ClientFrame(frame, payload)).await).is_err() {
                     return Err(eyre::eyre!("could not send H2 event"));
                 }
             }
@@ -171,11 +174,7 @@ async fn h2_read_loop(
                     }
                 }
 
-                if (ev_tx
-                    .send(H2ConnEvent::ClientFrame(frame, payload.into()))
-                    .await)
-                    .is_err()
-                {
+                if (ev_tx.send(H2ConnEvent::ClientFrame(frame, payload)).await).is_err() {
                     return Err(eyre::eyre!("could not send H2 event"));
                 }
             }

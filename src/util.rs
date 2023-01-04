@@ -20,7 +20,11 @@ where
     Parser: Fn(Roll) -> IResult<Roll, Output>,
 {
     loop {
-        trace!("reading+parsing ({} bytes so far)", buf.len());
+        trace!(
+            "reading+parsing (buf.len={}, buf.cap={})",
+            buf.len(),
+            buf.cap()
+        );
         let filled = buf.filled();
 
         match parser(filled) {
@@ -43,6 +47,15 @@ where
                         return Err(SemanticError::BufferLimitReachedWhileParsing.into());
                     }
 
+                    if buf.cap() == 0 {
+                        trace!("buf had zero cap, growing");
+                        buf.grow()
+                    }
+                    trace!(
+                        "calling read_into, buf.cap={}, buf.len={} read_limit={read_limit}",
+                        buf.cap(),
+                        buf.len()
+                    );
                     (res, buf) = buf.read_into(read_limit, stream).await;
 
                     let n = res.wrap_err("reading request headers from downstream")?;

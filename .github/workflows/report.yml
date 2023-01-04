@@ -2,7 +2,7 @@ name: report
 
 on:
   workflow_run:
-    workflows: [build]
+    workflows: [test]
     types: [completed]
     
 permissions:
