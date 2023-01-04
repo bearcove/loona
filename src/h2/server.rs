@@ -5,7 +5,7 @@ use http::{header::HeaderName, Version};
 use nom::Finish;
 use pretty_hex::PrettyHex;
 use tokio::sync::mpsc;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::{
     h2::{
@@ -124,31 +124,32 @@ async fn h2_read_loop(
 
         debug!(?frame, "received h2 frame");
 
+        // TODO: there might be optimizations to be done for `Data` frames later
+        // on, but for now, let's unconditionally read the payload
+        let payload;
+        (client_buf, payload) = match read_and_parse(
+            nom::bytes::streaming::take(frame.len as usize),
+            transport.as_ref(),
+            client_buf,
+            frame.len as usize,
+        )
+        .await?
+        {
+            Some((client_buf, frame)) => (client_buf, frame),
+            None => {
+                debug!(
+                    "h2 client closed connection while reading payload for {:?}",
+                    frame.frame_type
+                );
+                return Ok(());
+            }
+        };
+
         match frame.frame_type {
             FrameType::Data(flags) => {
                 if flags.contains(DataFlags::Padded) {
                     todo!("handle padded data frame");
                 }
-
-                // TODO: not sure if worth, but: `read_and_parse` might have to
-                // issue several `read` operations, and we could send those as
-                // soon as we have them through `ev_tx`. We also have to pass
-                // flags, so this complicates things.
-                let payload;
-                (client_buf, payload) = match read_and_parse(
-                    nom::bytes::streaming::take(frame.len as usize),
-                    transport.as_ref(),
-                    client_buf,
-                    frame.len as usize,
-                )
-                .await?
-                {
-                    Some((client_buf, frame)) => (client_buf, frame),
-                    None => {
-                        debug!("h2 client closed connection while reading data body");
-                        return Ok(());
-                    }
-                };
 
                 if (ev_tx
                     .send(H2ConnEvent::ClientFrame(frame, payload.into()))
@@ -170,22 +171,6 @@ async fn h2_read_loop(
                     }
                 }
 
-                let payload;
-                (client_buf, payload) = match read_and_parse(
-                    nom::bytes::streaming::take(frame.len as usize),
-                    transport.as_ref(),
-                    client_buf,
-                    frame.len as usize,
-                )
-                .await?
-                {
-                    Some((client_buf, frame)) => (client_buf, frame),
-                    None => {
-                        debug!("h2 client closed connection while reading headers body");
-                        return Ok(());
-                    }
-                };
-
                 if (ev_tx
                     .send(H2ConnEvent::ClientFrame(frame, payload.into()))
                     .await)
@@ -197,22 +182,6 @@ async fn h2_read_loop(
             FrameType::Priority => todo!(),
             FrameType::RstStream => todo!(),
             FrameType::Settings(s) => {
-                let _payload;
-                (client_buf, _payload) = match read_and_parse(
-                    nom::bytes::streaming::take(frame.len as usize),
-                    transport.as_ref(),
-                    client_buf,
-                    frame.len as usize,
-                )
-                .await?
-                {
-                    Some((client_buf, frame)) => (client_buf, frame),
-                    None => {
-                        debug!("h2 client closed connection while reading settings body");
-                        return Ok(());
-                    }
-                };
-
                 if s.contains(SettingsFlags::Ack) {
                     debug!("Peer has acknowledged our settings, cool");
                 } else {
@@ -229,25 +198,13 @@ async fn h2_read_loop(
                     todo!("handle connection error: ping frame with non-zero stream id");
                 }
 
-                // ping opaque data is 64 bits, which is 8 bytes,
-                // cf. https://httpwg.org/specs/rfc9113.html#PING
-                let payload;
-                (client_buf, payload) = match read_and_parse(
-                    nom::bytes::streaming::take(8_usize),
-                    transport.as_ref(),
-                    client_buf,
-                    frame.len as usize,
-                )
-                .await?
-                {
-                    Some((client_buf, frame)) => (client_buf, frame),
-                    None => {
-                        debug!("h2 client closed connection while reading settings body");
-                        return Ok(());
-                    }
-                };
+                if frame.len != 8 {
+                    todo!("handle connection error: ping frame with invalid length");
+                }
 
                 if flags.contains(PingFlags::Ack) {
+                    // TODO: check that payload matches the one we sent?
+
                     debug!("received ping ack");
                     continue;
                 }
@@ -259,24 +216,15 @@ async fn h2_read_loop(
             FrameType::GoAway => todo!(),
             FrameType::WindowUpdate => {
                 debug!("ignoring window update");
-
-                let _payload;
-                (client_buf, _payload) = match read_and_parse(
-                    nom::bytes::streaming::take(frame.len as usize),
-                    transport.as_ref(),
-                    client_buf,
-                    frame.len as usize,
-                )
-                .await?
-                {
-                    Some((client_buf, frame)) => (client_buf, frame),
-                    None => {
-                        debug!("h2 client closed connection while reading window update body");
-                        return Ok(());
-                    }
-                };
             }
             FrameType::Continuation => todo!(),
+            FrameType::Unknown(ft) => {
+                trace!(
+                    "ignoring unknown frame with type 0x{:x}, flags 0x{:x}",
+                    ft.ty,
+                    ft.flags
+                );
+            }
         }
     }
 }
@@ -321,7 +269,7 @@ async fn h2_write_loop(
                             .finish()
                             .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
                         payload = Piece::Roll(roll_out);
-                        debug!("got priority: {:?}", prio);
+                        debug!(exclusive = %prio.exclusive, stream_dependency = ?prio.stream_dependency, weight = %prio.weight, "received priority, exclusive");
                     }
 
                     let mut path: Option<PieceStr> = None;
