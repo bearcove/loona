@@ -8,7 +8,7 @@ use std::fmt;
 use enum_repr::EnumRepr;
 use enumflags2::{bitflags, BitFlags};
 use nom::{
-    combinator::{map, map_res},
+    combinator::map,
     number::streaming::{be_u24, be_u8},
     sequence::tuple,
     IResult,
@@ -26,7 +26,7 @@ pub fn preface(i: Roll) -> IResult<Roll, ()> {
 
 /// See https://httpwg.org/specs/rfc9113.html#FrameTypes
 #[EnumRepr(type = "u8")]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum RawFrameType {
     Data = 0,
     Headers = 1,
@@ -53,6 +53,7 @@ pub enum FrameType {
     GoAway,
     WindowUpdate,
     Continuation,
+    Unknown(EncodedFrameType),
 }
 
 /// See https://httpwg.org/specs/rfc9113.html#DATA
@@ -91,38 +92,68 @@ pub enum PingFlags {
     Ack = 0x01,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct EncodedFrameType {
+    pub ty: u8,
+    pub flags: u8,
+}
+
+impl EncodedFrameType {
+    fn parse(i: Roll) -> IResult<Roll, Self> {
+        let (i, (ty, flags)) = tuple((be_u8, be_u8))(i)?;
+        Ok((i, Self { ty, flags }))
+    }
+}
+
+impl From<(RawFrameType, u8)> for EncodedFrameType {
+    fn from((ty, flags): (RawFrameType, u8)) -> Self {
+        Self {
+            ty: ty.repr(),
+            flags,
+        }
+    }
+}
+
 impl FrameType {
-    pub(crate) fn encode(&self) -> (RawFrameType, u8) {
+    pub(crate) fn encode(self) -> EncodedFrameType {
         match self {
-            FrameType::Data(f) => (RawFrameType::Data, f.bits()),
-            FrameType::Headers(f) => (RawFrameType::Headers, f.bits()),
-            FrameType::Priority => (RawFrameType::Priority, 0),
-            FrameType::RstStream => (RawFrameType::RstStream, 0),
-            FrameType::Settings(f) => (RawFrameType::Settings, f.bits()),
-            FrameType::PushPromise => (RawFrameType::PushPromise, 0),
-            FrameType::Ping(f) => (RawFrameType::Ping, f.bits()),
-            FrameType::GoAway => (RawFrameType::GoAway, 0),
-            FrameType::WindowUpdate => (RawFrameType::WindowUpdate, 0),
-            FrameType::Continuation => (RawFrameType::Continuation, 0),
+            FrameType::Data(f) => (RawFrameType::Data, f.bits()).into(),
+            FrameType::Headers(f) => (RawFrameType::Headers, f.bits()).into(),
+            FrameType::Priority => (RawFrameType::Priority, 0).into(),
+            FrameType::RstStream => (RawFrameType::RstStream, 0).into(),
+            FrameType::Settings(f) => (RawFrameType::Settings, f.bits()).into(),
+            FrameType::PushPromise => (RawFrameType::PushPromise, 0).into(),
+            FrameType::Ping(f) => (RawFrameType::Ping, f.bits()).into(),
+            FrameType::GoAway => (RawFrameType::GoAway, 0).into(),
+            FrameType::WindowUpdate => (RawFrameType::WindowUpdate, 0).into(),
+            FrameType::Continuation => (RawFrameType::Continuation, 0).into(),
+            FrameType::Unknown(ft) => ft,
         }
     }
 
-    fn decode(ty: RawFrameType, flags: u8) -> Self {
-        match ty {
-            RawFrameType::Data => FrameType::Data(BitFlags::<DataFlags>::from_bits_truncate(flags)),
-            RawFrameType::Headers => {
-                FrameType::Headers(BitFlags::<HeadersFlags>::from_bits_truncate(flags))
-            }
-            RawFrameType::Priority => FrameType::Priority,
-            RawFrameType::RstStream => FrameType::RstStream,
-            RawFrameType::Settings => {
-                FrameType::Settings(BitFlags::<SettingsFlags>::from_bits_truncate(flags))
-            }
-            RawFrameType::PushPromise => FrameType::PushPromise,
-            RawFrameType::Ping => FrameType::Ping(BitFlags::<PingFlags>::from_bits_truncate(flags)),
-            RawFrameType::GoAway => FrameType::GoAway,
-            RawFrameType::WindowUpdate => FrameType::WindowUpdate,
-            RawFrameType::Continuation => FrameType::Continuation,
+    fn decode(ft: EncodedFrameType) -> Self {
+        match RawFrameType::from_repr(ft.ty) {
+            Some(ty) => match ty {
+                RawFrameType::Data => {
+                    FrameType::Data(BitFlags::<DataFlags>::from_bits_truncate(ft.flags))
+                }
+                RawFrameType::Headers => {
+                    FrameType::Headers(BitFlags::<HeadersFlags>::from_bits_truncate(ft.flags))
+                }
+                RawFrameType::Priority => FrameType::Priority,
+                RawFrameType::RstStream => FrameType::RstStream,
+                RawFrameType::Settings => {
+                    FrameType::Settings(BitFlags::<SettingsFlags>::from_bits_truncate(ft.flags))
+                }
+                RawFrameType::PushPromise => FrameType::PushPromise,
+                RawFrameType::Ping => {
+                    FrameType::Ping(BitFlags::<PingFlags>::from_bits_truncate(ft.flags))
+                }
+                RawFrameType::GoAway => FrameType::GoAway,
+                RawFrameType::WindowUpdate => FrameType::WindowUpdate,
+                RawFrameType::Continuation => FrameType::Continuation,
+            },
+            None => FrameType::Unknown(ft),
         }
     }
 }
@@ -193,19 +224,14 @@ impl Frame {
     /// slice, and copies it to the heap, which may not be ideal for a production
     /// implementation.
     pub fn parse(i: Roll) -> IResult<Roll, Self> {
-        let (i, (len, frame_type, flags, (reserved, stream_id))) = tuple((
+        let (i, (len, frame_type, (reserved, stream_id))) = tuple((
             be_u24,
-            map_res(be_u8, |u| {
-                RawFrameType::from_repr(u).ok_or(nom::error::ErrorKind::OneOf)
-            }),
-            be_u8,
+            EncodedFrameType::parse,
             parse_reserved_and_stream_id,
         ))(i)?;
 
-        let frame_type = FrameType::decode(frame_type, flags);
-
         let frame = Frame {
-            frame_type,
+            frame_type: FrameType::decode(frame_type),
             reserved,
             stream_id,
             len,
@@ -220,9 +246,9 @@ impl Frame {
             use byteorder::{BigEndian, WriteBytesExt};
             let mut header = &mut header[..];
             header.write_u24::<BigEndian>(self.len as _)?;
-            let (ty, flags) = self.frame_type.encode();
-            header.write_u8(ty.repr())?;
-            header.write_u8(flags)?;
+            let ft = self.frame_type.encode();
+            header.write_u8(ft.ty)?;
+            header.write_u8(ft.flags)?;
             // TODO: do we ever need to write the reserved bit?
             header.write_u32::<BigEndian>(self.stream_id.0)?;
         }
