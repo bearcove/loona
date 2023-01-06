@@ -19,7 +19,8 @@ jobs:
           workflow: ${{ github.event.workflow.id }}
           run_id: ${{ github.event.workflow_run.id }}
       - name: Publish h2spec Report
-        uses: mikepenz/action-junit-report@v3
+        uses: dorny/test-reporter@v1
         with:
-          commit: ${{github.event.workflow_run.head_sha}}
-          report_paths: 'h2spec-junit.xml'
+          name: H2Spec Results
+          path: h2spec-junit.xml
+          reporter: java-junit
