@@ -21,6 +21,9 @@ jobs:
       - name: Stub Git repo for test-reporter
         run: |
           git init
+      - name: Cat report file
+        run: |
+          cat h2spec-junit.xml
       - name: Publish h2spec Report
         uses: dorny/test-reporter@v1
         with:
