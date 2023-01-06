@@ -18,6 +18,9 @@ jobs:
           name: h2spec-results
           workflow: ${{ github.event.workflow.id }}
           run_id: ${{ github.event.workflow_run.id }}
+      - name: Stub Git repo for test-reporter
+        run: |
+          git init
       - name: Publish h2spec Report
         uses: dorny/test-reporter@v1
         with:
