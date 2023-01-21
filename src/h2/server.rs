@@ -41,9 +41,24 @@ struct StreamState {
 }
 
 enum StreamRxStage {
-    Headers(Request),
+    Headers(HeadersData),
     Body(mpsc::Sender<eyre::Result<Piece>>),
     Done,
+}
+
+#[derive(Default)]
+struct HeadersData {
+    /// If true, no DATA frames follow, cf. https://httpwg.org/specs/rfc9113.html#HttpFraming
+    end_stream: bool,
+
+    /// path pseudo-header
+    path: Option<PieceStr>,
+
+    /// method pseudo-header
+    method: Option<Method>,
+
+    /// non-pseudo headers
+    headers: Headers,
 }
 
 pub async fn serve(
@@ -244,146 +259,31 @@ async fn h2_read_loop(
                     (payload, _) = payload.split_at(at);
                 }
 
-                let mut path: Option<PieceStr> = None;
-                let mut method: Option<Method> = None;
+                debug!("receiving initial headers for stream {}", frame.stream_id);
+                let mut headers_data = HeadersData {
+                    end_stream: flags.contains(HeadersFlags::EndStream),
+                    ..Default::default()
+                };
 
-                let mut headers = Headers::default();
-                debug!("receiving headers for stream {}", frame.stream_id);
-
-                if let Err(e) = hpack_dec.decode_with_cb(&payload[..], |key, value| {
-                    debug!(
-                        "HEADER | {}: {}",
-                        std::str::from_utf8(&key).unwrap_or("<non-utf8-key>"),
-                        std::str::from_utf8(&value).unwrap_or("<non-utf8-value>"),
-                    );
-
-                    if &key[..1] == b":" {
-                        // it's a pseudo-header!
-                        match &key[1..] {
-                            b"path" => {
-                                let value: PieceStr =
-                                    Piece::from(value.to_vec()).to_string().unwrap();
-                                path = Some(value);
-                            }
-                            b"method" => {
-                                // TODO: error handling
-                                let value: PieceStr =
-                                    Piece::from(value.to_vec()).to_string().unwrap();
-                                method = Some(Method::try_from(value).unwrap());
-                            }
-                            _ => {
-                                debug!("ignoring pseudo-header");
-                            }
-                        }
-                    } else {
-                        // TODO: what do we do in case of malformed header names?
-                        // ignore it? return a 400?
-                        let name = HeaderName::from_bytes(&key[..]).expect("malformed header name");
-                        let value: Piece = value.to_vec().into();
-                        headers.append(name, value);
-                    }
-                }) {
-                    warn!("hpack error: {e:?}");
-                    let error_code = KnownErrorCode::CompressionError;
-                    debug!("error_code = {error_code:?}");
-                    // FIXME: this is almost definitely wrong. we must separate
-                    // client-initiated streams from server-initiated streams, and
-                    // take stream state into account
-                    let last_stream_id = state
-                        .borrow()
-                        .streams
-                        .keys()
-                        .copied()
-                        .max()
-                        .unwrap_or(StreamId::CONNECTION);
-                    debug!("last_stream_id = {last_stream_id}");
-                    // TODO: is this a good idea?
-                    let additional_debug_data = format!("hpack error: {e:?}").into_bytes();
-
-                    if ev_tx
-                        .send(H2ConnEvent::GoAway {
-                            error_code,
-                            last_stream_id,
-                            additional_debug_data: Piece::Vec(additional_debug_data),
-                        })
-                        .await
-                        .is_err()
-                    {
-                        debug!("error sending goaway");
-                    }
+                if let Err(e) = read_headers_data(&mut headers_data, &payload[..], &mut hpack_dec) {
+                    send_goaway(&ev_tx, &state, e, KnownErrorCode::CompressionError).await;
                     continue;
                 }
 
-                // TODO: proper error handling (return 400)
-                let path = path.unwrap();
-                let method = method.unwrap();
-
-                // TODO: this might not be the end of headers
-                if !flags.contains(HeadersFlags::EndHeaders) {
-                    todo!("handle continuation frames");
-                }
-
-                let req = Request {
-                    method,
-                    path,
-                    version: Version::HTTP_2,
-                    headers,
-                };
-
-                let responder = Responder {
-                    encoder: H2Encoder {
-                        stream_id: frame.stream_id,
-                        tx: ev_tx.clone(),
-                        state: EncoderState::ExpectResponseHeaders,
-                    },
-                    state: ExpectResponseHeaders,
-                };
-
-                let (piece_tx, piece_rx) = mpsc::channel::<eyre::Result<Piece>>(1);
-                let is_end_stream = flags.contains(HeadersFlags::EndStream);
-
-                {
-                    let mut state = state.borrow_mut();
-
-                    let ss = if is_end_stream {
-                        StreamState {
-                            rx_stage: StreamRxStage::Done,
-                        }
-                    } else {
-                        StreamState {
-                            rx_stage: StreamRxStage::Body(piece_tx),
-                        }
-                    };
-                    state.streams.insert(frame.stream_id, ss);
-                }
-
-                let req_body = H2Body {
-                    // FIXME: that's not right. h2 requests can still specify
-                    // a content-length
-                    content_length: if is_end_stream { Some(0) } else { None },
-                    eof: is_end_stream,
-                    rx: piece_rx,
-                };
-
-                debug!("Calling handler with the given body");
-                tokio_uring::spawn({
-                    let driver = driver.clone();
-                    async move {
-                        let mut req_body = req_body;
-                        let responder = responder;
-
-                        match driver.handle(req, &mut req_body, responder).await {
-                            Ok(_responder) => {
-                                debug!("Handler completed successfully, gave us a responder");
-                            }
-                            Err(e) => {
-                                // TODO: actually handle that error.
-                                debug!("Handler returned an error: {e}")
-                            }
-                        }
+                if flags.contains(HeadersFlags::EndHeaders) {
+                    end_headers(&ev_tx, frame.stream_id, headers_data, &state, &driver)?;
+                } else {
+                    debug!("expecting more headers for stream {}", frame.stream_id);
+                    {
+                        let mut state = state.borrow_mut();
+                        state.streams.insert(
+                            frame.stream_id,
+                            StreamState {
+                                rx_stage: StreamRxStage::Headers(headers_data),
+                            },
+                        );
                     }
-                });
-                debug!("Calling handler with the given body... it returned!");
+                }
             }
             FrameType::Priority => {
                 let pri_spec = match PrioritySpec::parse(payload) {
@@ -438,6 +338,42 @@ async fn h2_read_loop(
                 );
             }
         }
+    }
+}
+
+async fn send_goaway(
+    ev_tx: &mpsc::Sender<H2ConnEvent>,
+    state: &RefCell<ConnState>,
+    e: eyre::Report,
+    error_code: KnownErrorCode,
+) {
+    warn!("connection error: {e:?}");
+    debug!("error_code = {error_code:?}");
+
+    // FIXME: this is almost definitely wrong. we must separate
+    // client-initiated streams from server-initiated streams, and
+    // take stream state into account
+    let last_stream_id = state
+        .borrow()
+        .streams
+        .keys()
+        .copied()
+        .max()
+        .unwrap_or(StreamId::CONNECTION);
+    debug!("last_stream_id = {last_stream_id}");
+    // TODO: is this a good idea?
+    let additional_debug_data = format!("hpack error: {e:?}").into_bytes();
+
+    if ev_tx
+        .send(H2ConnEvent::GoAway {
+            error_code,
+            last_stream_id,
+            additional_debug_data: Piece::Vec(additional_debug_data),
+        })
+        .await
+        .is_err()
+    {
+        debug!("error sending goaway");
     }
 }
 
@@ -539,6 +475,120 @@ async fn h2_write_loop(
         }
     }
     debug!("h2_write_loop is done");
+
+    Ok(())
+}
+
+fn read_headers_data(
+    data: &mut HeadersData,
+    payload: &[u8],
+    hpack_dec: &mut hpack::Decoder,
+) -> eyre::Result<()> {
+    hpack_dec
+        .decode_with_cb(&payload[..], |key, value| {
+            debug!(
+                "HEADER | {}: {}",
+                std::str::from_utf8(&key).unwrap_or("<non-utf8-key>"),
+                std::str::from_utf8(&value).unwrap_or("<non-utf8-value>"),
+            );
+
+            if &key[..1] == b":" {
+                // it's a pseudo-header!
+                match &key[1..] {
+                    b"path" => {
+                        let value: PieceStr = Piece::from(value.to_vec()).to_string().unwrap();
+                        data.path = Some(value);
+                    }
+                    b"method" => {
+                        // TODO: error handling
+                        let value: PieceStr = Piece::from(value.to_vec()).to_string().unwrap();
+                        data.method = Some(Method::try_from(value).unwrap());
+                    }
+                    _ => {
+                        debug!("ignoring pseudo-header");
+                    }
+                }
+            } else {
+                // TODO: what do we do in case of malformed header names?
+                // ignore it? return a 400?
+                let name = HeaderName::from_bytes(&key[..]).expect("malformed header name");
+                let value: Piece = value.to_vec().into();
+                data.headers.append(name, value);
+            }
+        })
+        .map_err(|e| eyre::eyre!("hpack error: {e:?}"))
+}
+
+fn end_headers(
+    ev_tx: &mpsc::Sender<H2ConnEvent>,
+    stream_id: StreamId,
+    data: HeadersData,
+    state: &Rc<RefCell<ConnState>>,
+    driver: &Rc<impl ServerDriver + 'static>,
+) -> eyre::Result<()> {
+    // TODO: proper error handling (return 400)
+    let path = data.path.unwrap();
+    let method = data.method.unwrap();
+
+    let req = Request {
+        method,
+        path,
+        version: Version::HTTP_2,
+        headers: data.headers,
+    };
+
+    let responder = Responder {
+        encoder: H2Encoder {
+            stream_id: stream_id,
+            tx: ev_tx.clone(),
+            state: EncoderState::ExpectResponseHeaders,
+        },
+        state: ExpectResponseHeaders,
+    };
+
+    let (piece_tx, piece_rx) = mpsc::channel::<eyre::Result<Piece>>(1);
+
+    {
+        let mut state = state.borrow_mut();
+
+        let ss = if data.end_stream {
+            StreamState {
+                rx_stage: StreamRxStage::Done,
+            }
+        } else {
+            StreamState {
+                rx_stage: StreamRxStage::Body(piece_tx),
+            }
+        };
+        state.streams.insert(stream_id, ss);
+    }
+
+    let req_body = H2Body {
+        // FIXME: that's not right. h2 requests can still specify
+        // a content-length
+        content_length: if data.end_stream { Some(0) } else { None },
+        eof: data.end_stream,
+        rx: piece_rx,
+    };
+
+    debug!("Calling handler with the given body");
+    tokio_uring::spawn({
+        let driver = driver.clone();
+        async move {
+            let mut req_body = req_body;
+            let responder = responder;
+
+            match driver.handle(req, &mut req_body, responder).await {
+                Ok(_responder) => {
+                    debug!("Handler completed successfully, gave us a responder");
+                }
+                Err(e) => {
+                    // TODO: actually handle that error.
+                    debug!("Handler returned an error: {e}")
+                }
+            }
+        }
+    });
 
     Ok(())
 }
