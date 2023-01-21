@@ -96,7 +96,7 @@ pub async fn serve(
         client_buf,
         state.clone(),
     );
-    let write_task = h2_write_loop(driver, ev_tx, ev_rx, transport, state);
+    let write_task = h2_write_loop(ev_rx, transport);
     tokio::try_join!(read_task, write_task)?;
     debug!("joined read_task / write_task");
 
@@ -155,11 +155,52 @@ async fn h2_read_loop(
         match frame.frame_type {
             FrameType::Data(flags) => {
                 if flags.contains(DataFlags::Padded) {
-                    todo!("handle padded data frame");
+                    if payload.len() < 1 {
+                        todo!("handle connection error: padded data frame, but no padding length");
+                    }
+
+                    let padding_length_roll;
+                    (padding_length_roll, payload) = payload.split_at(1);
+                    let padding_length = padding_length_roll[0] as usize;
+                    if payload.len() < padding_length {
+                        todo!(
+                            "handle connection error: padded headers frame, but not enough padding"
+                        );
+                    }
+
+                    let at = payload.len() - padding_length;
+                    (payload, _) = payload.split_at(at);
                 }
 
-                if (ev_tx.send(H2ConnEvent::ClientFrame(frame, payload)).await).is_err() {
-                    return Err(eyre::eyre!("could not send H2 event"));
+                let body_tx = {
+                    let mut state = state.borrow_mut();
+                    let stream = state
+                        .streams
+                        .get_mut(&frame.stream_id)
+                        // TODO: proper error handling (connection error)
+                        .expect("received data for unknown stream");
+                    match &mut stream.rx_stage {
+                        StreamRxStage::Headers(_) => {
+                            // TODO: proper error handling (stream error)
+                            panic!("received data for stream before headers")
+                        }
+                        StreamRxStage::Body(tx) => {
+                            // TODO: we can get rid of that clone sometimes
+                            let tx = tx.clone();
+                            if flags.contains(DataFlags::EndStream) {
+                                stream.rx_stage = StreamRxStage::Done;
+                            }
+                            tx
+                        }
+                        StreamRxStage::Done => {
+                            // TODO: proper error handling (stream error)
+                            panic!("received data for stream after completion");
+                        }
+                    }
+                };
+
+                if body_tx.send(Ok(payload.into())).await.is_err() {
+                    warn!("TODO: The body is being ignored, we should reset the stream");
                 }
             }
             FrameType::Headers(flags) => {
@@ -270,10 +311,6 @@ async fn h2_read_loop(
                     {
                         debug!("error sending goaway");
                     }
-                    // TODO: move most processing to `h2_read_loop`?
-                    // It's confusing to be doing parsing here.  and we
-                    // can't return because we just sent something to
-                    // `ev_tx` which _we're the ones reading_
                     continue;
                 }
 
@@ -405,11 +442,8 @@ async fn h2_read_loop(
 }
 
 async fn h2_write_loop(
-    driver: Rc<impl ServerDriver + 'static>,
-    ev_tx: mpsc::Sender<H2ConnEvent>,
     mut ev_rx: mpsc::Receiver<H2ConnEvent>,
     transport: Rc<impl ReadWriteOwned>,
-    state: Rc<RefCell<ConnState>>,
 ) -> eyre::Result<()> {
     let mut hpack_enc = hpack::Encoder::new();
 
@@ -424,50 +458,6 @@ async fn h2_write_loop(
                 );
                 res_frame.write(transport.as_ref()).await?;
             }
-            H2ConnEvent::ClientFrame(frame, payload) => match frame.frame_type {
-                FrameType::Headers(flags) => {
-                    panic!("this codepath is dead");
-                }
-                FrameType::Data(flags) => {
-                    if flags.contains(DataFlags::Padded) {
-                        todo!("padded data is not supported");
-                    }
-
-                    let body_tx = {
-                        let mut state = state.borrow_mut();
-                        let stream = state
-                            .streams
-                            .get_mut(&frame.stream_id)
-                            // TODO: proper error handling (connection error)
-                            .expect("received data for unknown stream");
-                        match &mut stream.rx_stage {
-                            StreamRxStage::Headers(_) => {
-                                // TODO: proper error handling (stream error)
-                                panic!("received data for stream before headers")
-                            }
-                            StreamRxStage::Body(tx) => {
-                                // TODO: we can get rid of that clone sometimes
-                                let tx = tx.clone();
-                                if flags.contains(DataFlags::EndStream) {
-                                    stream.rx_stage = StreamRxStage::Done;
-                                }
-                                tx
-                            }
-                            StreamRxStage::Done => {
-                                // TODO: proper error handling (stream error)
-                                panic!("received data for stream after completion");
-                            }
-                        }
-                    };
-
-                    if body_tx.send(Ok(payload.into())).await.is_err() {
-                        warn!("TODO: The body is being ignored, we should reset the stream");
-                    }
-                }
-                _ => {
-                    todo!("handle client frame: {frame:?}");
-                }
-            },
             H2ConnEvent::ServerEvent(ev) => {
                 debug!("Sending server event: {ev:?}");
 
