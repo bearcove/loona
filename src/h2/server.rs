@@ -12,8 +12,8 @@ use crate::{
         body::H2Body,
         encode::{EncoderState, H2ConnEvent, H2Encoder, H2EventPayload},
         parse::{
-            self, DataFlags, Frame, FrameType, HeadersFlags, KnownErrorCode, PingFlags,
-            PrioritySpec, SettingsFlags, StreamId,
+            self, ContinuationFlags, DataFlags, Frame, FrameType, HeadersFlags, KnownErrorCode,
+            PingFlags, PrioritySpec, SettingsFlags, StreamId,
         },
     },
     util::read_and_parse,
@@ -260,15 +260,26 @@ async fn h2_read_loop(
                 };
 
                 if flags.contains(HeadersFlags::EndHeaders) {
-                    if let Err(e) = end_headers(
+                    match end_headers(
                         &ev_tx,
                         frame.stream_id,
-                        headers_data,
-                        &state,
+                        &headers_data,
                         &driver,
                         &mut hpack_dec,
                     ) {
-                        send_goaway(&ev_tx, &state, e, KnownErrorCode::CompressionError).await;
+                        Err(e) => {
+                            // TODO: we should also reset the stream here, right?
+                            send_goaway(&ev_tx, &state, e, KnownErrorCode::CompressionError).await;
+                        }
+                        Ok(next_stage) => {
+                            let mut state = state.borrow_mut();
+                            state.streams.insert(
+                                frame.stream_id,
+                                StreamState {
+                                    rx_stage: next_stage,
+                                },
+                            );
+                        }
                     }
                 } else {
                     debug!("expecting more headers for stream {}", frame.stream_id);
@@ -327,7 +338,56 @@ async fn h2_read_loop(
             FrameType::WindowUpdate => {
                 debug!("ignoring window update");
             }
-            FrameType::Continuation => todo!(),
+            FrameType::Continuation(flags) => {
+                let res = {
+                    let mut state = state.borrow_mut();
+                    let ss = match state.streams.get_mut(&frame.stream_id) {
+                        Some(stream) => stream,
+                        None => {
+                            todo!("handle connection error: continuation frame for unknown stream");
+                        }
+                    };
+                    match &mut ss.rx_stage {
+                        StreamRxStage::Headers(headers_data) => {
+                            headers_data.fragments.push(payload);
+                            if flags.contains(ContinuationFlags::EndHeaders) {
+                                end_headers(
+                                    &ev_tx,
+                                    frame.stream_id,
+                                    headers_data,
+                                    &driver,
+                                    &mut hpack_dec,
+                                )
+                                .map(Some)
+                            } else {
+                                debug!(
+                                    "have {} field block fragments so far",
+                                    headers_data.fragments.len()
+                                );
+                                Ok(None)
+                            }
+                        }
+                        _ => {
+                            todo!("handle connection error: continuation frame for non-headers stream");
+                        }
+                    }
+                };
+
+                match res {
+                    Err(e) => {
+                        // TODO: we should also reset the stream state here, right?
+                        send_goaway(&ev_tx, &state, e, KnownErrorCode::CompressionError).await;
+                    }
+                    Ok(Some(next_stage)) => {
+                        let mut state = state.borrow_mut();
+                        let ss = state.streams.get_mut(&frame.stream_id).unwrap();
+                        ss.rx_stage = next_stage;
+                    }
+                    _ => {
+                        // don't care
+                    }
+                }
+            }
             FrameType::Unknown(ft) => {
                 trace!(
                     "ignoring unknown frame with type 0x{:x}, flags 0x{:x}",
@@ -341,7 +401,7 @@ async fn h2_read_loop(
 
 async fn send_goaway(
     ev_tx: &mpsc::Sender<H2ConnEvent>,
-    state: &RefCell<ConnState>,
+    state: &Rc<RefCell<ConnState>>,
     e: eyre::Report,
     error_code: KnownErrorCode,
 ) {
@@ -480,11 +540,10 @@ async fn h2_write_loop(
 fn end_headers(
     ev_tx: &mpsc::Sender<H2ConnEvent>,
     stream_id: StreamId,
-    data: HeadersData,
-    state: &Rc<RefCell<ConnState>>,
+    data: &HeadersData,
     driver: &Rc<impl ServerDriver + 'static>,
     hpack_dec: &mut hpack::Decoder,
-) -> eyre::Result<()> {
+) -> eyre::Result<StreamRxStage> {
     let mut path: Option<PieceStr> = None;
     let mut method: Option<Method> = None;
     let mut headers = Headers::default();
@@ -534,7 +593,7 @@ fn end_headers(
             // be using `RollMut` for this, but it would probably need to resize
             // a bunch
             let mut payload = Vec::with_capacity(total_len);
-            for frag in data.fragments {
+            for frag in &data.fragments {
                 payload.extend_from_slice(&frag[..]);
             }
             hpack_dec
@@ -565,20 +624,11 @@ fn end_headers(
 
     let (piece_tx, piece_rx) = mpsc::channel::<eyre::Result<Piece>>(1);
 
-    {
-        let mut state = state.borrow_mut();
-
-        let ss = if data.end_stream {
-            StreamState {
-                rx_stage: StreamRxStage::Done,
-            }
-        } else {
-            StreamState {
-                rx_stage: StreamRxStage::Body(piece_tx),
-            }
-        };
-        state.streams.insert(stream_id, ss);
-    }
+    let next_rx_stage = if data.end_stream {
+        StreamRxStage::Done
+    } else {
+        StreamRxStage::Body(piece_tx)
+    };
 
     let req_body = H2Body {
         // FIXME: that's not right. h2 requests can still specify
@@ -607,5 +657,5 @@ fn end_headers(
         }
     });
 
-    Ok(())
+    Ok(next_rx_stage)
 }

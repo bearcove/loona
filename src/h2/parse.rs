@@ -52,7 +52,7 @@ pub enum FrameType {
     Ping(BitFlags<PingFlags>),
     GoAway,
     WindowUpdate,
-    Continuation,
+    Continuation(BitFlags<ContinuationFlags>),
     Unknown(EncodedFrameType),
 }
 
@@ -92,6 +92,14 @@ pub enum PingFlags {
     Ack = 0x01,
 }
 
+/// See https://httpwg.org/specs/rfc9113.html#CONTINUATION
+#[bitflags]
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ContinuationFlags {
+    EndHeaders = 0x04,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct EncodedFrameType {
     pub ty: u8,
@@ -126,7 +134,7 @@ impl FrameType {
             FrameType::Ping(f) => (RawFrameType::Ping, f.bits()).into(),
             FrameType::GoAway => (RawFrameType::GoAway, 0).into(),
             FrameType::WindowUpdate => (RawFrameType::WindowUpdate, 0).into(),
-            FrameType::Continuation => (RawFrameType::Continuation, 0).into(),
+            FrameType::Continuation(f) => (RawFrameType::Continuation, f.bits()).into(),
             FrameType::Unknown(ft) => ft,
         }
     }
@@ -151,7 +159,9 @@ impl FrameType {
                 }
                 RawFrameType::GoAway => FrameType::GoAway,
                 RawFrameType::WindowUpdate => FrameType::WindowUpdate,
-                RawFrameType::Continuation => FrameType::Continuation,
+                RawFrameType::Continuation => FrameType::Continuation(
+                    BitFlags::<ContinuationFlags>::from_bits_truncate(ft.flags),
+                ),
             },
             None => FrameType::Unknown(ft),
         }
