@@ -37,6 +37,13 @@ struct ConnState {
     streams: HashMap<StreamId, StreamState>,
 }
 
+#[derive(Default, Clone, Copy)]
+enum ContinuationState {
+    #[default]
+    Idle,
+    ContinuingHeaders(StreamId),
+}
+
 struct StreamState {
     rx_stage: StreamRxStage,
 }
@@ -120,6 +127,7 @@ async fn h2_read_loop(
     state: Rc<RefCell<ConnState>>,
 ) -> eyre::Result<()> {
     let mut hpack_dec = hpack::Decoder::new();
+    let mut continuation_state = ContinuationState::Idle;
 
     loop {
         let frame;
@@ -161,239 +169,295 @@ async fn h2_read_loop(
             payload_roll
         };
 
-        match frame.frame_type {
-            FrameType::Data(flags) => {
-                if flags.contains(DataFlags::Padded) {
-                    if payload.len() < 1 {
-                        todo!("handle connection error: padded data frame, but no padding length");
-                    }
+        match continuation_state {
+            ContinuationState::Idle => {
+                match frame.frame_type {
+                    FrameType::Data(flags) => {
+                        if flags.contains(DataFlags::Padded) {
+                            if payload.len() < 1 {
+                                todo!("handle connection error: padded data frame, but no padding length");
+                            }
 
-                    let padding_length_roll;
-                    (padding_length_roll, payload) = payload.split_at(1);
-                    let padding_length = padding_length_roll[0] as usize;
-                    if payload.len() < padding_length {
-                        todo!(
+                            let padding_length_roll;
+                            (padding_length_roll, payload) = payload.split_at(1);
+                            let padding_length = padding_length_roll[0] as usize;
+                            if payload.len() < padding_length {
+                                todo!(
                             "handle connection error: padded headers frame, but not enough padding"
                         );
-                    }
-
-                    let at = payload.len() - padding_length;
-                    (payload, _) = payload.split_at(at);
-                }
-
-                let body_tx = {
-                    let mut state = state.borrow_mut();
-                    let stream = state
-                        .streams
-                        .get_mut(&frame.stream_id)
-                        // TODO: proper error handling (connection error)
-                        .expect("received data for unknown stream");
-                    match &mut stream.rx_stage {
-                        StreamRxStage::Headers(_) => {
-                            // TODO: proper error handling (stream error)
-                            panic!("received data for stream before headers")
-                        }
-                        StreamRxStage::Body(tx) => {
-                            // TODO: we can get rid of that clone sometimes
-                            let tx = tx.clone();
-                            if flags.contains(DataFlags::EndStream) {
-                                stream.rx_stage = StreamRxStage::Done;
                             }
-                            tx
+
+                            let at = payload.len() - padding_length;
+                            (payload, _) = payload.split_at(at);
                         }
-                        StreamRxStage::Done => {
-                            // TODO: proper error handling (stream error)
-                            panic!("received data for stream after completion");
+
+                        let body_tx = {
+                            let mut state = state.borrow_mut();
+                            let stream = state
+                                .streams
+                                .get_mut(&frame.stream_id)
+                                // TODO: proper error handling (connection error)
+                                .expect("received data for unknown stream");
+                            match &mut stream.rx_stage {
+                                StreamRxStage::Headers(_) => {
+                                    // TODO: proper error handling (stream error)
+                                    panic!("received data for stream before headers")
+                                }
+                                StreamRxStage::Body(tx) => {
+                                    // TODO: we can get rid of that clone sometimes
+                                    let tx = tx.clone();
+                                    if flags.contains(DataFlags::EndStream) {
+                                        stream.rx_stage = StreamRxStage::Done;
+                                    }
+                                    tx
+                                }
+                                StreamRxStage::Done => {
+                                    // TODO: proper error handling (stream error)
+                                    panic!("received data for stream after completion");
+                                }
+                            }
+                        };
+
+                        if body_tx.send(Ok(payload.into())).await.is_err() {
+                            warn!("TODO: The body is being ignored, we should reset the stream");
                         }
                     }
-                };
+                    FrameType::Headers(flags) => {
+                        {
+                            let state = state.borrow();
+                            if state.streams.contains_key(&frame.stream_id) {
+                                todo!(
+                                    "handle connection error: received headers for existing stream"
+                                );
+                            }
+                        }
 
-                if body_tx.send(Ok(payload.into())).await.is_err() {
-                    warn!("TODO: The body is being ignored, we should reset the stream");
-                }
-            }
-            FrameType::Headers(flags) => {
-                {
-                    let state = state.borrow();
-                    if state.streams.contains_key(&frame.stream_id) {
-                        todo!("handle connection error: received headers for existing stream");
-                    }
-                }
-
-                let padding_length = if flags.contains(HeadersFlags::Padded) {
-                    if payload.len() < 1 {
-                        todo!(
+                        let padding_length = if flags.contains(HeadersFlags::Padded) {
+                            if payload.len() < 1 {
+                                todo!(
                             "handle connection error: padded headers frame, but no padding length"
                         );
-                    }
+                            }
 
-                    let padding_length_roll;
-                    (padding_length_roll, payload) = payload.split_at(1);
-                    padding_length_roll[0] as usize
-                } else {
-                    0
-                };
+                            let padding_length_roll;
+                            (padding_length_roll, payload) = payload.split_at(1);
+                            padding_length_roll[0] as usize
+                        } else {
+                            0
+                        };
 
-                if flags.contains(HeadersFlags::Priority) {
-                    let pri_spec;
-                    (payload, pri_spec) = PrioritySpec::parse(payload)
-                        .finish()
-                        .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
-                    debug!(exclusive = %pri_spec.exclusive, stream_dependency = ?pri_spec.stream_dependency, weight = %pri_spec.weight, "received priority, exclusive");
-                }
+                        if flags.contains(HeadersFlags::Priority) {
+                            let pri_spec;
+                            (payload, pri_spec) = PrioritySpec::parse(payload)
+                                .finish()
+                                .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
+                            debug!(exclusive = %pri_spec.exclusive, stream_dependency = ?pri_spec.stream_dependency, weight = %pri_spec.weight, "received priority, exclusive");
+                        }
 
-                if padding_length > 0 {
-                    if payload.len() < padding_length {
-                        todo!(
+                        if padding_length > 0 {
+                            if payload.len() < padding_length {
+                                todo!(
                             "handle connection error: padded headers frame, but not enough padding"
                         );
-                    }
+                            }
 
-                    let at = payload.len() - padding_length;
-                    (payload, _) = payload.split_at(at);
-                }
-
-                debug!("receiving initial headers for stream {}", frame.stream_id);
-                let headers_data = HeadersData {
-                    end_stream: flags.contains(HeadersFlags::EndStream),
-                    fragments: smallvec![payload],
-                };
-
-                if flags.contains(HeadersFlags::EndHeaders) {
-                    match end_headers(
-                        &ev_tx,
-                        frame.stream_id,
-                        &headers_data,
-                        &driver,
-                        &mut hpack_dec,
-                    ) {
-                        Err(e) => {
-                            // TODO: we should also reset the stream here, right?
-                            send_goaway(&ev_tx, &state, e, KnownErrorCode::CompressionError).await;
+                            let at = payload.len() - padding_length;
+                            (payload, _) = payload.split_at(at);
                         }
-                        Ok(next_stage) => {
-                            let mut state = state.borrow_mut();
-                            state.streams.insert(
+
+                        debug!("receiving initial headers for stream {}", frame.stream_id);
+                        let headers_data = HeadersData {
+                            end_stream: flags.contains(HeadersFlags::EndStream),
+                            fragments: smallvec![payload],
+                        };
+
+                        if flags.contains(HeadersFlags::EndHeaders) {
+                            match end_headers(
+                                &ev_tx,
                                 frame.stream_id,
-                                StreamState {
-                                    rx_stage: next_stage,
-                                },
-                            );
+                                &headers_data,
+                                &driver,
+                                &mut hpack_dec,
+                            ) {
+                                Err(e) => {
+                                    // TODO: we should also reset the stream here, right?
+                                    send_goaway(
+                                        &ev_tx,
+                                        &state,
+                                        e,
+                                        KnownErrorCode::CompressionError,
+                                    )
+                                    .await;
+                                }
+                                Ok(next_stage) => {
+                                    let mut state = state.borrow_mut();
+                                    state.streams.insert(
+                                        frame.stream_id,
+                                        StreamState {
+                                            rx_stage: next_stage,
+                                        },
+                                    );
+                                }
+                            }
+                        } else {
+                            debug!("expecting more headers for stream {}", frame.stream_id);
+                            {
+                                let mut state = state.borrow_mut();
+                                state.streams.insert(
+                                    frame.stream_id,
+                                    StreamState {
+                                        rx_stage: StreamRxStage::Headers(headers_data),
+                                    },
+                                );
+                            }
                         }
                     }
-                } else {
-                    debug!("expecting more headers for stream {}", frame.stream_id);
-                    {
-                        let mut state = state.borrow_mut();
-                        state.streams.insert(
-                            frame.stream_id,
-                            StreamState {
-                                rx_stage: StreamRxStage::Headers(headers_data),
-                            },
+                    FrameType::Priority => {
+                        let pri_spec = match PrioritySpec::parse(payload) {
+                            Ok((_rest, pri_spec)) => pri_spec,
+                            Err(e) => todo!("handle connection error: invalid priority frame {e}"),
+                        };
+                        debug!(?pri_spec, "received priority frame");
+                    }
+                    FrameType::RstStream => todo!(),
+                    FrameType::Settings(s) => {
+                        if s.contains(SettingsFlags::Ack) {
+                            debug!("Peer has acknowledged our settings, cool");
+                        } else {
+                            // TODO: actually apply settings
+
+                            if ev_tx.send(H2ConnEvent::AcknowledgeSettings).await.is_err() {
+                                return Err(eyre::eyre!(
+                                    "could not send H2 acknowledge settings event"
+                                ));
+                            }
+                        }
+                    }
+                    FrameType::PushPromise => todo!("push promise not implemented"),
+                    FrameType::Ping(flags) => {
+                        if frame.stream_id != StreamId::CONNECTION {
+                            todo!("handle connection error: ping frame with non-zero stream id");
+                        }
+
+                        if frame.len != 8 {
+                            todo!("handle connection error: ping frame with invalid length");
+                        }
+
+                        if flags.contains(PingFlags::Ack) {
+                            // TODO: check that payload matches the one we sent?
+
+                            debug!("received ping ack");
+                            continue;
+                        }
+
+                        if ev_tx.send(H2ConnEvent::Ping(payload)).await.is_err() {
+                            return Err(eyre::eyre!("could not send H2 ping event"));
+                        }
+                    }
+                    FrameType::GoAway => todo!(),
+                    FrameType::WindowUpdate => {
+                        debug!("ignoring window update");
+                    }
+                    FrameType::Continuation(_flags) => {
+                        send_goaway(
+                            &ev_tx,
+                            &state,
+                            eyre::eyre!(
+                                "received unexpected continuation frame for stream {}",
+                                frame.stream_id
+                            ),
+                            KnownErrorCode::ProtocolError,
+                        )
+                        .await
+                    }
+                    FrameType::Unknown(ft) => {
+                        trace!(
+                            "ignoring unknown frame with type 0x{:x}, flags 0x{:x}",
+                            ft.ty,
+                            ft.flags
                         );
                     }
                 }
             }
-            FrameType::Priority => {
-                let pri_spec = match PrioritySpec::parse(payload) {
-                    Ok((_rest, pri_spec)) => pri_spec,
-                    Err(e) => todo!("handle connection error: invalid priority frame {e}"),
-                };
-                debug!(?pri_spec, "received priority frame");
-            }
-            FrameType::RstStream => todo!(),
-            FrameType::Settings(s) => {
-                if s.contains(SettingsFlags::Ack) {
-                    debug!("Peer has acknowledged our settings, cool");
-                } else {
-                    // TODO: actually apply settings
-
-                    if ev_tx.send(H2ConnEvent::AcknowledgeSettings).await.is_err() {
-                        return Err(eyre::eyre!("could not send H2 acknowledge settings event"));
-                    }
-                }
-            }
-            FrameType::PushPromise => todo!("push promise not implemented"),
-            FrameType::Ping(flags) => {
-                if frame.stream_id != StreamId::CONNECTION {
-                    todo!("handle connection error: ping frame with non-zero stream id");
-                }
-
-                if frame.len != 8 {
-                    todo!("handle connection error: ping frame with invalid length");
-                }
-
-                if flags.contains(PingFlags::Ack) {
-                    // TODO: check that payload matches the one we sent?
-
-                    debug!("received ping ack");
-                    continue;
-                }
-
-                if ev_tx.send(H2ConnEvent::Ping(payload)).await.is_err() {
-                    return Err(eyre::eyre!("could not send H2 ping event"));
-                }
-            }
-            FrameType::GoAway => todo!(),
-            FrameType::WindowUpdate => {
-                debug!("ignoring window update");
-            }
-            FrameType::Continuation(flags) => {
-                let res = {
-                    let mut state = state.borrow_mut();
-                    let ss = match state.streams.get_mut(&frame.stream_id) {
-                        Some(stream) => stream,
-                        None => {
-                            todo!("handle connection error: continuation frame for unknown stream");
+            ContinuationState::ContinuingHeaders(expected_stream_id) => {
+                match frame.frame_type {
+                    FrameType::Continuation(flags) => {
+                        if frame.stream_id != expected_stream_id {
+                            send_goaway(
+                                &ev_tx,
+                                &state,
+                                eyre::eyre!("continuation frame for wrong stream"),
+                                KnownErrorCode::ProtocolError,
+                            )
+                            .await;
+                            continue;
                         }
-                    };
-                    match &mut ss.rx_stage {
-                        StreamRxStage::Headers(headers_data) => {
-                            headers_data.fragments.push(payload);
-                            if flags.contains(ContinuationFlags::EndHeaders) {
-                                end_headers(
-                                    &ev_tx,
-                                    frame.stream_id,
-                                    headers_data,
-                                    &driver,
-                                    &mut hpack_dec,
-                                )
-                                .map(Some)
-                            } else {
-                                debug!(
-                                    "have {} field block fragments so far",
-                                    headers_data.fragments.len()
-                                );
-                                Ok(None)
+
+                        let res = {
+                            let mut state = state.borrow_mut();
+                            let ss = match state.streams.get_mut(&frame.stream_id) {
+                                Some(stream) => stream,
+                                None => {
+                                    todo!("handle connection error: continuation frame for unknown stream");
+                                }
+                            };
+                            match &mut ss.rx_stage {
+                                StreamRxStage::Headers(headers_data) => {
+                                    headers_data.fragments.push(payload);
+                                    if flags.contains(ContinuationFlags::EndHeaders) {
+                                        end_headers(
+                                            &ev_tx,
+                                            frame.stream_id,
+                                            headers_data,
+                                            &driver,
+                                            &mut hpack_dec,
+                                        )
+                                        .map(Some)
+                                    } else {
+                                        continuation_state =
+                                            ContinuationState::ContinuingHeaders(frame.stream_id);
+                                        debug!(
+                                            "have {} field block fragments so far, will read CONTINUATION frames",
+                                            headers_data.fragments.len()
+                                        );
+                                        Ok(None)
+                                    }
+                                }
+                                _ => {
+                                    todo!("handle connection error: continuation frame for non-headers stream");
+                                }
+                            }
+                        };
+
+                        match res {
+                            Err(e) => {
+                                // TODO: we should also reset the stream state here, right?
+                                send_goaway(&ev_tx, &state, e, KnownErrorCode::CompressionError)
+                                    .await;
+                            }
+                            Ok(Some(next_stage)) => {
+                                // we're not reading continuation frames anymore
+                                continuation_state = ContinuationState::Idle;
+
+                                let mut state = state.borrow_mut();
+                                let ss = state.streams.get_mut(&frame.stream_id).unwrap();
+                                ss.rx_stage = next_stage;
+                            }
+                            _ => {
+                                // don't care
                             }
                         }
-                        _ => {
-                            todo!("handle connection error: continuation frame for non-headers stream");
-                        }
                     }
-                };
-
-                match res {
-                    Err(e) => {
-                        // TODO: we should also reset the stream state here, right?
-                        send_goaway(&ev_tx, &state, e, KnownErrorCode::CompressionError).await;
-                    }
-                    Ok(Some(next_stage)) => {
-                        let mut state = state.borrow_mut();
-                        let ss = state.streams.get_mut(&frame.stream_id).unwrap();
-                        ss.rx_stage = next_stage;
-                    }
-                    _ => {
-                        // don't care
+                    other => {
+                        send_goaway(
+                            &ev_tx,
+                            &state,
+                            eyre::eyre!("expected continuation frame, got {:?}", other),
+                            KnownErrorCode::ProtocolError,
+                        )
+                        .await
                     }
                 }
-            }
-            FrameType::Unknown(ft) => {
-                trace!(
-                    "ignoring unknown frame with type 0x{:x}, flags 0x{:x}",
-                    ft.ty,
-                    ft.flags
-                );
             }
         }
     }
