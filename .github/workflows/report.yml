@@ -27,6 +27,6 @@ jobs:
       - name: Publish h2spec Report
         uses: dorny/test-reporter@v1
         with:
-          name: H2Spec Results
+          name: h2spec results
           path: h2spec-junit.xml
           reporter: java-junit
