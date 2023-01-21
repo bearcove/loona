@@ -405,6 +405,7 @@ unsafe impl IoBuf for Roll {
         match &self.inner {
             RollInner::Buf(b) => b.stable_ptr(),
             RollInner::Box(b) => b.b.as_ptr(),
+            RollInner::Empty => [].as_ptr(),
         }
     }
 
@@ -452,6 +453,7 @@ impl From<Buf> for Roll {
 enum RollInner {
     Buf(Buf),
     Box(RollBox),
+    Empty,
 }
 
 #[derive(Clone)]
@@ -523,6 +525,7 @@ impl AsRef<[u8]> for Roll {
         match &self.inner {
             RollInner::Buf(b) => b.as_ref(),
             RollInner::Box(b) => b.as_ref(),
+            RollInner::Empty => &[],
         }
     }
 }
@@ -548,17 +551,27 @@ impl RollInner {
                 let (left, right) = b.split_at(at);
                 (RollInner::Box(left), RollInner::Box(right))
             }
+            RollInner::Empty => {
+                assert_eq!(at, 0);
+                (RollInner::Empty, RollInner::Empty)
+            }
         }
     }
 }
 
 impl Roll {
+    /// Creates an empty roll
+    pub fn empty() -> Self {
+        RollInner::Empty.into()
+    }
+
     /// Returns the length of this roll
     #[inline(always)]
     pub fn len(&self) -> usize {
         match &self.inner {
             RollInner::Buf(b) => b.len(),
             RollInner::Box(b) => b.len(),
+            RollInner::Empty => 0,
         }
     }
 
@@ -576,6 +589,7 @@ impl Roll {
         match self.inner {
             RollInner::Buf(b) => b.slice(range).into(),
             RollInner::Box(b) => b.slice(range).into(),
+            RollInner::Empty => panic!("cannot slice empty roll"),
         }
     }
 

@@ -89,14 +89,13 @@ pub async fn serve(
 
     let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<H2ConnEvent>(32);
 
-    let read_task = {
-        let ev_tx = ev_tx.clone();
-        let transport = transport.clone();
-        let state = state.clone();
-
-        h2_read_loop(ev_tx, transport, client_buf, state)
-    };
-
+    let read_task = h2_read_loop(
+        driver.clone(),
+        ev_tx.clone(),
+        transport.clone(),
+        client_buf,
+        state.clone(),
+    );
     let write_task = h2_write_loop(driver, ev_tx, ev_rx, transport, state);
     tokio::try_join!(read_task, write_task)?;
     debug!("joined read_task / write_task");
@@ -105,11 +104,14 @@ pub async fn serve(
 }
 
 async fn h2_read_loop(
+    driver: Rc<impl ServerDriver + 'static>,
     ev_tx: mpsc::Sender<H2ConnEvent>,
     transport: Rc<impl ReadWriteOwned>,
     mut client_buf: RollMut,
     state: Rc<RefCell<ConnState>>,
 ) -> eyre::Result<()> {
+    let mut hpack_dec = hpack::Decoder::new();
+
     loop {
         let frame;
         (client_buf, frame) =
@@ -126,8 +128,8 @@ async fn h2_read_loop(
         // TODO: there might be optimizations to be done for `Data` frames later
         // on, but for now, let's unconditionally read the payload (if it's not
         // empty).
-        let payload: Option<Roll> = if frame.len == 0 {
-            None
+        let mut payload: Roll = if frame.len == 0 {
+            Roll::empty()
         } else {
             let payload_roll;
             (client_buf, payload_roll) = match read_and_parse(
@@ -147,8 +149,7 @@ async fn h2_read_loop(
                     return Ok(());
                 }
             };
-
-            Some(payload_roll)
+            payload_roll
         };
 
         match frame.frame_type {
@@ -162,10 +163,6 @@ async fn h2_read_loop(
                 }
             }
             FrameType::Headers(flags) => {
-                if flags.contains(HeadersFlags::Padded) {
-                    todo!("padded headers are not supported");
-                }
-
                 {
                     let state = state.borrow();
                     if state.streams.contains_key(&frame.stream_id) {
@@ -173,17 +170,185 @@ async fn h2_read_loop(
                     }
                 }
 
-                if (ev_tx.send(H2ConnEvent::ClientFrame(frame, payload)).await).is_err() {
-                    return Err(eyre::eyre!("could not send H2 event"));
-                }
-            }
-            FrameType::Priority => {
-                let payload = if let Some(payload) = payload {
-                    payload
+                let padding_length = if flags.contains(HeadersFlags::Padded) {
+                    if payload.len() < 1 {
+                        todo!(
+                            "handle connection error: padded headers frame, but no padding length"
+                        );
+                    }
+
+                    let padding_length_roll;
+                    (padding_length_roll, payload) = payload.split_at(1);
+                    padding_length_roll[0] as usize
                 } else {
-                    todo!("handle connection error: priority frame with no payload");
+                    0
                 };
 
+                if flags.contains(HeadersFlags::Priority) {
+                    let pri_spec;
+                    (payload, pri_spec) = PrioritySpec::parse(payload)
+                        .finish()
+                        .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
+                    debug!(exclusive = %pri_spec.exclusive, stream_dependency = ?pri_spec.stream_dependency, weight = %pri_spec.weight, "received priority, exclusive");
+                }
+
+                if padding_length > 0 {
+                    if payload.len() < padding_length {
+                        todo!(
+                            "handle connection error: padded headers frame, but not enough padding"
+                        );
+                    }
+
+                    let at = payload.len() - padding_length;
+                    (payload, _) = payload.split_at(at);
+                }
+
+                let mut path: Option<PieceStr> = None;
+                let mut method: Option<Method> = None;
+
+                let mut headers = Headers::default();
+                debug!("receiving headers for stream {}", frame.stream_id);
+
+                if let Err(e) = hpack_dec.decode_with_cb(&payload[..], |key, value| {
+                    debug!(
+                        "HEADER | {}: {}",
+                        std::str::from_utf8(&key).unwrap_or("<non-utf8-key>"),
+                        std::str::from_utf8(&value).unwrap_or("<non-utf8-value>"),
+                    );
+
+                    if &key[..1] == b":" {
+                        // it's a pseudo-header!
+                        match &key[1..] {
+                            b"path" => {
+                                let value: PieceStr =
+                                    Piece::from(value.to_vec()).to_string().unwrap();
+                                path = Some(value);
+                            }
+                            b"method" => {
+                                // TODO: error handling
+                                let value: PieceStr =
+                                    Piece::from(value.to_vec()).to_string().unwrap();
+                                method = Some(Method::try_from(value).unwrap());
+                            }
+                            _ => {
+                                debug!("ignoring pseudo-header");
+                            }
+                        }
+                    } else {
+                        // TODO: what do we do in case of malformed header names?
+                        // ignore it? return a 400?
+                        let name = HeaderName::from_bytes(&key[..]).expect("malformed header name");
+                        let value: Piece = value.to_vec().into();
+                        headers.append(name, value);
+                    }
+                }) {
+                    warn!("hpack error: {e:?}");
+                    let error_code = KnownErrorCode::CompressionError;
+                    debug!("error_code = {error_code:?}");
+                    // FIXME: this is almost definitely wrong. we must separate
+                    // client-initiated streams from server-initiated streams, and
+                    // take stream state into account
+                    let last_stream_id = state
+                        .borrow()
+                        .streams
+                        .keys()
+                        .copied()
+                        .max()
+                        .unwrap_or(StreamId::CONNECTION);
+                    debug!("last_stream_id = {last_stream_id}");
+                    // TODO: is this a good idea?
+                    let additional_debug_data = format!("hpack error: {e:?}").into_bytes();
+
+                    if ev_tx
+                        .send(H2ConnEvent::GoAway {
+                            error_code,
+                            last_stream_id,
+                            additional_debug_data: Piece::Vec(additional_debug_data),
+                        })
+                        .await
+                        .is_err()
+                    {
+                        debug!("error sending goaway");
+                    }
+                    // TODO: move most processing to `h2_read_loop`?
+                    // It's confusing to be doing parsing here.  and we
+                    // can't return because we just sent something to
+                    // `ev_tx` which _we're the ones reading_
+                    continue;
+                }
+
+                // TODO: proper error handling (return 400)
+                let path = path.unwrap();
+                let method = method.unwrap();
+
+                // TODO: this might not be the end of headers
+                if !flags.contains(HeadersFlags::EndHeaders) {
+                    todo!("handle continuation frames");
+                }
+
+                let req = Request {
+                    method,
+                    path,
+                    version: Version::HTTP_2,
+                    headers,
+                };
+
+                let responder = Responder {
+                    encoder: H2Encoder {
+                        stream_id: frame.stream_id,
+                        tx: ev_tx.clone(),
+                        state: EncoderState::ExpectResponseHeaders,
+                    },
+                    state: ExpectResponseHeaders,
+                };
+
+                let (piece_tx, piece_rx) = mpsc::channel::<eyre::Result<Piece>>(1);
+                let is_end_stream = flags.contains(HeadersFlags::EndStream);
+
+                {
+                    let mut state = state.borrow_mut();
+
+                    let ss = if is_end_stream {
+                        StreamState {
+                            rx_stage: StreamRxStage::Done,
+                        }
+                    } else {
+                        StreamState {
+                            rx_stage: StreamRxStage::Body(piece_tx),
+                        }
+                    };
+                    state.streams.insert(frame.stream_id, ss);
+                }
+
+                let req_body = H2Body {
+                    // FIXME: that's not right. h2 requests can still specify
+                    // a content-length
+                    content_length: if is_end_stream { Some(0) } else { None },
+                    eof: is_end_stream,
+                    rx: piece_rx,
+                };
+
+                debug!("Calling handler with the given body");
+                tokio_uring::spawn({
+                    let driver = driver.clone();
+                    async move {
+                        let mut req_body = req_body;
+                        let responder = responder;
+
+                        match driver.handle(req, &mut req_body, responder).await {
+                            Ok(_responder) => {
+                                debug!("Handler completed successfully, gave us a responder");
+                            }
+                            Err(e) => {
+                                // TODO: actually handle that error.
+                                debug!("Handler returned an error: {e}")
+                            }
+                        }
+                    }
+                });
+                debug!("Calling handler with the given body... it returned!");
+            }
+            FrameType::Priority => {
                 let pri_spec = match PrioritySpec::parse(payload) {
                     Ok((_rest, pri_spec)) => pri_spec,
                     Err(e) => todo!("handle connection error: invalid priority frame {e}"),
@@ -219,13 +384,6 @@ async fn h2_read_loop(
                     continue;
                 }
 
-                let payload = match payload {
-                    Some(payload) => payload,
-                    None => {
-                        todo!("handle connection error: ping frame with no payload");
-                    }
-                };
-
                 if ev_tx.send(H2ConnEvent::Ping(payload)).await.is_err() {
                     return Err(eyre::eyre!("could not send H2 ping event"));
                 }
@@ -253,7 +411,6 @@ async fn h2_write_loop(
     transport: Rc<impl ReadWriteOwned>,
     state: Rc<RefCell<ConnState>>,
 ) -> eyre::Result<()> {
-    let mut hpack_dec = hpack::Decoder::new();
     let mut hpack_enc = hpack::Encoder::new();
 
     while let Some(ev) = ev_rx.recv().await {
@@ -267,177 +424,9 @@ async fn h2_write_loop(
                 );
                 res_frame.write(transport.as_ref()).await?;
             }
-            H2ConnEvent::ClientFrame(frame, mut payload) => match frame.frame_type {
+            H2ConnEvent::ClientFrame(frame, payload) => match frame.frame_type {
                 FrameType::Headers(flags) => {
-                    if flags.contains(HeadersFlags::Padded) {
-                        todo!("padded headers are not supported");
-                    }
-
-                    if flags.contains(HeadersFlags::Priority) {
-                        let pri_spec;
-
-                        // TODO: proper error handling (connection error probably)
-                        let payload_in = match payload {
-                            Some(payload) => payload,
-                            None => {
-                                todo!("handle connection error: priority flag set, but no payload");
-                            }
-                        };
-                        let payload_out;
-                        (payload_out, pri_spec) = PrioritySpec::parse(payload_in)
-                            .finish()
-                            .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
-                        debug!(exclusive = %pri_spec.exclusive, stream_dependency = ?pri_spec.stream_dependency, weight = %pri_spec.weight, "received priority, exclusive");
-                        payload = Some(payload_out);
-                    }
-
-                    let mut path: Option<PieceStr> = None;
-                    let mut method: Option<Method> = None;
-
-                    let mut headers = Headers::default();
-                    debug!("receiving headers for stream {}", frame.stream_id);
-
-                    if let Some(payload) = payload {
-                        if let Err(e) = hpack_dec.decode_with_cb(&payload[..], |key, value| {
-                            debug!(
-                                "HEADER | {}: {}",
-                                std::str::from_utf8(&key).unwrap_or("<non-utf8-key>"),
-                                std::str::from_utf8(&value).unwrap_or("<non-utf8-value>"),
-                            );
-
-                            if &key[..1] == b":" {
-                                // it's a pseudo-header!
-                                match &key[1..] {
-                                    b"path" => {
-                                        let value: PieceStr =
-                                            Piece::from(value.to_vec()).to_string().unwrap();
-                                        path = Some(value);
-                                    }
-                                    b"method" => {
-                                        // TODO: error handling
-                                        let value: PieceStr =
-                                            Piece::from(value.to_vec()).to_string().unwrap();
-                                        method = Some(Method::try_from(value).unwrap());
-                                    }
-                                    _ => {
-                                        debug!("ignoring pseudo-header");
-                                    }
-                                }
-                            } else {
-                                // TODO: what do we do in case of malformed header names?
-                                // ignore it? return a 400?
-                                let name = HeaderName::from_bytes(&key[..])
-                                    .expect("malformed header name");
-                                let value: Piece = value.to_vec().into();
-                                headers.append(name, value);
-                            }
-                        }) {
-                            warn!("hpack error: {e:?}");
-                            let error_code = KnownErrorCode::CompressionError;
-                            debug!("error_code = {error_code:?}");
-                            // FIXME: this is almost definitely wrong. we must separate
-                            // client-initiated streams from server-initiated streams, and
-                            // take stream state into account
-                            let last_stream_id = state
-                                .borrow()
-                                .streams
-                                .keys()
-                                .copied()
-                                .max()
-                                .unwrap_or(StreamId::CONNECTION);
-                            debug!("last_stream_id = {last_stream_id}");
-                            // TODO: is this a good idea?
-                            let additional_debug_data = format!("hpack error: {e:?}").into_bytes();
-
-                            if ev_tx
-                                .send(H2ConnEvent::GoAway {
-                                    error_code,
-                                    last_stream_id,
-                                    additional_debug_data: Piece::Vec(additional_debug_data),
-                                })
-                                .await
-                                .is_err()
-                            {
-                                debug!("error sending goaway");
-                            }
-                            // TODO: move most processing to `h2_read_loop`?
-                            // It's confusing to be doing parsing here.  and we
-                            // can't return because we just sent something to
-                            // `ev_tx` which _we're the ones reading_
-                            continue;
-                        }
-                    }
-
-                    // TODO: proper error handling (return 400)
-                    let path = path.unwrap();
-                    let method = method.unwrap();
-
-                    // TODO: this might not be the end of headers
-                    if !flags.contains(HeadersFlags::EndHeaders) {
-                        todo!("handle continuation frames");
-                    }
-
-                    let req = Request {
-                        method,
-                        path,
-                        version: Version::HTTP_2,
-                        headers,
-                    };
-
-                    let responder = Responder {
-                        encoder: H2Encoder {
-                            stream_id: frame.stream_id,
-                            tx: ev_tx.clone(),
-                            state: EncoderState::ExpectResponseHeaders,
-                        },
-                        state: ExpectResponseHeaders,
-                    };
-
-                    let (piece_tx, piece_rx) = mpsc::channel::<eyre::Result<Piece>>(1);
-                    let is_end_stream = flags.contains(HeadersFlags::EndStream);
-
-                    {
-                        let mut state = state.borrow_mut();
-
-                        let ss = if is_end_stream {
-                            StreamState {
-                                rx_stage: StreamRxStage::Done,
-                            }
-                        } else {
-                            StreamState {
-                                rx_stage: StreamRxStage::Body(piece_tx),
-                            }
-                        };
-                        state.streams.insert(frame.stream_id, ss);
-                    }
-
-                    let req_body = H2Body {
-                        // FIXME: that's not right. h2 requests can still specify
-                        // a content-length
-                        content_length: if is_end_stream { Some(0) } else { None },
-                        eof: is_end_stream,
-                        rx: piece_rx,
-                    };
-
-                    debug!("Calling handler with the given body");
-                    tokio_uring::spawn({
-                        let driver = driver.clone();
-                        async move {
-                            let mut req_body = req_body;
-                            let responder = responder;
-
-                            match driver.handle(req, &mut req_body, responder).await {
-                                Ok(_responder) => {
-                                    debug!("Handler completed successfully, gave us a responder");
-                                }
-                                Err(e) => {
-                                    // TODO: actually handle that error.
-                                    debug!("Handler returned an error: {e}")
-                                }
-                            }
-                        }
-                    });
-                    debug!("Calling handler with the given body... it returned!");
+                    panic!("this codepath is dead");
                 }
                 FrameType::Data(flags) => {
                     if flags.contains(DataFlags::Padded) {
@@ -471,10 +460,8 @@ async fn h2_write_loop(
                         }
                     };
 
-                    if let Some(payload) = payload {
-                        if body_tx.send(Ok(payload.into())).await.is_err() {
-                            warn!("TODO: The body is being ignored, we should reset the stream");
-                        }
+                    if body_tx.send(Ok(payload.into())).await.is_err() {
+                        warn!("TODO: The body is being ignored, we should reset the stream");
                     }
                 }
                 _ => {

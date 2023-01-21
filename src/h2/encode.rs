@@ -10,7 +10,7 @@ use super::parse::{Frame, KnownErrorCode, StreamId};
 
 pub(crate) enum H2ConnEvent {
     Ping(Roll),
-    ClientFrame(Frame, Option<Roll>),
+    ClientFrame(Frame, Roll),
     ServerEvent(H2Event),
     AcknowledgeSettings,
     GoAway {
