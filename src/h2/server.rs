@@ -1,8 +1,9 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, collections::HashMap, rc::Rc};
 
 use enumflags2::BitFlags;
 use http::{header::HeaderName, Version};
 use nom::Finish;
+use smallvec::{smallvec, SmallVec};
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 
@@ -46,19 +47,12 @@ enum StreamRxStage {
     Done,
 }
 
-#[derive(Default)]
 struct HeadersData {
     /// If true, no DATA frames follow, cf. https://httpwg.org/specs/rfc9113.html#HttpFraming
     end_stream: bool,
 
-    /// path pseudo-header
-    path: Option<PieceStr>,
-
-    /// method pseudo-header
-    method: Option<Method>,
-
-    /// non-pseudo headers
-    headers: Headers,
+    /// The field block fragments
+    fragments: SmallVec<[Roll; 2]>,
 }
 
 pub async fn serve(
@@ -260,18 +254,22 @@ async fn h2_read_loop(
                 }
 
                 debug!("receiving initial headers for stream {}", frame.stream_id);
-                let mut headers_data = HeadersData {
+                let headers_data = HeadersData {
                     end_stream: flags.contains(HeadersFlags::EndStream),
-                    ..Default::default()
+                    fragments: smallvec![payload],
                 };
 
-                if let Err(e) = read_headers_data(&mut headers_data, &payload[..], &mut hpack_dec) {
-                    send_goaway(&ev_tx, &state, e, KnownErrorCode::CompressionError).await;
-                    continue;
-                }
-
                 if flags.contains(HeadersFlags::EndHeaders) {
-                    end_headers(&ev_tx, frame.stream_id, headers_data, &state, &driver)?;
+                    if let Err(e) = end_headers(
+                        &ev_tx,
+                        frame.stream_id,
+                        headers_data,
+                        &state,
+                        &driver,
+                        &mut hpack_dec,
+                    ) {
+                        send_goaway(&ev_tx, &state, e, KnownErrorCode::CompressionError).await;
+                    }
                 } else {
                     debug!("expecting more headers for stream {}", frame.stream_id);
                     {
@@ -479,62 +477,81 @@ async fn h2_write_loop(
     Ok(())
 }
 
-fn read_headers_data(
-    data: &mut HeadersData,
-    payload: &[u8],
-    hpack_dec: &mut hpack::Decoder,
-) -> eyre::Result<()> {
-    hpack_dec
-        .decode_with_cb(&payload[..], |key, value| {
-            debug!(
-                "HEADER | {}: {}",
-                std::str::from_utf8(&key).unwrap_or("<non-utf8-key>"),
-                std::str::from_utf8(&value).unwrap_or("<non-utf8-value>"),
-            );
-
-            if &key[..1] == b":" {
-                // it's a pseudo-header!
-                match &key[1..] {
-                    b"path" => {
-                        let value: PieceStr = Piece::from(value.to_vec()).to_string().unwrap();
-                        data.path = Some(value);
-                    }
-                    b"method" => {
-                        // TODO: error handling
-                        let value: PieceStr = Piece::from(value.to_vec()).to_string().unwrap();
-                        data.method = Some(Method::try_from(value).unwrap());
-                    }
-                    _ => {
-                        debug!("ignoring pseudo-header");
-                    }
-                }
-            } else {
-                // TODO: what do we do in case of malformed header names?
-                // ignore it? return a 400?
-                let name = HeaderName::from_bytes(&key[..]).expect("malformed header name");
-                let value: Piece = value.to_vec().into();
-                data.headers.append(name, value);
-            }
-        })
-        .map_err(|e| eyre::eyre!("hpack error: {e:?}"))
-}
-
 fn end_headers(
     ev_tx: &mpsc::Sender<H2ConnEvent>,
     stream_id: StreamId,
     data: HeadersData,
     state: &Rc<RefCell<ConnState>>,
     driver: &Rc<impl ServerDriver + 'static>,
+    hpack_dec: &mut hpack::Decoder,
 ) -> eyre::Result<()> {
+    let mut path: Option<PieceStr> = None;
+    let mut method: Option<Method> = None;
+    let mut headers = Headers::default();
+
+    let cb = |key: Cow<[u8]>, value: Cow<[u8]>| {
+        debug!(
+            "HEADER | {}: {}",
+            std::str::from_utf8(&key).unwrap_or("<non-utf8-key>"),
+            std::str::from_utf8(&value).unwrap_or("<non-utf8-value>"),
+        );
+
+        if &key[..1] == b":" {
+            // it's a pseudo-header!
+            match &key[1..] {
+                b"path" => {
+                    let value: PieceStr = Piece::from(value.to_vec()).to_string().unwrap();
+                    path = Some(value);
+                }
+                b"method" => {
+                    // TODO: error handling
+                    let value: PieceStr = Piece::from(value.to_vec()).to_string().unwrap();
+                    method = Some(Method::try_from(value).unwrap());
+                }
+                _ => {
+                    debug!("ignoring pseudo-header");
+                }
+            }
+        } else {
+            // TODO: what do we do in case of malformed header names?
+            // ignore it? return a 400?
+            let name = HeaderName::from_bytes(&key[..]).expect("malformed header name");
+            let value: Piece = value.to_vec().into();
+            headers.append(name, value);
+        }
+    };
+
+    match &data.fragments[..] {
+        [] => unreachable!("must have at least one fragment"),
+        [payload] => {
+            hpack_dec
+                .decode_with_cb(&payload[..], cb)
+                .map_err(|e| eyre::eyre!("hpack error: {e:?}"))?;
+        }
+        _ => {
+            let total_len = data.fragments.iter().map(|f| f.len()).sum();
+            // this is a slow path, let's do a little heap allocation. we could
+            // be using `RollMut` for this, but it would probably need to resize
+            // a bunch
+            let mut payload = Vec::with_capacity(total_len);
+            for frag in data.fragments {
+                payload.extend_from_slice(&frag[..]);
+            }
+            hpack_dec
+                .decode_with_cb(&payload[..], cb)
+                .map_err(|e| eyre::eyre!("hpack error: {e:?}"))?;
+        }
+    };
+
     // TODO: proper error handling (return 400)
-    let path = data.path.unwrap();
-    let method = data.method.unwrap();
+    let path = path.unwrap();
+    let method = method.unwrap();
 
     let req = Request {
         method,
         path,
         version: Version::HTTP_2,
-        headers: data.headers,
+        headers,
     };
 
     let responder = Responder {
