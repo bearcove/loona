@@ -301,6 +301,9 @@ async fn h2_read_loop(
                             }
                         } else {
                             debug!("expecting more headers for stream {}", frame.stream_id);
+                            continuation_state =
+                                ContinuationState::ContinuingHeaders(frame.stream_id);
+
                             {
                                 let mut state = state.borrow_mut();
                                 state.streams.insert(
@@ -414,8 +417,6 @@ async fn h2_read_loop(
                                         )
                                         .map(Some)
                                     } else {
-                                        continuation_state =
-                                            ContinuationState::ContinuingHeaders(frame.stream_id);
                                         debug!(
                                             "have {} field block fragments so far, will read CONTINUATION frames",
                                             headers_data.fragments.len()
