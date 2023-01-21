@@ -3,7 +3,6 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use enumflags2::BitFlags;
 use http::{header::HeaderName, Version};
 use nom::Finish;
-use pretty_hex::PrettyHex;
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 
@@ -301,9 +300,9 @@ async fn h2_write_loop(
                     if let Some(payload) = payload {
                         if let Err(e) = hpack_dec.decode_with_cb(&payload[..], |key, value| {
                             debug!(
-                                "got key: {:?}\nvalue: {:?}",
-                                key.hex_dump(),
-                                value.hex_dump()
+                                "HEADER | {}: {}",
+                                std::str::from_utf8(&key).unwrap_or("<non-utf8-key>"),
+                                std::str::from_utf8(&value).unwrap_or("<non-utf8-value>"),
                             );
 
                             if &key[..1] == b":" {
@@ -320,8 +319,8 @@ async fn h2_write_loop(
                                             Piece::from(value.to_vec()).to_string().unwrap();
                                         method = Some(Method::try_from(value).unwrap());
                                     }
-                                    other => {
-                                        debug!("ignoring pseudo-header {:?}", other.hex_dump());
+                                    _ => {
+                                        debug!("ignoring pseudo-header");
                                     }
                                 }
                             } else {
@@ -474,7 +473,7 @@ async fn h2_write_loop(
 
                     if let Some(payload) = payload {
                         if body_tx.send(Ok(payload.into())).await.is_err() {
-                            return Err(eyre::eyre!("ev_tx receiver dropped"));
+                            warn!("TODO: The body is being ignored, we should reset the stream");
                         }
                     }
                 }

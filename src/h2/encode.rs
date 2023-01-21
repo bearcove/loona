@@ -2,7 +2,7 @@ use std::fmt;
 
 use http::{StatusCode, Version};
 use tokio::sync::mpsc;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::{h1::body::BodyWriteMode, Encoder, Piece, Response, Roll};
 
@@ -73,6 +73,8 @@ impl H2Encoder {
 
 impl Encoder for H2Encoder {
     async fn write_response(&mut self, res: Response) -> eyre::Result<()> {
+        debug!("H2Encoder::write_response");
+
         // TODO: don't panic here
         assert!(matches!(self.state, EncoderState::ExpectResponseHeaders));
 
@@ -88,6 +90,8 @@ impl Encoder for H2Encoder {
         chunk: crate::Piece,
         _mode: BodyWriteMode,
     ) -> eyre::Result<()> {
+        debug!("H2Encoder::write_body_chunk");
+
         assert!(matches!(self.state, EncoderState::ExpectResponseBody));
 
         self.send(H2EventPayload::BodyChunk(chunk)).await?;
@@ -96,6 +100,8 @@ impl Encoder for H2Encoder {
 
     // TODO: BodyWriteMode is not relevant for h2
     async fn write_body_end(&mut self, _mode: BodyWriteMode) -> eyre::Result<()> {
+        debug!("H2Encoder::write_body_end");
+
         assert!(matches!(self.state, EncoderState::ExpectResponseBody));
 
         self.send(H2EventPayload::BodyEnd).await?;
