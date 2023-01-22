@@ -1,7 +1,11 @@
 use std::{borrow::Cow, cell::RefCell, collections::HashMap, rc::Rc};
 
 use enumflags2::BitFlags;
-use http::{header::HeaderName, Version};
+use http::{
+    header::{self, HeaderName},
+    uri::{Authority, PathAndQuery, Scheme},
+    Version,
+};
 use nom::Finish;
 use smallvec::{smallvec, SmallVec};
 use tokio::sync::mpsc;
@@ -607,8 +611,11 @@ fn end_headers(
     driver: &Rc<impl ServerDriver + 'static>,
     hpack_dec: &mut hring_hpack::Decoder,
 ) -> eyre::Result<StreamRxStage> {
-    let mut path: Option<PieceStr> = None;
     let mut method: Option<Method> = None;
+    let mut scheme: Option<Scheme> = None;
+    let mut path: Option<PieceStr> = None;
+    let mut authority: Option<Authority> = None;
+
     let mut headers = Headers::default();
 
     let cb = |key: Cow<[u8]>, value: Cow<[u8]>| {
@@ -620,15 +627,28 @@ fn end_headers(
 
         if &key[..1] == b":" {
             // it's a pseudo-header!
+            // TODO: reject headers that occur after pseudo-headers
+            // TODO: reject duplicate pseudo-headers
             match &key[1..] {
-                b"path" => {
-                    let value: PieceStr = Piece::from(value.to_vec()).to_string().unwrap();
-                    path = Some(value);
-                }
                 b"method" => {
                     // TODO: error handling
-                    let value: PieceStr = Piece::from(value.to_vec()).to_string().unwrap();
+                    let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
                     method = Some(Method::try_from(value).unwrap());
+                }
+                b"scheme" => {
+                    // TODO: error handling
+                    let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
+                    scheme = Some(value.parse().unwrap());
+                }
+                b"path" => {
+                    // TODO: error handling
+                    let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
+                    path = Some(value);
+                }
+                b"authority" => {
+                    // TODO: error handling
+                    let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
+                    authority = Some(value.parse().unwrap());
                 }
                 _ => {
                     debug!("ignoring pseudo-header");
@@ -665,13 +685,35 @@ fn end_headers(
         }
     };
 
+    // TODO: cf. https://httpwg.org/specs/rfc9113.html#HttpRequest
+    // A server SHOULD treat a request as malformed if it contains a Host header
+    // field that identifies an entity that differs from the entity in the
+    // ":authority" pseudo-header field.
+
     // TODO: proper error handling (return 400)
-    let path = path.unwrap();
     let method = method.unwrap();
+    let scheme = scheme.unwrap();
+
+    let path = path.unwrap();
+    let path_and_query: PathAndQuery = path.parse().unwrap();
+
+    let authority = match authority {
+        Some(authority) => Some(authority),
+        None => headers
+            .get(header::HOST)
+            .map(|host| host.as_str().unwrap().parse().unwrap()),
+    };
+
+    let mut uri_parts: http::uri::Parts = Default::default();
+    uri_parts.scheme = Some(scheme);
+    uri_parts.authority = authority;
+    uri_parts.path_and_query = Some(path_and_query);
+
+    let uri = http::uri::Uri::from_parts(uri_parts).unwrap();
 
     let req = Request {
         method,
-        path,
+        uri,
         version: Version::HTTP_2,
         headers,
     };

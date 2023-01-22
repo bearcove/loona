@@ -126,7 +126,7 @@ impl ServerDriver for SDriver {
         req_body: &mut impl Body,
         respond: Responder<E, ExpectResponseHeaders>,
     ) -> eyre::Result<Responder<E, ResponseDone>> {
-        info!("Handling {:?} {}", req.method, req.path);
+        info!("Handling {:?} {}", req.method, req.uri);
 
         let addr = "httpbingo.org:80"
             .to_socket_addrs()?
