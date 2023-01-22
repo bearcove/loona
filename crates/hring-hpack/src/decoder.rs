@@ -48,6 +48,8 @@
 use std::borrow::Cow;
 use std::num::Wrapping;
 
+use tracing::{debug, info};
+
 use super::huffman::HuffmanDecoder;
 use super::huffman::HuffmanDecoderError;
 

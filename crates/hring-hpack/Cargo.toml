@@ -22,7 +22,7 @@ documentation = "https://docs.rs/hpack-hring"
 interop_tests = ["rustc-serialize"]
 
 [dependencies]
-log = "^0.3"
+tracing = "0.1"
 
 [dependencies.rustc-serialize]
 version = "^0.3"
