@@ -62,12 +62,12 @@ use super::{HeaderTable, StaticTable};
 /// Returns a tuple representing the decoded integer and the number
 /// of bytes from the buffer that were used.
 fn decode_integer(buf: &[u8], prefix_size: u8) -> Result<(usize, usize), DecoderError> {
-    if prefix_size < 1 || prefix_size > 8 {
+    if !(1..=8).contains(&prefix_size) {
         return Err(DecoderError::IntegerDecodingError(
             IntegerDecodingError::InvalidPrefix,
         ));
     }
-    if buf.len() < 1 {
+    if buf.is_empty() {
         return Err(DecoderError::IntegerDecodingError(
             IntegerDecodingError::NotEnoughOctets,
         ));
@@ -129,7 +129,7 @@ fn decode_integer(buf: &[u8], prefix_size: u8) -> Result<(usize, usize), Decoder
 ///
 /// Returns the decoded string in a newly allocated `Vec` and the number of
 /// bytes consumed from the given buffer.
-fn decode_string<'a>(buf: &'a [u8]) -> Result<(Cow<'a, [u8]>, usize), DecoderError> {
+fn decode_string(buf: &[u8]) -> Result<(Cow<'_, [u8]>, usize), DecoderError> {
     let (len, consumed) = try!(decode_integer(buf, 7));
     debug!("decode_string: Consumed = {}, len = {}", consumed, len);
     if consumed + len > buf.len() {
@@ -247,12 +247,18 @@ pub struct Decoder<'a> {
     header_table: HeaderTable<'a>,
 }
 
+impl Default for Decoder<'_> {
+    fn default() -> Decoder<'static> {
+        Decoder::with_static_table(STATIC_TABLE)
+    }
+}
+
 /// Represents a decoder of HPACK encoded headers. Maintains the state
 /// necessary to correctly decode subsequent HPACK blocks.
 impl<'a> Decoder<'a> {
     /// Creates a new `Decoder` with all settings set to default values.
     pub fn new() -> Decoder<'a> {
-        Decoder::with_static_table(STATIC_TABLE)
+        Default::default()
     }
 
     /// Creates a new `Decoder` with the given slice serving as its static

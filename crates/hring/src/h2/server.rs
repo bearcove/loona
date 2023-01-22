@@ -233,10 +233,8 @@ async fn h2_read_loop(
                         }
 
                         let padding_length = if flags.contains(HeadersFlags::Padded) {
-                            if payload.len() < 1 {
-                                todo!(
-                            "handle connection error: padded headers frame, but no padding length"
-                        );
+                            if payload.is_empty() {
+                                todo!("handle connection error: padded headers frame, but no padding length");
                             }
 
                             let padding_length_roll;
@@ -680,7 +678,7 @@ fn end_headers(
 
     let responder = Responder {
         encoder: H2Encoder {
-            stream_id: stream_id,
+            stream_id,
             tx: ev_tx.clone(),
             state: EncoderState::ExpectResponseHeaders,
         },
