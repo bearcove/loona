@@ -46,9 +46,9 @@ impl ServerDriver for SDriver {
         respond: Responder<E, ExpectResponseHeaders>,
     ) -> color_eyre::Result<Responder<E, ResponseDone>> {
         tracing::info!(
-            "Handling {:?} {:?}, content_len = {:?}",
+            "Handling {:?} {}, content_len = {:?}",
             req.method,
-            req.path,
+            req.uri,
             req_body.content_len()
         );
 
