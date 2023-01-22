@@ -1437,6 +1437,8 @@ mod interop_tests {
     use rustc_serialize::Decoder as JsonDecoder;
     use rustc_serialize::{json, Decodable};
 
+    use tracing::debug;
+
     use super::Decoder;
 
     /// Defines the structure of a single part of a story file. We only care
@@ -1483,7 +1485,7 @@ mod interop_tests {
                             // ...since it's an array, we step into the sequence
                             // and read each element.
                             let mut ret: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-                            for i in (0..len) {
+                            for i in 0..len {
                                 // Individual elements are encoded as a simple
                                 // JSON object with one key: value pair.
                                 let header: HashMap<String, String> =
