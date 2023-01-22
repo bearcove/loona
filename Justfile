@@ -8,7 +8,7 @@ ci-test:
 	#!/bin/bash -eux
 	just build-testbed
 	cargo llvm-cov --no-report nextest
-	cargo llvm-cov --no-report run --manifest-path h2spec-server/Cargo.toml -- -j 'target/h2spec-junit.xml'
+	cargo llvm-cov --no-report run --manifest-path test-crates/hring-h2spec/Cargo.toml -- -j 'target/h2spec-junit.xml'
 	cargo llvm-cov report --lcov --output-path coverage.lcov
 	codecov
 
@@ -22,7 +22,7 @@ test *args:
 	RUST_BACKTRACE=1 cargo nextest run {{args}}
 
 build-testbed:
-	cargo build --release --manifest-path hyper-testbed/Cargo.toml
+	cargo build --release --manifest-path test-crates/hyper-testbed/Cargo.toml
 	
 single-test *args:
 	just test --no-capture {{args}}
@@ -32,10 +32,9 @@ bench *args:
 
 h2spec *args:
 	#!/bin/bash -eux
-	echo "This requires h2spec to be installed: https://github.com/summerwind/h2spec"
 	export RUST_LOG="${RUST_LOG:-debug,hpack=info}"
 	export RUST_BACKTRACE=1
-	cargo run --manifest-path h2spec-server/Cargo.toml -- {{args}}
+	cargo run --manifest-path test-crates/hring-h2spec/Cargo.toml -- {{args}}
 
 check:
 	cargo clippy --all-targets
