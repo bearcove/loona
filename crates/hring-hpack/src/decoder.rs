@@ -1426,6 +1426,7 @@ mod tests {
 /// published at
 /// [http2jp/hpack-test-case](https://github.com/http2jp/hpack-test-case)
 #[cfg(test)]
+#[cfg(feature = "interop-tests")]
 mod interop_tests {
     use std::fs;
     use std::path::{Path, PathBuf};
