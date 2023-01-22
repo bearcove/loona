@@ -7,7 +7,6 @@ extern crate log;
 #[cfg(feature = "interop_tests")]
 extern crate rustc_serialize;
 
-use std::collections::vec_deque;
 use std::collections::VecDeque;
 use std::fmt;
 
@@ -18,28 +17,6 @@ pub use self::encoder::Encoder;
 pub mod decoder;
 pub mod encoder;
 pub mod huffman;
-
-/// An `Iterator` through elements of the `DynamicTable`.
-///
-/// The implementation of the iterator itself is very tightly coupled
-/// to the implementation of the `DynamicTable`.
-///
-/// This iterator returns tuples of slices. The tuples themselves are
-/// constructed as new instances, containing a borrow from the `Vec`s
-/// representing the underlying Headers.
-struct DynamicTableIter<'a> {
-    /// Stores an iterator through the underlying structure that the
-    /// `DynamicTable` uses
-    inner: vec_deque::Iter<'a, (Vec<u8>, Vec<u8>)>,
-}
-
-impl<'a> Iterator for DynamicTableIter<'a> {
-    type Item = (&'a [u8], &'a [u8]);
-
-    fn next(&mut self) -> Option<(&'a [u8], &'a [u8])> {
-        self.inner.next().as_ref().map(|(a, b)| (&a[..], &b[..]))
-    }
-}
 
 /// A struct representing the dynamic table that needs to be maintained by the
 /// coder.
@@ -102,10 +79,8 @@ impl DynamicTable {
     /// slices are borrowed from their representations in the `DynamicTable`
     /// internal implementation, which means that it is possible only to
     /// iterate through the headers, not mutate them.
-    fn iter(&self) -> DynamicTableIter {
-        DynamicTableIter {
-            inner: self.table.iter(),
-        }
+    fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
+        self.table.iter().map(|(a, b)| (&a[..], &b[..]))
     }
 
     /// Sets the new maximum table size.
