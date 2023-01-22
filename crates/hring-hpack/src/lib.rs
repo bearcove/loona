@@ -202,6 +202,14 @@ impl fmt::Debug for DynamicTable {
 /// Represents the type of the static table, as defined by the HPACK spec.
 type StaticTable<'a> = &'a [(&'a [u8], &'a [u8])];
 
+type HeaderTableIterInner<'a> = iter::Chain<
+    iter::Map<
+        slice::Iter<'a, (&'a [u8], &'a [u8])>,
+        fn(&'a (&'a [u8], &'a [u8])) -> (&'a [u8], &'a [u8]),
+    >,
+    DynamicTableIter<'a>,
+>;
+
 /// Implements an iterator through the entire `HeaderTable`.
 ///
 /// Yields first the elements from the static table, followed by elements from
@@ -218,13 +226,7 @@ struct HeaderTableIter<'a> {
     // Represents a chain of static-table -> dynamic-table elements.
     // The mapper is required to transform the elements yielded from the static
     // table to a type that matches the elements yielded from the dynamic table.
-    inner: iter::Chain<
-        iter::Map<
-            slice::Iter<'a, (&'a [u8], &'a [u8])>,
-            fn(&'a (&'a [u8], &'a [u8])) -> (&'a [u8], &'a [u8]),
-        >,
-        DynamicTableIter<'a>,
-    >,
+    inner: HeaderTableIterInner<'a>,
 }
 
 impl<'a> Iterator for HeaderTableIter<'a> {

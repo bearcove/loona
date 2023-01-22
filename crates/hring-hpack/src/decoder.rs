@@ -253,6 +253,9 @@ impl Default for Decoder<'_> {
     }
 }
 
+type DecodedLiteralCow<'a> = ((Cow<'a, [u8]>, Cow<'a, [u8]>), usize);
+type DecodedLiteralSlice<'a> = ((&'a [u8], &'a [u8]), usize);
+
 /// Represents a decoder of HPACK encoded headers. Maintains the state
 /// necessary to correctly decode subsequent HPACK blocks.
 impl<'a> Decoder<'a> {
@@ -387,7 +390,7 @@ impl<'a> Decoder<'a> {
     }
 
     /// Decodes an indexed header representation.
-    fn decode_indexed(&self, buf: &[u8]) -> Result<((&[u8], &[u8]), usize), DecoderError> {
+    fn decode_indexed(&self, buf: &[u8]) -> Result<DecodedLiteralSlice<'_>, DecoderError> {
         let (index, consumed) = decode_integer(buf, 7)?;
         debug!(
             "Decoding indexed: index = {}, consumed = {}",
@@ -420,7 +423,7 @@ impl<'a> Decoder<'a> {
         &'b self,
         buf: &'b [u8],
         index: bool,
-    ) -> Result<((Cow<[u8]>, Cow<[u8]>), usize), DecoderError> {
+    ) -> Result<DecodedLiteralCow<'b>, DecoderError> {
         let prefix = if index { 6 } else { 4 };
         let (table_index, mut consumed) = decode_integer(buf, prefix)?;
 
