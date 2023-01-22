@@ -4,9 +4,10 @@
 #![feature(async_fn_in_trait)]
 
 use hring::{
-    h1, Body, BodyChunk, Encoder, ExpectResponseHeaders, Responder, Response, ResponseDone,
-    RollMut, ServerDriver,
+    h1, Body, BodyChunk, Encoder, ExpectResponseHeaders, HeadersExt, Responder, Response,
+    ResponseDone, RollMut, ServerDriver,
 };
+use http::StatusCode;
 use std::{cell::RefCell, future::Future, net::SocketAddr, rc::Rc};
 use tracing::debug;
 
@@ -22,8 +23,17 @@ impl ServerDriver for ProxyDriver {
         &self,
         req: hring::Request,
         req_body: &mut impl Body,
-        respond: Responder<E, ExpectResponseHeaders>,
+        mut respond: Responder<E, ExpectResponseHeaders>,
     ) -> eyre::Result<Responder<E, ResponseDone>> {
+        if req.headers.expects_100_continue() {
+            debug!("Sending 100-continue");
+            let res = Response {
+                status: StatusCode::CONTINUE,
+                ..Default::default()
+            };
+            respond.write_interim_response(res).await?;
+        }
+
         let transport = {
             let mut pool = self.pool.borrow_mut();
             pool.pop()
