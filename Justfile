@@ -32,10 +32,9 @@ bench *args:
 
 h2spec *args:
 	#!/bin/bash -eux
-	echo "This requires h2spec to be installed: https://github.com/summerwind/h2spec"
 	export RUST_LOG="${RUST_LOG:-debug,hpack=info}"
 	export RUST_BACKTRACE=1
-	cargo run --manifest-path h2spec-server/Cargo.toml -- {{args}}
+	cargo run --manifest-path test-crates/hring-h2spec/Cargo.toml -- {{args}}
 
 check:
 	cargo clippy --all-targets

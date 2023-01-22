@@ -1,7 +1,7 @@
 #![allow(incomplete_features)]
 #![feature(async_fn_in_trait)]
 
-use std::{collections::VecDeque, net::SocketAddr, rc::Rc};
+use std::{collections::VecDeque, net::SocketAddr, path::PathBuf, rc::Rc};
 
 use hring::{
     http::{StatusCode, Version},
@@ -10,6 +10,7 @@ use hring::{
     ResponseDone, RollMut, ServerDriver,
 };
 use tokio::process::Command;
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 fn main() {
@@ -21,7 +22,18 @@ fn main() {
         }))
         .init();
 
-    hring::tokio_uring::start(async move { real_main().await.unwrap() })
+    let h2spec_binary = match which::which("h2spec") {
+        Ok(h2spec_binary) => {
+            info!("Using h2spec binary from {}", h2spec_binary.display());
+            h2spec_binary
+        }
+        Err(_) => {
+            error!("Couldn't find h2spec binary in PATH, see https://github.com/summerwind/h2spec");
+            std::process::exit(1);
+        }
+    };
+
+    hring::tokio_uring::start(async move { real_main(h2spec_binary).await.unwrap() })
 }
 
 struct SDriver;
@@ -78,9 +90,10 @@ impl Body for TestBody {
     }
 }
 
-async fn real_main() -> color_eyre::Result<()> {
-    let addr: SocketAddr = "[::]:8888".parse()?;
+async fn real_main(h2spec_binary: PathBuf) -> color_eyre::Result<()> {
+    let addr: SocketAddr = "[::]:0".parse()?;
     let ln = TcpListener::bind(addr)?;
+    let addr = ln.local_addr()?;
     tracing::info!("Listening on {}", ln.local_addr()?);
 
     let _task = tokio_uring::spawn(async move { run_server(ln).await.unwrap() });
@@ -91,9 +104,9 @@ async fn real_main() -> color_eyre::Result<()> {
     }
     tracing::info!("Custom args: {args:?}");
 
-    Command::new("h2spec")
+    Command::new(h2spec_binary)
         .arg("-p")
-        .arg("8888")
+        .arg(&format!("{}", addr.port()))
         .arg("-o")
         .arg("1")
         .args(&args)

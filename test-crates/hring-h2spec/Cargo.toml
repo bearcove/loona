@@ -7,7 +7,8 @@ edition = "2021"
 
 [dependencies]
 color-eyre = "0.6.2"
-hring = { version = "0.1.0", path = ".." }
+hring = { version = "0.1.0", path = "../.." }
 tokio = { version = "1.23.0", features = ["full"] }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
+which = "4.4.0"
