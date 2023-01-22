@@ -174,7 +174,7 @@ async fn h2_read_loop(
                 match frame.frame_type {
                     FrameType::Data(flags) => {
                         if flags.contains(DataFlags::Padded) {
-                            if payload.len() < 1 {
+                            if payload.is_empty() {
                                 todo!("handle connection error: padded data frame, but no padding length");
                             }
 

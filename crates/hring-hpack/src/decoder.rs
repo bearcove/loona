@@ -130,7 +130,7 @@ fn decode_integer(buf: &[u8], prefix_size: u8) -> Result<(usize, usize), Decoder
 /// Returns the decoded string in a newly allocated `Vec` and the number of
 /// bytes consumed from the given buffer.
 fn decode_string(buf: &[u8]) -> Result<(Cow<'_, [u8]>, usize), DecoderError> {
-    let (len, consumed) = try!(decode_integer(buf, 7));
+    let (len, consumed) = decode_integer(buf, 7)?;
     debug!("decode_string: Consumed = {}, len = {}", consumed, len);
     if consumed + len > buf.len() {
         return Err(DecoderError::StringDecodingError(
@@ -313,7 +313,7 @@ impl<'a> Decoder<'a> {
             let buffer_leftover = &buf[current_octet_index..];
             let consumed = match FieldRepresentation::new(initial_octet) {
                 FieldRepresentation::Indexed => {
-                    let ((name, value), consumed) = try!(self.decode_indexed(buffer_leftover));
+                    let ((name, value), consumed) = self.decode_indexed(buffer_leftover)?;
                     cb(Cow::Borrowed(name), Cow::Borrowed(value));
 
                     consumed
@@ -321,7 +321,7 @@ impl<'a> Decoder<'a> {
                 FieldRepresentation::LiteralWithIncrementalIndexing => {
                     let ((name, value), consumed) = {
                         let ((name, value), consumed) =
-                            try!(self.decode_literal(buffer_leftover, true));
+                            self.decode_literal(buffer_leftover, true)?;
                         cb(Cow::Borrowed(&name), Cow::Borrowed(&value));
 
                         // Since we are to add the decoded header to the header table, we need to
@@ -341,8 +341,7 @@ impl<'a> Decoder<'a> {
                     consumed
                 }
                 FieldRepresentation::LiteralWithoutIndexing => {
-                    let ((name, value), consumed) =
-                        try!(self.decode_literal(buffer_leftover, false));
+                    let ((name, value), consumed) = self.decode_literal(buffer_leftover, false)?;
                     cb(name, value);
 
                     consumed
@@ -352,8 +351,7 @@ impl<'a> Decoder<'a> {
                     // we would need to make sure not to change the
                     // representation received here. We don't care about this
                     // for now.
-                    let ((name, value), consumed) =
-                        try!(self.decode_literal(buffer_leftover, false));
+                    let ((name, value), consumed) = self.decode_literal(buffer_leftover, false)?;
                     cb(name, value);
 
                     consumed
@@ -381,21 +379,22 @@ impl<'a> Decoder<'a> {
     pub fn decode(&mut self, buf: &[u8]) -> DecoderResult {
         let mut header_list = Vec::new();
 
-        try!(self.decode_with_cb(buf, |n, v| header_list
-            .push((n.into_owned(), v.into_owned()))));
+        self.decode_with_cb(buf, |n, v| {
+            header_list.push((n.into_owned(), v.into_owned()))
+        })?;
 
         Ok(header_list)
     }
 
     /// Decodes an indexed header representation.
     fn decode_indexed(&self, buf: &[u8]) -> Result<((&[u8], &[u8]), usize), DecoderError> {
-        let (index, consumed) = try!(decode_integer(buf, 7));
+        let (index, consumed) = decode_integer(buf, 7)?;
         debug!(
             "Decoding indexed: index = {}, consumed = {}",
             index, consumed
         );
 
-        let (name, value) = try!(self.get_from_table(index));
+        let (name, value) = self.get_from_table(index)?;
 
         Ok(((name, value), consumed))
     }
@@ -423,22 +422,22 @@ impl<'a> Decoder<'a> {
         index: bool,
     ) -> Result<((Cow<[u8]>, Cow<[u8]>), usize), DecoderError> {
         let prefix = if index { 6 } else { 4 };
-        let (table_index, mut consumed) = try!(decode_integer(buf, prefix));
+        let (table_index, mut consumed) = decode_integer(buf, prefix)?;
 
         // First read the name appropriately
         let name = if table_index == 0 {
             // Read name string as literal
-            let (name, name_len) = try!(decode_string(&buf[consumed..]));
+            let (name, name_len) = decode_string(&buf[consumed..])?;
             consumed += name_len;
             name
         } else {
             // Read name indexed from the table
-            let (name, _) = try!(self.get_from_table(table_index));
+            let (name, _) = self.get_from_table(table_index)?;
             Cow::Borrowed(name)
         };
 
         // Now read the value as a literal...
-        let (value, value_len) = try!(decode_string(&buf[consumed..]));
+        let (value, value_len) = decode_string(&buf[consumed..])?;
         consumed += value_len;
 
         Ok(((name, value), consumed))
@@ -560,92 +559,92 @@ mod tests {
 
     #[test]
     fn test_detect_literal_without_indexing() {
-        assert!(match FieldRepresentation::new(0) {
-            FieldRepresentation::LiteralWithoutIndexing => true,
-            _ => false,
-        });
-        assert!(match FieldRepresentation::new((1 << 4) - 1) {
-            FieldRepresentation::LiteralWithoutIndexing => true,
-            _ => false,
-        });
-        assert!(match FieldRepresentation::new(2) {
-            FieldRepresentation::LiteralWithoutIndexing => true,
-            _ => false,
-        });
+        assert!(matches!(
+            FieldRepresentation::new(0),
+            FieldRepresentation::LiteralWithoutIndexing
+        ));
+        assert!(matches!(
+            FieldRepresentation::new((1 << 4) - 1),
+            FieldRepresentation::LiteralWithoutIndexing
+        ));
+        assert!(matches!(
+            FieldRepresentation::new(2),
+            FieldRepresentation::LiteralWithoutIndexing
+        ));
     }
 
     #[test]
     fn test_detect_literal_never_indexed() {
-        assert!(match FieldRepresentation::new(1 << 4) {
-            FieldRepresentation::LiteralNeverIndexed => true,
-            _ => false,
-        });
-        assert!(match FieldRepresentation::new((1 << 4) + 15) {
-            FieldRepresentation::LiteralNeverIndexed => true,
-            _ => false,
-        });
+        assert!(matches!(
+            FieldRepresentation::new(1 << 4),
+            FieldRepresentation::LiteralNeverIndexed
+        ));
+        assert!(matches!(
+            FieldRepresentation::new((1 << 4) + 15),
+            FieldRepresentation::LiteralNeverIndexed
+        ));
     }
 
     #[test]
     fn test_detect_literal_incremental_indexing() {
-        assert!(match FieldRepresentation::new(1 << 6) {
-            FieldRepresentation::LiteralWithIncrementalIndexing => true,
-            _ => false,
-        });
-        assert!(match FieldRepresentation::new((1 << 6) + (1 << 4)) {
-            FieldRepresentation::LiteralWithIncrementalIndexing => true,
-            _ => false,
-        });
-        assert!(match FieldRepresentation::new((1 << 7) - 1) {
-            FieldRepresentation::LiteralWithIncrementalIndexing => true,
-            _ => false,
-        });
+        assert!(matches!(
+            FieldRepresentation::new(1 << 6),
+            FieldRepresentation::LiteralWithIncrementalIndexing
+        ));
+        assert!(matches!(
+            FieldRepresentation::new((1 << 6) + (1 << 4)),
+            FieldRepresentation::LiteralWithIncrementalIndexing
+        ));
+        assert!(matches!(
+            FieldRepresentation::new((1 << 7) - 1),
+            FieldRepresentation::LiteralWithIncrementalIndexing
+        ));
     }
 
     #[test]
     fn test_detect_indexed() {
-        assert!(match FieldRepresentation::new(1 << 7) {
-            FieldRepresentation::Indexed => true,
-            _ => false,
-        });
-        assert!(match FieldRepresentation::new((1 << 7) + (1 << 4)) {
-            FieldRepresentation::Indexed => true,
-            _ => false,
-        });
-        assert!(match FieldRepresentation::new((1 << 7) + (1 << 5)) {
-            FieldRepresentation::Indexed => true,
-            _ => false,
-        });
-        assert!(match FieldRepresentation::new((1 << 7) + (1 << 6)) {
-            FieldRepresentation::Indexed => true,
-            _ => false,
-        });
-        assert!(match FieldRepresentation::new(255) {
-            FieldRepresentation::Indexed => true,
-            _ => false,
-        });
+        assert!(matches!(
+            FieldRepresentation::new(1 << 7),
+            FieldRepresentation::Indexed
+        ));
+        assert!(matches!(
+            FieldRepresentation::new((1 << 7) + (1 << 4)),
+            FieldRepresentation::Indexed
+        ));
+        assert!(matches!(
+            FieldRepresentation::new((1 << 7) + (1 << 5)),
+            FieldRepresentation::Indexed
+        ));
+        assert!(matches!(
+            FieldRepresentation::new((1 << 7) + (1 << 6)),
+            FieldRepresentation::Indexed
+        ));
+        assert!(matches!(
+            FieldRepresentation::new(255),
+            FieldRepresentation::Indexed
+        ));
     }
 
     #[test]
     fn test_detect_dynamic_table_size_update() {
-        assert!(match FieldRepresentation::new(1 << 5) {
-            FieldRepresentation::SizeUpdate => true,
-            _ => false,
-        });
-        assert!(match FieldRepresentation::new((1 << 5) + (1 << 4)) {
-            FieldRepresentation::SizeUpdate => true,
-            _ => false,
-        });
-        assert!(match FieldRepresentation::new((1 << 6) - 1) {
-            FieldRepresentation::SizeUpdate => true,
-            _ => false,
-        });
+        assert!(matches!(
+            FieldRepresentation::new(1 << 5),
+            FieldRepresentation::SizeUpdate
+        ));
+        assert!(matches!(
+            FieldRepresentation::new((1 << 5) + (1 << 4)),
+            FieldRepresentation::SizeUpdate
+        ));
+        assert!(matches!(
+            FieldRepresentation::new((1 << 6) - 1),
+            FieldRepresentation::SizeUpdate
+        ));
     }
 
     #[test]
     fn test_decode_string_no_huffman() {
         /// Checks that the result matches the expectation, but also that the `Cow` is borrowed!
-        fn assert_borrowed_eq<'a>(expected: (&[u8], usize), result: (Cow<'a, [u8]>, usize)) {
+        fn assert_borrowed_eq(expected: (&[u8], usize), result: (Cow<'_, [u8]>, usize)) {
             let (expected_str, expected_len) = expected;
             let (actual_str, actual_len) = result;
             assert_eq!(expected_len, actual_len);
@@ -1347,7 +1346,7 @@ mod tests {
             assert!(
                 is_decoder_error(
                     &DecoderError::HeaderIndexOutOfBounds,
-                    &decoder.decode(&raw_message)
+                    &decoder.decode(raw_message)
                 ),
                 "Expected index out of bounds"
             );
@@ -1366,12 +1365,12 @@ mod tests {
             0x90, 0xf4, 0xfe,
         ];
 
-        assert!(match decoder.decode(&hex_dump) {
-            Err(DecoderError::StringDecodingError(StringDecodingError::HuffmanDecoderError(
-                HuffmanDecoderError::InvalidPadding,
-            ))) => true,
-            _ => false,
-        });
+        assert!(matches!(
+            decoder.decode(&hex_dump),
+            Err(DecoderError::StringDecodingError(
+                StringDecodingError::HuffmanDecoderError(HuffmanDecoderError::InvalidPadding,)
+            ))
+        ));
     }
 
     /// Tests that if the message cuts short before the header key is decoded,
@@ -1387,10 +1386,12 @@ mod tests {
 
         let result = decoder.decode(&hex_dump);
 
-        assert!(match result {
-            Err(DecoderError::StringDecodingError(StringDecodingError::NotEnoughOctets)) => true,
-            _ => false,
-        });
+        assert!(matches!(
+            result,
+            Err(DecoderError::StringDecodingError(
+                StringDecodingError::NotEnoughOctets
+            ))
+        ));
     }
 
     /// Tests that when a header is encoded as a literal with both a name and
@@ -1406,10 +1407,12 @@ mod tests {
 
         let result = decoder.decode(&hex_dump);
 
-        assert!(match result {
-            Err(DecoderError::IntegerDecodingError(IntegerDecodingError::NotEnoughOctets)) => true,
-            _ => false,
-        });
+        assert!(matches!(
+            result,
+            Err(DecoderError::IntegerDecodingError(
+                IntegerDecodingError::NotEnoughOctets
+            ))
+        ));
     }
 }
 
