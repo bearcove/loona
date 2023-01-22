@@ -1,9 +1,9 @@
 use std::fmt::{self, Debug};
 
-use http::{StatusCode, Version};
+use http::{StatusCode, Uri, Version};
 use tracing::debug;
 
-use crate::{Piece, PieceStr};
+use crate::Piece;
 
 mod headers;
 pub use headers::*;
@@ -17,8 +17,7 @@ pub struct Request {
     pub method: Method,
 
     /// Requested entity
-    /// TODO: use `Uri` here, this isn't http2-friendly
-    pub path: PieceStr,
+    pub uri: Uri,
 
     /// The HTTP version used
     pub version: Version,
@@ -31,7 +30,7 @@ impl Default for Request {
     fn default() -> Self {
         Self {
             method: Method::Get,
-            path: "/".into(),
+            uri: "/".parse().unwrap(),
             version: Version::HTTP_11,
             headers: Default::default(),
         }
@@ -44,7 +43,7 @@ impl fmt::Debug for Request {
 
         f.debug_struct("Request")
             .field("method", &self.method)
-            .field("path", &self.path)
+            .field("uri", &self.uri)
             .field("version", &self.version)
             .finish()?;
 

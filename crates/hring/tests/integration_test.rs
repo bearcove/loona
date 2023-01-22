@@ -141,7 +141,7 @@ fn request_api() {
 
         let req = Request {
             method: Method::Get,
-            path: "/".into(),
+            uri: "/".parse().unwrap(),
             ..Default::default()
         };
 

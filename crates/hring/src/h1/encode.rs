@@ -15,13 +15,16 @@ use super::body::{write_h1_body_chunk, write_h1_body_end, BodyWriteMode};
 pub(crate) fn encode_request(req: Request, list: &mut PieceList) -> eyre::Result<()> {
     list.push(req.method.into_chunk());
     list.push(" ");
-    list.push(req.path);
+    // TODO: get rid of allocation here, or at least go through `RollMut`
+    list.push(req.uri.path().to_string().into_bytes());
     match req.version {
         Version::HTTP_10 => list.push(" HTTP/1.0\r\n"),
         Version::HTTP_11 => list.push(" HTTP/1.1\r\n"),
         _ => return Err(eyre::eyre!("unsupported HTTP version {:?}", req.version)),
     }
 
+    // TODO: if `host` isn't set, set from request uri? which should
+    // take precedence here?
     encode_headers(req.headers, list)?;
     list.push("\r\n");
     Ok(())

@@ -37,7 +37,9 @@ pub fn request(i: Roll) -> IResult<Roll, Request> {
 
     let request = Request {
         method,
-        path: path.into(),
+        // TODO: should this take the host header into account?
+        // check what hyper does.
+        uri: path.parse().unwrap(),
         version,
         headers,
     };

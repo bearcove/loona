@@ -78,8 +78,8 @@ impl Piece {
         std::str::from_utf8(self.as_ref())
     }
 
-    /// Decode as utf-8
-    pub fn to_string(self) -> Result<PieceStr, Utf8Error> {
+    /// Decode as utf-8 (owned)
+    pub fn to_str(self) -> Result<PieceStr, Utf8Error> {
         _ = std::str::from_utf8(&self)?;
         Ok(PieceStr { piece: self })
     }
