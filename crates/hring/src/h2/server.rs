@@ -126,7 +126,7 @@ async fn h2_read_loop(
     mut client_buf: RollMut,
     state: Rc<RefCell<ConnState>>,
 ) -> eyre::Result<()> {
-    let mut hpack_dec = hpack::Decoder::new();
+    let mut hpack_dec = hring_hpack::Decoder::new();
     let mut continuation_state = ContinuationState::Idle;
 
     loop {
@@ -504,7 +504,7 @@ async fn h2_write_loop(
     mut ev_rx: mpsc::Receiver<H2ConnEvent>,
     transport: Rc<impl ReadWriteOwned>,
 ) -> eyre::Result<()> {
-    let mut hpack_enc = hpack::Encoder::new();
+    let mut hpack_enc = hring_hpack::Encoder::new();
 
     while let Some(ev) = ev_rx.recv().await {
         trace!("h2_write_loop: received H2 event");
@@ -607,7 +607,7 @@ fn end_headers(
     stream_id: StreamId,
     data: &HeadersData,
     driver: &Rc<impl ServerDriver + 'static>,
-    hpack_dec: &mut hpack::Decoder,
+    hpack_dec: &mut hring_hpack::Decoder,
 ) -> eyre::Result<StreamRxStage> {
     let mut path: Option<PieceStr> = None;
     let mut method: Option<Method> = None;

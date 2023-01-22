@@ -1,0 +1,33 @@
+language: rust
+
+# necessary for `travis-cargo coveralls --no-sudo`
+addons:
+  apt:
+    packages:
+      - libcurl4-openssl-dev
+      - libelf-dev
+      - libdw-dev
+
+matrix:
+  include:
+    - rust: nightly
+    - rust: beta
+    - rust: stable
+
+# load travis-cargo
+before_script:
+  - |
+      pip install 'travis-cargo<0.2' --user &&
+      export PATH=$HOME/.local/bin:$PATH
+
+script: cargo test --features "interop_tests"
+
+sudo: false
+
+after_success:
+  - travis-cargo --only stable doc && travis-cargo --only stable doc-upload
+  - travis-cargo coveralls --no-sudo
+
+env:
+  global:
+    secure: HmpHD+2T5ZBPHcFfY4TVQtdjLsqENXIzn08WM4ZlE+XkQD8afToNN1dqKNm/jrFrCNkk4r6cU7PQFtuteJDTpeu/XbUb8eSmfmtECpxVJQfMDdgbzfEG5ZpNaU/nQLmU61/T7KLK9AsDbebX4sV+V5VfddXwJ0jt2bZlHd7DxOQ=
