@@ -1,8 +1,8 @@
 [package]
-
 name = "hring-hpack"
 version = "0.3.0"
 authors = ["Marko Lalic <marko.lalic@gmail.com>", "Amos Wenger <amos@bearcove.net>"]
+edition = "2021"
 
 exclude = [
     "fixtures/*",
@@ -17,7 +17,6 @@ keywords = ["hpack", "http2", "encoding", "decoding"]
 documentation = "https://docs.rs/hpack-hring"
 
 [features]
-
 # A feature defining some interop tests between the HPACK decoder and
 # headers encoded by other libraries. It is only ever used in test builds!
 interop_tests = ["rustc-serialize"]

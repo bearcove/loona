@@ -1467,15 +1467,15 @@ mod interop_tests {
         fn decode<D: JsonDecoder>(d: &mut D) -> Result<Self, D::Error> {
             d.read_struct("root", 0, |d| {
                 Ok(TestFixture {
-                    wire_bytes: try!(d.read_struct_field("wire", 0, |d| {
+                    wire_bytes: d.read_struct_field("wire", 0, |d| {
                         // Read the `wire` field...
                         Decodable::decode(d).and_then(|res: String| {
                             // If valid, parse out the octets from the String by
                             // considering it a hex encoded byte sequence.
                             Ok(res.from_hex().unwrap())
                         })
-                    })),
-                    headers: try!(d.read_struct_field("headers", 0, |d| {
+                    })?,
+                    headers: d.read_struct_field("headers", 0, |d| {
                         // Read the `headers` field...
                         d.read_seq(|d, len| {
                             // ...since it's an array, we step into the sequence
@@ -1485,7 +1485,7 @@ mod interop_tests {
                                 // Individual elements are encoded as a simple
                                 // JSON object with one key: value pair.
                                 let header: HashMap<String, String> =
-                                    try!(d.read_seq_elt(i, |d| Decodable::decode(d)));
+                                    d.read_seq_elt(i, |d| Decodable::decode(d))?;
                                 // We convert it to a tuple, which is a more
                                 // natural representation of headers.
                                 for (name, value) in header.into_iter() {
@@ -1494,7 +1494,7 @@ mod interop_tests {
                             }
                             Ok(ret)
                         })
-                    })),
+                    })?,
                 })
             })
         }
