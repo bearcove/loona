@@ -325,6 +325,8 @@ impl<'a> Encoder<'a> {
 
 #[cfg(test)]
 mod tests {
+    use tracing::debug;
+
     use super::encode_integer;
     use super::Encoder;
 

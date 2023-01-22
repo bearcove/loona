@@ -1,8 +1,8 @@
 [package]
-
 name = "hring-hpack"
 version = "0.3.0"
 authors = ["Marko Lalic <marko.lalic@gmail.com>", "Amos Wenger <amos@bearcove.net>"]
+edition = "2021"
 
 exclude = [
     "fixtures/*",
@@ -17,14 +17,14 @@ keywords = ["hpack", "http2", "encoding", "decoding"]
 documentation = "https://docs.rs/hpack-hring"
 
 [features]
+# these are really slow unless `cargo test --release` is used, so they're optional
+interop-tests = []
 
-# A feature defining some interop tests between the HPACK decoder and
-# headers encoded by other libraries. It is only ever used in test builds!
-interop_tests = ["rustc-serialize"]
+[dev-dependencies]
+serde = { version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.91"
+hex = "0.4.3"
+thiserror = "1.0.38"
 
 [dependencies]
-log = "^0.3"
-
-[dependencies.rustc-serialize]
-version = "^0.3"
-optional = true
+tracing = "0.1"

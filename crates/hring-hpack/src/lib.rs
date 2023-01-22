@@ -2,13 +2,10 @@
 //! performing the encoding and decoding of header sets, according to the
 //! HPACK spec.
 
-#[macro_use]
-extern crate log;
-#[cfg(feature = "interop_tests")]
-extern crate rustc_serialize;
-
 use std::collections::VecDeque;
 use std::fmt;
+
+use tracing::debug;
 
 // Re-export the main HPACK API entry points.
 pub use self::decoder::Decoder;
