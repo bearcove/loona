@@ -1425,21 +1425,30 @@ mod tests {
 /// and some other encoder implementations, based on their results
 /// published at
 /// [http2jp/hpack-test-case](https://github.com/http2jp/hpack-test-case)
-#[cfg(feature = "interop_tests")]
 #[cfg(test)]
 mod interop_tests {
-    use std::collections::HashMap;
-    use std::fs::{self, File};
-    use std::io::Read;
+    use std::fs;
     use std::path::{Path, PathBuf};
+    use std::{borrow::Cow, collections::HashMap};
 
-    use rustc_serialize::hex::FromHex;
-    use rustc_serialize::Decoder as JsonDecoder;
-    use rustc_serialize::{json, Decodable};
-
+    use serde::Deserialize;
     use tracing::debug;
 
     use super::Decoder;
+
+    #[derive(Deserialize)]
+    struct RawTestStory<'a> {
+        cases: Vec<RawTestFixture<'a>>,
+    }
+
+    #[derive(Deserialize)]
+    struct RawTestFixture<'a> {
+        // The raw bytes of the message, as a hex-encoded string.
+        wire: Cow<'a, str>,
+
+        // The headers of the message: each HashMap has a single key-value pair
+        headers: Vec<HashMap<Cow<'a, str>, Cow<'a, str>>>,
+    }
 
     /// Defines the structure of a single part of a story file. We only care
     /// about the bytes and corresponding headers and ignore the rest.
@@ -1450,57 +1459,41 @@ mod interop_tests {
 
     /// Defines the structure corresponding to a full story file. We only
     /// care about the cases for now.
-    #[derive(RustcDecodable)]
     struct TestStory {
         cases: Vec<TestFixture>,
     }
 
-    /// A custom implementation of the `rustc_serialize::Decodable` trait for
-    /// `TestFixture`s. This is necessary for two reasons:
-    ///
-    ///  - The original story files store the raw bytes as a hex-encoded
-    ///    *string*, so we convert it to a `Vec<u8>` at parse time
-    ///  - The original story files store the list of headers as an array of
-    ///    objects, where each object has a single key. We convert this to a
-    ///    more natural representation of a `Vec` of two-tuples.
-    ///
-    /// For an example of the test story JSON structure check the
-    /// `test_story_parser_sanity_check` test function or one of the fixtures
-    /// in the directory `fixtures/hpack/interop`.
-    impl Decodable for TestFixture {
-        fn decode<D: JsonDecoder>(d: &mut D) -> Result<Self, D::Error> {
-            d.read_struct("root", 0, |d| {
-                Ok(TestFixture {
-                    wire_bytes: d.read_struct_field("wire", 0, |d| {
-                        // Read the `wire` field...
-                        Decodable::decode(d).and_then(|res: String| {
-                            // If valid, parse out the octets from the String by
-                            // considering it a hex encoded byte sequence.
-                            Ok(res.from_hex().unwrap())
+    #[derive(Debug, thiserror::Error)]
+    enum DecodeError {
+        #[error("Failed to parse hex-encoded bytes: {0}")]
+        FromHex(#[from] hex::FromHexError),
+    }
+
+    impl TryFrom<RawTestStory<'_>> for TestStory {
+        type Error = DecodeError;
+
+        fn try_from(raw_story: RawTestStory) -> Result<Self, Self::Error> {
+            let mut cases = Vec::with_capacity(raw_story.cases.len());
+            for raw_case in raw_story.cases {
+                let wire_bytes = hex::decode(raw_case.wire.as_bytes())?;
+
+                let headers: Vec<_> = raw_case
+                    .headers
+                    .into_iter()
+                    .flat_map(|h| {
+                        h.into_iter().map(|(k, v)| {
+                            (k.into_owned().into_bytes(), v.into_owned().into_bytes())
                         })
-                    })?,
-                    headers: d.read_struct_field("headers", 0, |d| {
-                        // Read the `headers` field...
-                        d.read_seq(|d, len| {
-                            // ...since it's an array, we step into the sequence
-                            // and read each element.
-                            let mut ret: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-                            for i in 0..len {
-                                // Individual elements are encoded as a simple
-                                // JSON object with one key: value pair.
-                                let header: HashMap<String, String> =
-                                    d.read_seq_elt(i, |d| Decodable::decode(d))?;
-                                // We convert it to a tuple, which is a more
-                                // natural representation of headers.
-                                for (name, value) in header.into_iter() {
-                                    ret.push((name.as_bytes().to_vec(), value.as_bytes().to_vec()));
-                                }
-                            }
-                            Ok(ret)
-                        })
-                    })?,
-                })
-            })
+                    })
+                    .collect();
+
+                cases.push(TestFixture {
+                    wire_bytes,
+                    headers,
+                });
+            }
+
+            Ok(TestStory { cases })
         }
     }
 
@@ -1508,7 +1501,7 @@ mod interop_tests {
     /// string. Sanity check for the `Decodable` implementation.
     #[test]
     fn test_story_parser_sanity_check() {
-        let raw_json = stringify!(
+        let raw_json = r#"
             {
               "cases": [
                 {
@@ -1550,9 +1543,10 @@ mod interop_tests {
               ],
               "draft": 9
             }
-        );
+        "#;
 
-        let decoded: TestStory = json::decode(raw_json).unwrap();
+        let decoded: RawTestStory = serde_json::from_str(raw_json).unwrap();
+        let decoded = TestStory::try_from(decoded).unwrap();
 
         assert_eq!(decoded.cases.len(), 2);
         assert_eq!(
@@ -1580,10 +1574,9 @@ mod interop_tests {
     fn test_story(story_file_name: PathBuf) {
         // Set up the story by parsing the given file
         let story: TestStory = {
-            let mut file = File::open(&story_file_name).unwrap();
-            let mut raw_story = String::new();
-            file.read_to_string(&mut raw_story).unwrap();
-            json::decode(&raw_story).unwrap()
+            let buf = std::fs::read_to_string(&story_file_name);
+            let raw_story: RawTestStory = serde_json::from_str(&buf.unwrap()).unwrap();
+            raw_story.try_into().unwrap()
         };
         // Set up the decoder
         let mut decoder = Decoder::new();
@@ -1601,7 +1594,7 @@ mod interop_tests {
     /// It calls the `test_story` function for each file found in the given
     /// directory.
     fn test_fixture_set(fixture_dir: &str) {
-        let files = fs::read_dir(&Path::new(fixture_dir)).unwrap();
+        let files = fs::read_dir(Path::new(fixture_dir)).unwrap();
 
         for fixture in files {
             let file_name = fixture.unwrap().path();

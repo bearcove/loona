@@ -16,14 +16,11 @@ license = "MIT"
 keywords = ["hpack", "http2", "encoding", "decoding"]
 documentation = "https://docs.rs/hpack-hring"
 
-[features]
-# A feature defining some interop tests between the HPACK decoder and
-# headers encoded by other libraries. It is only ever used in test builds!
-interop_tests = ["rustc-serialize"]
+[dev-dependencies]
+serde = { version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.91"
+hex = "0.4.3"
+thiserror = "1.0.38"
 
 [dependencies]
 tracing = "0.1"
-
-[dependencies.rustc-serialize]
-version = "^0.3"
-optional = true
