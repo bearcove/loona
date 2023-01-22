@@ -105,17 +105,17 @@ pub fn encode_integer_into<W: io::Write>(
     let leading_bits = leading_bits & (!mask);
     let mask = mask as usize;
     if value < mask {
-        try!(writer.write_all(&[leading_bits | value as u8]));
+        writer.write_all(&[leading_bits | value as u8])?;
         return Ok(());
     }
 
-    try!(writer.write_all(&[leading_bits | mask as u8]));
+    writer.write_all(&[leading_bits | mask as u8])?;
     value -= mask;
     while value >= 128 {
-        try!(writer.write_all(&[((value % 128) + 128) as u8]));
-        value = value / 128;
+        writer.write_all(&[((value % 128) + 128) as u8])?;
+        value /= 128;
     }
-    try!(writer.write_all(&[value as u8]));
+    writer.write_all(&[value as u8])?;
     Ok(())
 }
 
@@ -172,6 +172,12 @@ pub struct Encoder<'a> {
     header_table: HeaderTable<'a>,
 }
 
+impl<'a> Default for Encoder<'a> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'a> Encoder<'a> {
     /// Creates a new `Encoder` with a default static table, as defined by the
     /// HPACK spec (Appendix A).
@@ -211,7 +217,7 @@ impl<'a> Encoder<'a> {
         W: io::Write,
     {
         for header in headers {
-            try!(self.encode_header_into(header, writer));
+            self.encode_header_into(header, writer)?;
         }
         Ok(())
     }
@@ -229,7 +235,7 @@ impl<'a> Encoder<'a> {
             None => {
                 // The name of the header is in no tables: need to encode
                 // it with both a literal name and value.
-                try!(self.encode_literal(&header, true, writer));
+                self.encode_literal(&header, true, writer)?;
                 self.header_table
                     .add_header(header.0.to_vec(), header.1.to_vec());
             }
@@ -237,12 +243,12 @@ impl<'a> Encoder<'a> {
                 // The name of the header is at the given index, but the
                 // value does not match the current one: need to encode
                 // only the value as a literal.
-                try!(self.encode_indexed_name((index, header.1), false, writer));
+                self.encode_indexed_name((index, header.1), false, writer)?;
             }
             Some((index, true)) => {
                 // The full header was found in one of the tables, so we
                 // just encode the index.
-                try!(self.encode_indexed(index, writer));
+                self.encode_indexed(index, writer)?;
             }
         };
         Ok(())
@@ -267,9 +273,9 @@ impl<'a> Encoder<'a> {
     ) -> io::Result<()> {
         let mask = if should_index { 0x40 } else { 0x0 };
 
-        try!(buf.write_all(&[mask]));
-        try!(self.encode_string_literal(&header.0, buf));
-        try!(self.encode_string_literal(&header.1, buf));
+        buf.write_all(&[mask])?;
+        self.encode_string_literal(header.0, buf)?;
+        self.encode_string_literal(header.1, buf)?;
         Ok(())
     }
 
@@ -284,8 +290,8 @@ impl<'a> Encoder<'a> {
         octet_str: &[u8],
         buf: &mut W,
     ) -> io::Result<()> {
-        try!(encode_integer_into(octet_str.len(), 7, 0, buf));
-        try!(buf.write_all(octet_str));
+        encode_integer_into(octet_str.len(), 7, 0, buf)?;
+        buf.write_all(octet_str)?;
         Ok(())
     }
 
@@ -299,9 +305,9 @@ impl<'a> Encoder<'a> {
     ) -> io::Result<()> {
         let (mask, prefix) = if should_index { (0x40, 6) } else { (0x0, 4) };
 
-        try!(encode_integer_into(header.0, prefix, mask, buf));
+        encode_integer_into(header.0, prefix, mask, buf)?;
         // So far, we rely on just one strategy for encoding string literals.
-        try!(self.encode_string_literal(&header.1, buf));
+        self.encode_string_literal(header.1, buf)?;
         Ok(())
     }
 
@@ -312,7 +318,7 @@ impl<'a> Encoder<'a> {
     fn encode_indexed<W: io::Write>(&self, index: usize, buf: &mut W) -> io::Result<()> {
         // We need to set the most significant bit, since the bit-pattern is
         // `1xxxxxxx` for indexed headers.
-        try!(encode_integer_into(index, 7, 0x80, buf));
+        encode_integer_into(index, 7, 0x80, buf)?;
         Ok(())
     }
 }
@@ -344,7 +350,7 @@ mod tests {
     /// # Returns
     ///
     /// A `bool` indicating whether such a decoding can be performed.
-    fn is_decodable(buf: &Vec<u8>, headers: &Vec<(Vec<u8>, Vec<u8>)>) -> bool {
+    fn is_decodable(buf: &[u8], headers: &Vec<(Vec<u8>, Vec<u8>)>) -> bool {
         let mut decoder = Decoder::new();
         match decoder.decode(buf).ok() {
             Some(h) => h == *headers,
