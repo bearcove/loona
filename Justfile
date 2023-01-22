@@ -22,7 +22,7 @@ test *args:
 	RUST_BACKTRACE=1 cargo nextest run {{args}}
 
 build-testbed:
-	cargo build --release --manifest-path hyper-testbed/Cargo.toml
+	cargo build --release --manifest-path test-crates/hyper-testbed/Cargo.toml
 	
 single-test *args:
 	just test --no-capture {{args}}

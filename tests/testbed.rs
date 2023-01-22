@@ -11,7 +11,7 @@ pub async fn start() -> eyre::Result<(SocketAddr, impl Any)> {
 
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let mut cmd = Command::new(format!(
-        "{manifest_dir}/hyper-testbed/target/release/hyper-testbed"
+        "{manifest_dir}/test-crates/hyper-testbed/target/release/hyper-testbed"
     ));
     cmd.stdout(Stdio::piped());
     cmd.kill_on_drop(true);
