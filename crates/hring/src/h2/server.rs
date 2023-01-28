@@ -628,27 +628,37 @@ fn end_headers(
         if &key[..1] == b":" {
             // it's a pseudo-header!
             // TODO: reject headers that occur after pseudo-headers
-            // TODO: reject duplicate pseudo-headers
             match &key[1..] {
                 b"method" => {
                     // TODO: error handling
                     let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
-                    method = Some(Method::try_from(value).unwrap());
+                    if method.replace(Method::try_from(value).unwrap()).is_some() {
+                        unreachable!(); // No duplicate allowed.
+                    }
                 }
                 b"scheme" => {
                     // TODO: error handling
                     let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
-                    scheme = Some(value.parse().unwrap());
+                    if scheme.replace(value.parse().unwrap()).is_some() {
+                        unreachable!(); // No duplicate allowed.
+                    }
                 }
                 b"path" => {
                     // TODO: error handling
                     let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
-                    path = Some(value);
+                    if value.len() == 0 || path.replace(value).is_some() {
+                        unreachable!(); // No empty path nor duplicate allowed.
+
+                    }
                 }
                 b"authority" => {
                     // TODO: error handling
                     let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
-                    authority = Some(value.parse().unwrap());
+                    if authority.replace(value.parse().unwrap()).is_some() {
+                        unreachable!(); // No duplicate allowed. (h2spec doesn't seem to test for
+                                        // this case but rejecting for duplicates seems
+                                        // reasonable.)
+                    }
                 }
                 _ => {
                     debug!("ignoring pseudo-header");
