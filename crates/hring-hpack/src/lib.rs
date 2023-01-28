@@ -305,7 +305,7 @@ static STATIC_TABLE: &[(&[u8], &[u8])] = &[
     (b":status", b"400"),
     (b":status", b"404"),
     (b":status", b"500"),
-    (b"accept-", b""),
+    (b"accept-charset", b""),
     (b"accept-encoding", b"gzip, deflate"),
     (b"accept-language", b""),
     (b"accept-ranges", b""),

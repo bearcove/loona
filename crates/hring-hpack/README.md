@@ -41,7 +41,10 @@ let headers = vec![
 ];
 // The headers are encoded by providing their index (with a bit flag
 // indicating that the indexed representation is used).
-assert_eq!(encoder.encode(&headers), vec![2 | 0x80, 4 | 0x80]);
+assert_eq!(
+   encoder.encode(headers.iter().map(|h| (&h.0[..], &h.1[..]))),
+   vec![2 | 0x80, 4 | 0x80]
+ );
 ```
 
 ## Decoding
