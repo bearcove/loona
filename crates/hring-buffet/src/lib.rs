@@ -22,8 +22,14 @@ use memmap2::MmapMut;
 
 pub const BUF_SIZE: u16 = 4096;
 
+#[cfg(not(feature = "miri"))]
+pub const NUM_BUF: u32 = 64 * 1024;
+
+#[cfg(feature = "miri")]
+pub const NUM_BUF: u32 = 64;
+
 #[thread_local]
-static BUF_POOL: BufPool = BufPool::new_empty(BUF_SIZE, 64 * 1024);
+static BUF_POOL: BufPool = BufPool::new_empty(BUF_SIZE, NUM_BUF);
 
 thread_local! {
     static BUF_POOL_DESTRUCTOR: RefCell<Option<MmapMut>> = RefCell::new(None);
