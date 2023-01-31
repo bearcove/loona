@@ -545,8 +545,7 @@ async fn h2_write_loop(
                         frame.len = headers_encoded.len() as u32;
                         frame.write(transport.as_ref()).await?;
 
-                        let (res, _headers_encoded) = transport.write_all(headers_encoded).await;
-                        res?;
+                        transport.write_all(headers_encoded).await?;
                     }
                     H2EventPayload::BodyChunk(chunk) => {
                         let path = format!("/tmp/chunk-write-{index:06}.bin");
@@ -557,8 +556,7 @@ async fn h2_write_loop(
                         let frame = Frame::new(FrameType::Data(flags), ev.stream_id)
                             .with_len(chunk.len().try_into().unwrap());
                         frame.write(transport.as_ref()).await?;
-                        let (res, _) = transport.write_all(chunk).await;
-                        res?;
+                        transport.write_all(chunk).await?;
                     }
                     H2EventPayload::BodyEnd => {
                         let flags = DataFlags::EndStream;
@@ -573,8 +571,7 @@ async fn h2_write_loop(
                 let frame = Frame::new(FrameType::Ping(flags), StreamId::CONNECTION)
                     .with_len(payload.len() as u32);
                 frame.write(transport.as_ref()).await?;
-                let (res, _) = transport.write_all(payload).await;
-                res?;
+                transport.write_all(payload).await?;
             }
             H2ConnEvent::GoAway {
                 error_code,
@@ -597,11 +594,10 @@ async fn h2_write_loop(
                         .try_into()
                         .unwrap(),
                 );
+                // TODO: use `writev`
                 frame.write(transport.as_ref()).await?;
-                let (res, _) = transport.write_all(header).await;
-                res?;
-                let (res, _) = transport.write_all(additional_debug_data).await;
-                res?;
+                transport.write_all(header).await?;
+                transport.write_all(additional_debug_data).await?;
             }
         }
     }

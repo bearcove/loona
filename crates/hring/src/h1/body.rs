@@ -287,8 +287,7 @@ pub(crate) async fn write_h1_body_chunk(
             drop(list);
         }
         BodyWriteMode::ContentLength => {
-            let (res, _) = transport.write_all(chunk).await;
-            res?;
+            transport.write_all(chunk).await?;
         }
         BodyWriteMode::Empty => {
             return Err(BodyErrorReason::CalledWriteBodyChunkWhenNoBodyWasExpected

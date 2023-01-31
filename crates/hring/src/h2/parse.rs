@@ -265,8 +265,7 @@ impl Frame {
             header.write_u32::<BigEndian>(self.stream_id.0)?;
         }
 
-        let (res, _) = w.write_all(header).await;
-        res?;
+        w.write_all(header).await?;
         Ok(())
     }
 }

@@ -69,8 +69,10 @@ pub async fn serve(
             },
             Err(e) => {
                 if let Some(se) = e.downcast_ref::<SemanticError>() {
-                    let (res, _) = transport.write_all(se.as_http_response()).await;
-                    res.wrap_err("writing error response downstream")?;
+                    transport
+                        .write_all(se.as_http_response())
+                        .await
+                        .wrap_err("writing error response downstream")?;
                 }
 
                 debug!(?e, "error reading request header from downstream");
