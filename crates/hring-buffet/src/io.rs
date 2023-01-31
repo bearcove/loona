@@ -21,10 +21,20 @@ pub trait WriteOwned {
         let mut total = 0;
 
         while let Some(buf) = list.next() {
+            let buf_len = buf.bytes_init();
             let (res, buf) = self.write(buf).await;
             out_list.push(buf);
+
             match res {
-                Ok(n) => total += n,
+                Ok(n) => {
+                    total += n;
+                    if n < buf_len {
+                        // partial write, return the buffer list so the caller
+                        // might choose to try the write again
+                        out_list.extend(list);
+                        return (Ok(total), out_list);
+                    }
+                }
                 Err(e) => {
                     out_list.extend(list);
                     return (Err(e), out_list);
