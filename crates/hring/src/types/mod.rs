@@ -3,7 +3,7 @@ use std::fmt::{self, Debug};
 use http::{StatusCode, Uri, Version};
 use tracing::debug;
 
-use crate::Piece;
+use hring_buffet::Piece;
 
 mod headers;
 pub use headers::*;

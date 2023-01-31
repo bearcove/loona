@@ -5,12 +5,11 @@ use http::header;
 use tracing::debug;
 
 use crate::{
-    buffet::PieceList,
-    io::ReadWriteOwned,
     types::Request,
     util::{read_and_parse, write_all_list},
-    Body, HeadersExt, Response, RollMut,
+    Body, HeadersExt, Response,
 };
+use hring_buffet::{PieceList, ReadWriteOwned, RollMut};
 
 use super::{
     body::{write_h1_body, BodyWriteMode, H1Body, H1BodyKind},

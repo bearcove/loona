@@ -1,6 +1,7 @@
 use tokio::sync::mpsc;
 
-use crate::{Body, BodyChunk, Piece};
+use crate::{Body, BodyChunk};
+use hring_buffet::Piece;
 
 #[derive(Debug)]
 pub(crate) struct H2Body {

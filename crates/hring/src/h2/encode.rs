@@ -4,7 +4,8 @@ use http::{StatusCode, Version};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-use crate::{h1::body::BodyWriteMode, Encoder, Piece, Response, Roll};
+use crate::{h1::body::BodyWriteMode, Encoder, Response};
+use hring_buffet::{Piece, Roll};
 
 use super::parse::{KnownErrorCode, StreamId};
 
@@ -86,7 +87,7 @@ impl Encoder for H2Encoder {
     // TODO: BodyWriteMode is not relevant for h2
     async fn write_body_chunk(
         &mut self,
-        chunk: crate::Piece,
+        chunk: hring_buffet::Piece,
         _mode: BodyWriteMode,
     ) -> eyre::Result<()> {
         debug!("H2Encoder::write_body_chunk");

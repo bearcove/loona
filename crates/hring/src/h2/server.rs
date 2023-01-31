@@ -22,9 +22,9 @@ use crate::{
         },
     },
     util::read_and_parse,
-    ExpectResponseHeaders, Headers, Method, Piece, PieceStr, ReadWriteOwned, Request, Responder,
-    Roll, RollMut, ServerDriver,
+    ExpectResponseHeaders, Headers, Method, Request, Responder, ServerDriver,
 };
+use hring_buffet::{Piece, PieceStr, ReadWriteOwned, Roll, RollMut};
 
 /// HTTP/2 server configuration
 pub struct ServerConf {

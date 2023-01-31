@@ -1,8 +1,15 @@
+#![allow(incomplete_features)]
+#![feature(thread_local)]
+#![feature(async_fn_in_trait)]
+
 mod roll;
 pub use roll::*;
 
 mod piece;
 pub use piece::*;
+
+mod io;
+pub use io::*;
 
 use std::{
     cell::{RefCell, RefMut},
@@ -419,11 +426,8 @@ impl Drop for Buf {
 
 #[cfg(test)]
 mod tests {
+    use crate::{Buf, BufMut, BUF_POOL};
     use std::rc::Rc;
-
-    use crate::buffet::{Buf, BUF_POOL};
-
-    use super::BufMut;
 
     #[test]
     fn size_test() {

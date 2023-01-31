@@ -4,8 +4,9 @@ use tracing::debug;
 
 use crate::{
     util::{read_and_parse, write_all_list},
-    Body, BodyChunk, BodyErrorReason, Piece, PieceList, ReadOwned, RollMut, WriteOwned,
+    Body, BodyChunk, BodyErrorReason,
 };
+use hring_buffet::{Piece, PieceList, ReadOwned, RollMut, WriteOwned};
 
 /// An HTTP/1.1 body, either chunked or content-length.
 pub(crate) struct H1Body<T> {

@@ -184,7 +184,7 @@ impl WriteOwned for ChanWrite {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "miri")))]
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 

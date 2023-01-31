@@ -2,7 +2,7 @@
 
 use http::{header, HeaderMap};
 
-use crate::Piece;
+use hring_buffet::Piece;
 
 pub type Headers = HeaderMap<Piece>;
 

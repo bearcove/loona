@@ -10,8 +10,8 @@ use std::{
 
 use color_eyre::eyre;
 use hring::{
-    h1, h2, tokio_uring::net::TcpStream, Body, Encoder, ExpectResponseHeaders, Responder,
-    ResponseDone, RollMut, ServerDriver,
+    buffet::RollMut, h1, h2, tokio_uring::net::TcpStream, Body, Encoder, ExpectResponseHeaders,
+    Responder, ResponseDone, ServerDriver,
 };
 use http::Version;
 use pretty_hex::PrettyHex;

@@ -4,11 +4,11 @@ use eyre::Context;
 use http::{StatusCode, Version};
 
 use crate::{
-    buffet::PieceList,
     types::{Headers, Request, Response},
     util::write_all_list,
-    Encoder, Piece, WriteOwned,
+    Encoder,
 };
+use hring_buffet::{Piece, PieceList, WriteOwned};
 
 use super::body::{write_h1_body_chunk, write_h1_body_end, BodyWriteMode};
 

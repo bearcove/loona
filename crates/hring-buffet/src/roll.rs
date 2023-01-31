@@ -871,7 +871,6 @@ impl RollStr {
 #[cfg(test)]
 mod tests {
     use nom::IResult;
-    use tokio_uring::net::{TcpListener, TcpStream};
 
     use crate::{ChanRead, Roll, RollMut, BUF_SIZE};
 
@@ -1134,7 +1133,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "miri"))]
     fn test_roll_iobuf() {
+        use tokio_uring::net::{TcpListener, TcpStream};
+
         async fn test_roll_iobuf_inner(mut rm: RollMut) -> eyre::Result<()> {
             rm.put(b"hello").unwrap();
             let roll = rm.take_all();

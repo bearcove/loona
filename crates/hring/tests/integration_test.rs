@@ -7,10 +7,10 @@ mod helpers;
 use bytes::BytesMut;
 use curl::easy::{Easy, HttpVersion, List};
 use hring::{
-    h1, h2, Body, BodyChunk, ChanRead, ChanWrite, Encoder, ExpectResponseHeaders, Headers,
-    HeadersExt, Method, Piece, ReadWritePair, Request, Responder, Response, ResponseDone, RollMut,
-    ServerDriver,
+    h1, h2, Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, HeadersExt, Method, Request,
+    Responder, Response, ResponseDone, ServerDriver,
 };
+use hring_buffet::{ChanRead, ChanWrite, Piece, ReadWritePair, RollMut};
 use http::{header, StatusCode};
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;

@@ -3,11 +3,7 @@ use nom::IResult;
 use pretty_hex::PrettyHex;
 use tracing::{debug, trace};
 
-use crate::{
-    buffet::PieceList,
-    io::{ReadOwned, WriteOwned},
-    Roll, RollMut,
-};
+use hring_buffet::{PieceList, ReadOwned, Roll, RollMut, WriteOwned};
 
 /// Returns `None` on EOF, error if partially parsed message.
 pub(crate) async fn read_and_parse<Parser, Output>(

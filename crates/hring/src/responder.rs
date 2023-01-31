@@ -1,7 +1,8 @@
 use http::header;
 use tracing::debug;
 
-use crate::{h1::body::BodyWriteMode, Body, BodyChunk, Headers, HeadersExt, Piece, Response};
+use crate::{h1::body::BodyWriteMode, Body, BodyChunk, Headers, HeadersExt, Response};
+use hring_buffet::Piece;
 
 pub trait ResponseState {}
 

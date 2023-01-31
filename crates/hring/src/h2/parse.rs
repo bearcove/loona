@@ -14,7 +14,7 @@ use nom::{
     IResult,
 };
 
-use crate::{Roll, WriteOwned};
+use hring_buffet::{Roll, WriteOwned};
 
 /// This is sent by h2 clients after negotiating over ALPN, or when doing h2c.
 pub const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
