@@ -49,29 +49,117 @@ async fn async_main() -> eyre::Result<()> {
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
     let acceptor = Rc::new(acceptor);
 
-    let ln = TcpListener::bind("[::]:7007").await?;
-    info!("Listening on {}", ln.local_addr()?);
+    let pt_h1_ln = TcpListener::bind("[::]:7080").await?;
+    info!("Serving plaintext HTTP/1.1 on {}", pt_h1_ln.local_addr()?);
+
+    let pt_h2_ln = TcpListener::bind("[::]:7082").await?;
+    info!("Serving plaintext HTTP/2 on {}", pt_h2_ln.local_addr()?);
+
+    let tls_ln = TcpListener::bind("[::]:7443").await?;
+    info!("Serving HTTPS on {}", tls_ln.local_addr()?);
 
     let h1_conf = Rc::new(h1::ServerConf::default());
     let h2_conf = Rc::new(h2::ServerConf::default());
 
-    while let Ok((stream, remote_addr)) = ln.accept().await {
-        hring::tokio_uring::spawn({
-            let acceptor = acceptor.clone();
-            let h1_conf = h1_conf.clone();
-            let h2_conf = h2_conf.clone();
-            async move {
-                if let Err(e) = handle_conn(acceptor, stream, remote_addr, h1_conf, h2_conf).await {
-                    tracing::error!(%e, "Error handling connection");
-                }
+    let pt_h1_loop = {
+        let h1_conf = h1_conf.clone();
+
+        async move {
+            while let Ok((stream, remote_addr)) = pt_h1_ln.accept().await {
+                hring::tokio_uring::spawn({
+                    let h1_conf = h1_conf.clone();
+                    async move {
+                        if let Err(e) =
+                            handle_plaintext_conn(stream, remote_addr, Proto::H1(h1_conf)).await
+                        {
+                            tracing::error!(%e, "Error handling connection");
+                        }
+                    }
+                });
             }
-        });
+
+            Ok::<_, color_eyre::Report>(())
+        }
+    };
+
+    let pt_h2_loop = {
+        let h2_conf = h2_conf.clone();
+
+        async move {
+            while let Ok((stream, remote_addr)) = pt_h2_ln.accept().await {
+                hring::tokio_uring::spawn({
+                    let h2_conf = h2_conf.clone();
+                    async move {
+                        if let Err(e) =
+                            handle_plaintext_conn(stream, remote_addr, Proto::H2(h2_conf)).await
+                        {
+                            tracing::error!(%e, "Error handling connection");
+                        }
+                    }
+                });
+            }
+
+            Ok::<_, color_eyre::Report>(())
+        }
+    };
+
+    let tls_loop = async move {
+        while let Ok((stream, remote_addr)) = tls_ln.accept().await {
+            hring::tokio_uring::spawn({
+                let acceptor = acceptor.clone();
+                let h1_conf = h1_conf.clone();
+                let h2_conf = h2_conf.clone();
+                async move {
+                    if let Err(e) =
+                        handle_tls_conn(acceptor, stream, remote_addr, h1_conf, h2_conf).await
+                    {
+                        tracing::error!(%e, "Error handling connection");
+                    }
+                }
+            });
+        }
+
+        Ok::<_, color_eyre::Report>(())
+    };
+
+    tokio::try_join!(pt_h1_loop, pt_h2_loop, tls_loop)?;
+    Ok(())
+}
+
+enum Proto {
+    H1(Rc<h1::ServerConf>),
+    H2(Rc<h2::ServerConf>),
+}
+
+async fn handle_plaintext_conn(
+    stream: tokio::net::TcpStream,
+    remote_addr: std::net::SocketAddr,
+    proto: Proto,
+) -> Result<(), color_eyre::Report> {
+    info!("Accepted connection from {remote_addr}");
+    let buf = RollMut::alloc()?;
+
+    let fd = stream.as_raw_fd();
+    std::mem::forget(stream);
+    let stream = unsafe { TcpStream::from_raw_fd(fd) };
+
+    let driver = SDriver {};
+
+    match proto {
+        Proto::H1(h1_conf) => {
+            info!("Using HTTP/1.1");
+            hring::h1::serve(stream, h1_conf, buf, driver).await?;
+        }
+        Proto::H2(h2_conf) => {
+            info!("Using HTTP/2");
+            hring::h2::serve(stream, h2_conf, buf, Rc::new(driver)).await?;
+        }
     }
 
     Ok(())
 }
 
-async fn handle_conn(
+async fn handle_tls_conn(
     acceptor: Rc<tokio_rustls::TlsAcceptor>,
     stream: tokio::net::TcpStream,
     remote_addr: std::net::SocketAddr,
