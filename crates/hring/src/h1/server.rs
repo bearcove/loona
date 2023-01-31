@@ -6,8 +6,9 @@ use tracing::debug;
 use crate::{
     h1::body::{H1Body, H1BodyKind},
     util::{read_and_parse, SemanticError},
-    ExpectResponseHeaders, HeadersExt, ReadWriteOwned, Responder, RollMut, ServerDriver,
+    ExpectResponseHeaders, HeadersExt, Responder, ServerDriver,
 };
+use hring_buffet::{ReadWriteOwned, RollMut};
 
 use super::encode::H1Encoder;
 

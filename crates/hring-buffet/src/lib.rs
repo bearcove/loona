@@ -1,8 +1,15 @@
+#![allow(incomplete_features)]
+#![feature(thread_local)]
+#![feature(async_fn_in_trait)]
+
 mod roll;
 pub use roll::*;
 
 mod piece;
 pub use piece::*;
+
+mod io;
+pub use io::*;
 
 use std::{
     cell::{RefCell, RefMut},
@@ -15,8 +22,14 @@ use memmap2::MmapMut;
 
 pub const BUF_SIZE: u16 = 4096;
 
+#[cfg(not(feature = "miri"))]
+pub const NUM_BUF: u32 = 64 * 1024;
+
+#[cfg(feature = "miri")]
+pub const NUM_BUF: u32 = 64;
+
 #[thread_local]
-static BUF_POOL: BufPool = BufPool::new_empty(BUF_SIZE, 64 * 1024);
+static BUF_POOL: BufPool = BufPool::new_empty(BUF_SIZE, NUM_BUF);
 
 thread_local! {
     static BUF_POOL_DESTRUCTOR: RefCell<Option<MmapMut>> = RefCell::new(None);
@@ -103,11 +116,24 @@ impl BufPool {
         let mut inner = self.inner.borrow_mut();
         if inner.is_none() {
             let len = self.num_buf as usize * self.buf_size as usize;
-            let mut map = memmap2::MmapOptions::new().len(len).map_anon()?;
-            let ptr = map.as_mut_ptr();
-            BUF_POOL_DESTRUCTOR.with(|destructor| {
-                *destructor.borrow_mut() = Some(map);
-            });
+
+            let ptr: *mut u8;
+
+            #[cfg(feature = "miri")]
+            {
+                let mut map = vec![0; len];
+                ptr = map.as_mut_ptr();
+                std::mem::forget(map);
+            }
+
+            #[cfg(not(feature = "miri"))]
+            {
+                let mut map = memmap2::MmapOptions::new().len(len).map_anon()?;
+                ptr = map.as_mut_ptr();
+                BUF_POOL_DESTRUCTOR.with(|destructor| {
+                    *destructor.borrow_mut() = Some(map);
+                });
+            }
 
             let mut free = VecDeque::with_capacity(self.num_buf as usize);
             for i in 0..self.num_buf {
@@ -419,11 +445,8 @@ impl Drop for Buf {
 
 #[cfg(test)]
 mod tests {
+    use crate::{Buf, BufMut, BUF_POOL};
     use std::rc::Rc;
-
-    use crate::buffet::{Buf, BUF_POOL};
-
-    use super::BufMut;
 
     #[test]
     fn size_test() {

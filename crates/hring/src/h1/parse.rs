@@ -13,8 +13,9 @@ use nom::{
 
 use crate::{
     types::{Headers, Request, Response},
-    Method, PieceStr, Roll, RollStr,
+    Method,
 };
+use hring_buffet::{PieceStr, Roll, RollStr};
 
 const CRLF: &[u8] = b"\r\n";
 

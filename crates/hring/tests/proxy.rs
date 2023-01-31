@@ -5,8 +5,9 @@
 
 use hring::{
     h1, Body, BodyChunk, Encoder, ExpectResponseHeaders, HeadersExt, Responder, Response,
-    ResponseDone, RollMut, ServerDriver,
+    ResponseDone, ServerDriver,
 };
+use hring_buffet::RollMut;
 use http::StatusCode;
 use std::{cell::RefCell, future::Future, net::SocketAddr, rc::Rc};
 use tracing::debug;

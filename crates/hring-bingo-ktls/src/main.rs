@@ -10,8 +10,8 @@ use std::{
 
 use color_eyre::eyre;
 use hring::{
-    h1, h2, tokio_uring::net::TcpStream, Body, Encoder, ExpectResponseHeaders, Responder,
-    ResponseDone, RollMut, ServerDriver,
+    buffet::RollMut, h1, h2, tokio_uring::net::TcpStream, Body, Encoder, ExpectResponseHeaders,
+    Method, Request, Responder, ResponseDone, ServerDriver,
 };
 use http::Version;
 use rustls::ServerConfig;
@@ -31,6 +31,11 @@ async fn async_main() -> eyre::Result<()> {
         )
         .init();
 
+    if std::env::args().any(|a| a == "--get") {
+        sample_http_request().await.unwrap();
+        return Ok(());
+    }
+
     let pair = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
     let crt = pair.serialize_der()?;
     let key = pair.serialize_private_key_der();
@@ -48,29 +53,117 @@ async fn async_main() -> eyre::Result<()> {
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
     let acceptor = Rc::new(acceptor);
 
-    let ln = TcpListener::bind("[::]:7007").await?;
-    info!("Listening on {}", ln.local_addr()?);
+    let pt_h1_ln = TcpListener::bind("[::]:7080").await?;
+    info!("Serving plaintext HTTP/1.1 on {}", pt_h1_ln.local_addr()?);
+
+    let pt_h2_ln = TcpListener::bind("[::]:7082").await?;
+    info!("Serving plaintext HTTP/2 on {}", pt_h2_ln.local_addr()?);
+
+    let tls_ln = TcpListener::bind("[::]:7443").await?;
+    info!("Serving HTTPS on {}", tls_ln.local_addr()?);
 
     let h1_conf = Rc::new(h1::ServerConf::default());
     let h2_conf = Rc::new(h2::ServerConf::default());
 
-    while let Ok((stream, remote_addr)) = ln.accept().await {
-        hring::tokio_uring::spawn({
-            let acceptor = acceptor.clone();
-            let h1_conf = h1_conf.clone();
-            let h2_conf = h2_conf.clone();
-            async move {
-                if let Err(e) = handle_conn(acceptor, stream, remote_addr, h1_conf, h2_conf).await {
-                    tracing::error!(%e, "Error handling connection");
-                }
+    let pt_h1_loop = {
+        let h1_conf = h1_conf.clone();
+
+        async move {
+            while let Ok((stream, remote_addr)) = pt_h1_ln.accept().await {
+                hring::tokio_uring::spawn({
+                    let h1_conf = h1_conf.clone();
+                    async move {
+                        if let Err(e) =
+                            handle_plaintext_conn(stream, remote_addr, Proto::H1(h1_conf)).await
+                        {
+                            tracing::error!(%e, "Error handling connection");
+                        }
+                    }
+                });
             }
-        });
+
+            Ok::<_, color_eyre::Report>(())
+        }
+    };
+
+    let pt_h2_loop = {
+        let h2_conf = h2_conf.clone();
+
+        async move {
+            while let Ok((stream, remote_addr)) = pt_h2_ln.accept().await {
+                hring::tokio_uring::spawn({
+                    let h2_conf = h2_conf.clone();
+                    async move {
+                        if let Err(e) =
+                            handle_plaintext_conn(stream, remote_addr, Proto::H2(h2_conf)).await
+                        {
+                            tracing::error!(%e, "Error handling connection");
+                        }
+                    }
+                });
+            }
+
+            Ok::<_, color_eyre::Report>(())
+        }
+    };
+
+    let tls_loop = async move {
+        while let Ok((stream, remote_addr)) = tls_ln.accept().await {
+            hring::tokio_uring::spawn({
+                let acceptor = acceptor.clone();
+                let h1_conf = h1_conf.clone();
+                let h2_conf = h2_conf.clone();
+                async move {
+                    if let Err(e) =
+                        handle_tls_conn(acceptor, stream, remote_addr, h1_conf, h2_conf).await
+                    {
+                        tracing::error!(%e, "Error handling connection");
+                    }
+                }
+            });
+        }
+
+        Ok::<_, color_eyre::Report>(())
+    };
+
+    tokio::try_join!(pt_h1_loop, pt_h2_loop, tls_loop)?;
+    Ok(())
+}
+
+enum Proto {
+    H1(Rc<h1::ServerConf>),
+    H2(Rc<h2::ServerConf>),
+}
+
+async fn handle_plaintext_conn(
+    stream: tokio::net::TcpStream,
+    remote_addr: std::net::SocketAddr,
+    proto: Proto,
+) -> Result<(), color_eyre::Report> {
+    info!("Accepted connection from {remote_addr}");
+    let buf = RollMut::alloc()?;
+
+    let fd = stream.as_raw_fd();
+    std::mem::forget(stream);
+    let stream = unsafe { TcpStream::from_raw_fd(fd) };
+
+    let driver = SDriver {};
+
+    match proto {
+        Proto::H1(h1_conf) => {
+            info!("Using HTTP/1.1");
+            hring::h1::serve(stream, h1_conf, buf, driver).await?;
+        }
+        Proto::H2(h2_conf) => {
+            info!("Using HTTP/2");
+            hring::h2::serve(stream, h2_conf, buf, Rc::new(driver)).await?;
+        }
     }
 
     Ok(())
 }
 
-async fn handle_conn(
+async fn handle_tls_conn(
     acceptor: Rc<tokio_rustls::TlsAcceptor>,
     stream: tokio::net::TcpStream,
     remote_addr: std::net::SocketAddr,
@@ -180,6 +273,7 @@ where
             match body.next_chunk().await? {
                 hring::BodyChunk::Chunk(chunk) => {
                     debug!("Client got chunk of len {}", chunk.len());
+
                     respond.write_chunk(chunk).await?;
                 }
                 hring::BodyChunk::Done { trailers } => {
@@ -190,4 +284,63 @@ where
 
         respond.finish_body(trailers).await
     }
+}
+
+struct SampleCDriver {}
+
+impl h1::ClientDriver for SampleCDriver {
+    type Return = ();
+
+    async fn on_informational_response(&mut self, _res: hring::Response) -> eyre::Result<()> {
+        // ignore informational responses
+
+        Ok(())
+    }
+
+    async fn on_final_response(
+        self,
+        res: hring::Response,
+        body: &mut impl Body,
+    ) -> eyre::Result<Self::Return> {
+        info!("Client got final response: {}", res.status);
+
+        loop {
+            debug!("Reading from body {body:?}");
+            match body.next_chunk().await? {
+                hring::BodyChunk::Chunk(chunk) => {
+                    debug!("Client got chunk of len {}", chunk.len());
+                }
+                hring::BodyChunk::Done { .. } => {
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+async fn sample_http_request() -> color_eyre::Result<()> {
+    info!("Doing sample HTTP request to httpbingo");
+
+    let addr = "httpbingo.org:80"
+        .to_socket_addrs()?
+        .next()
+        .expect("http bingo should be up");
+    let transport = Rc::new(TcpStream::connect(addr).await?);
+    debug!("Connected to httpbingo");
+
+    let driver = SampleCDriver {};
+
+    let req = Request {
+        method: Method::Get,
+        uri: "http://httpbingo.org/image/jpeg".parse().unwrap(),
+        version: Version::HTTP_11,
+        headers: Default::default(),
+    };
+
+    let (transport, _) = h1::request(transport, req, &mut (), driver).await?;
+    // don't re-use transport for now
+    drop(transport);
+
+    Ok(())
 }

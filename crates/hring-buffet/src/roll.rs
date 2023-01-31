@@ -29,6 +29,24 @@ enum StorageMut {
     Box(BoxStorage),
 }
 
+impl Debug for StorageMut {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Buf(bm) => f
+                .debug_struct("Buf")
+                .field("index", &bm.index)
+                .field("off", &bm.off)
+                .field("len", &bm.len)
+                .finish(),
+            Self::Box(bs) => f
+                .debug_struct("Box")
+                .field("buf", &bs.buf)
+                .field("off", &bs.off)
+                .finish(),
+        }
+    }
+}
+
 impl StorageMut {
     #[inline(always)]
     fn cap(&self) -> usize {
@@ -224,8 +242,9 @@ impl RollMut {
     ) -> (std::io::Result<usize>, Self) {
         let read_cap = std::cmp::min(limit, self.cap());
         assert!(read_cap > 0, "refusing to do empty read");
-
         let read_off = self.len;
+
+        tracing::trace!(%read_off, %read_cap, storage = ?self.storage, len = %self.len, "read_into in progress...");
         let read_into = ReadInto {
             buf: self,
             off: read_off,
@@ -233,6 +252,7 @@ impl RollMut {
             init: 0,
         };
         let (res, mut read_into) = r.read(read_into).await;
+        tracing::trace!(init = %read_into.init, "read_into done!");
         read_into.buf.len += read_into.init;
         (res, read_into.buf)
     }
@@ -318,7 +338,9 @@ impl RollMut {
                 assert_eq!(ours.index, theirs.index, "roll must be from same buffer");
                 assert!(theirs.off >= ours.off, "roll must start within buffer");
                 let skipped = theirs.off - ours.off;
+                tracing::trace!(our_index = %ours.index, their_index = %theirs.index, our_off = %ours.off, their_off = %theirs.off, %skipped, "RollMut::keep");
                 self.len -= skipped as u32;
+                ours.len -= skipped;
                 ours.off = theirs.off;
             }
             (StorageMut::Box(ours), RollInner::Box(theirs)) => {
@@ -871,7 +893,7 @@ impl RollStr {
 #[cfg(test)]
 mod tests {
     use nom::IResult;
-    use tokio_uring::net::{TcpListener, TcpStream};
+    use tracing::trace;
 
     use crate::{ChanRead, Roll, RollMut, BUF_SIZE};
 
@@ -1004,6 +1026,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "miri"))]
     fn test_roll_readfrom_start() {
         tokio_uring::start(async move {
             let mut rm = RollMut::alloc().unwrap();
@@ -1134,7 +1157,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "miri"))]
     fn test_roll_iobuf() {
+        use tokio_uring::net::{TcpListener, TcpStream};
+
         async fn test_roll_iobuf_inner(mut rm: RollMut) -> eyre::Result<()> {
             rm.put(b"hello").unwrap();
             let roll = rm.take_all();
@@ -1228,6 +1254,11 @@ mod tests {
         let mut pending = &input[..];
 
         loop {
+            if buf.cap() == 0 {
+                trace!("buf had zero cap, growing");
+                buf.grow()
+            }
+
             let (rest, version) = match parse(buf.filled()) {
                 Ok(t) => t,
                 Err(e) => {

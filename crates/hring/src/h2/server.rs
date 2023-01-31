@@ -21,9 +21,9 @@ use crate::{
         },
     },
     util::read_and_parse,
-    ExpectResponseHeaders, Headers, Method, Piece, PieceStr, ReadWriteOwned, Request, Responder,
-    Roll, RollMut, ServerDriver,
+    ExpectResponseHeaders, Headers, Method, Request, Responder, ServerDriver,
 };
+use hring_buffet::{Piece, PieceStr, ReadWriteOwned, Roll, RollMut};
 
 /// HTTP/2 server configuration
 pub struct ServerConf {
@@ -508,6 +508,8 @@ async fn h2_write_loop(
 ) -> eyre::Result<()> {
     let mut hpack_enc = hring_hpack::Encoder::new();
 
+    let mut index = 0;
+
     while let Some(ev) = ev_rx.recv().await {
         trace!("h2_write_loop: received H2 event");
         match ev {
@@ -546,12 +548,16 @@ async fn h2_write_loop(
                         let (res, _headers_encoded) = transport.write_all(headers_encoded).await;
                         res?;
                     }
-                    H2EventPayload::BodyChunk(piece) => {
+                    H2EventPayload::BodyChunk(chunk) => {
+                        let path = format!("/tmp/chunk-write-{index:06}.bin");
+                        std::fs::write(path, chunk.as_ref()).unwrap();
+                        index += 1;
+
                         let flags = BitFlags::<DataFlags>::default();
                         let frame = Frame::new(FrameType::Data(flags), ev.stream_id)
-                            .with_len(piece.len().try_into().unwrap());
+                            .with_len(chunk.len().try_into().unwrap());
                         frame.write(transport.as_ref()).await?;
-                        let (res, _) = transport.write_all(piece).await;
+                        let (res, _) = transport.write_all(chunk).await;
                         res?;
                     }
                     H2EventPayload::BodyEnd => {
@@ -648,7 +654,6 @@ fn end_headers(
                     let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
                     if value.len() == 0 || path.replace(value).is_some() {
                         unreachable!(); // No empty path nor duplicate allowed.
-
                     }
                 }
                 b"authority" => {
