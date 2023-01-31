@@ -2,10 +2,7 @@ use std::{fmt, rc::Rc};
 
 use tracing::debug;
 
-use crate::{
-    util::{read_and_parse, write_all_list},
-    Body, BodyChunk, BodyErrorReason,
-};
+use crate::{util::read_and_parse, Body, BodyChunk, BodyErrorReason};
 use hring_buffet::{Piece, PieceList, ReadOwned, RollMut, WriteOwned};
 
 /// An HTTP/1.1 body, either chunked or content-length.
@@ -282,9 +279,7 @@ pub(crate) async fn write_h1_body_chunk(
             list.push(format!("{:x}\r\n", chunk.len()).into_bytes());
             list.push(chunk);
             list.push("\r\n");
-
-            let list = write_all_list(transport, list).await?;
-            drop(list);
+            transport.writev_all(list.into_vec()).await?;
         }
         BodyWriteMode::ContentLength => {
             transport.write_all(chunk).await?;
@@ -305,9 +300,7 @@ pub(crate) async fn write_h1_body_end(
     debug!(?mode, "writing h1 body end");
     match mode {
         BodyWriteMode::Chunked => {
-            let mut list = PieceList::default();
-            list.push("0\r\n\r\n");
-            _ = write_all_list(transport, list).await?;
+            transport.write_all("0\r\n\r\n").await?;
         }
         BodyWriteMode::ContentLength => {
             // nothing to do

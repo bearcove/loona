@@ -3,7 +3,7 @@ use nom::IResult;
 use pretty_hex::PrettyHex;
 use tracing::{debug, trace};
 
-use hring_buffet::{PieceList, ReadOwned, Roll, RollMut, WriteOwned};
+use hring_buffet::{ReadOwned, Roll, RollMut};
 
 /// Returns `None` on EOF, error if partially parsed message.
 pub(crate) async fn read_and_parse<Parser, Output>(
@@ -74,28 +74,6 @@ where
             }
         };
     }
-}
-
-/// Write the filled part of a buffer to the given [TcpStream], returning a
-/// buffer re-using the remaining space.
-pub(crate) async fn write_all_list(
-    stream: &impl WriteOwned,
-    list: PieceList,
-) -> eyre::Result<PieceList> {
-    let len = list.len();
-    let num_chunks = list.num_pieces();
-    let list = list.into_vec();
-    debug!("writing {len} bytes in {num_chunks} chunks");
-
-    let (res, mut list) = stream.writev(list).await;
-    let n = res?;
-    debug!("wrote {n}/{len}");
-    if n < len {
-        unimplemented!();
-    }
-
-    list.clear();
-    Ok(list.into())
 }
 
 #[derive(thiserror::Error, Debug)]
