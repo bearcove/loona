@@ -893,6 +893,7 @@ impl RollStr {
 #[cfg(test)]
 mod tests {
     use nom::IResult;
+    use tracing::trace;
 
     use crate::{ChanRead, Roll, RollMut, BUF_SIZE};
 
@@ -1253,6 +1254,11 @@ mod tests {
         let mut pending = &input[..];
 
         loop {
+            if buf.cap() == 0 {
+                trace!("buf had zero cap, growing");
+                buf.grow()
+            }
+
             let (rest, version) = match parse(buf.filled()) {
                 Ok(t) => t,
                 Err(e) => {
