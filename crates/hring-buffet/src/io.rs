@@ -22,6 +22,10 @@ pub trait WriteOwned {
         let mut written = 0;
         let len = buf.bytes_init();
         while written < len {
+            eprintln!(
+                "WriteOwned::write_all, calling write with range {:?}",
+                written..len
+            );
             let (res, slice) = self.write(buf.slice(written..len)).await;
             buf = slice.into_inner();
             let n = res?;
@@ -39,6 +43,7 @@ pub trait WriteOwned {
     /// Write a list of buffers, taking ownership for the duration of the write.
     /// Might perform a partial write, see [WriteOwned::writev_all]
     async fn writev<B: IoBuf>(&self, list: Vec<B>) -> BufResult<usize, Vec<B>> {
+        eprintln!("WriteOwned::write_v with {} buffers", list.len());
         let mut out_list = Vec::with_capacity(list.len());
         let mut list = list.into_iter();
         let mut total = 0;
@@ -83,6 +88,11 @@ pub trait WriteOwned {
         let mut list: Vec<_> = list.into_iter().map(BufOrSlice::Buf).collect();
 
         while !list.is_empty() {
+            eprintln!(
+                "WriteOwned::writev_all, calling writev with {} items",
+                list.len()
+            );
+            eprintln!("self's type is {}", std::any::type_name::<Self>());
             let res;
             (res, list) = self.writev(list).await;
             let n = res?;
@@ -160,6 +170,13 @@ impl<B: IoBuf> BufOrSlice<B> {
     /// Consume the first `n` bytes of the buffer (assuming they've been written).
     /// This turns a `BufOrSlice::Buf` into a `BufOrSlice::Slice`
     fn consume(self, n: usize) -> Self {
+        eprintln!(
+            "consuming {n}, we're a {}",
+            match self {
+                BufOrSlice::Buf(_) => "Buf",
+                BufOrSlice::Slice(_) => "Slice",
+            }
+        );
         assert!(n <= self.len());
 
         match self {
@@ -183,10 +200,12 @@ impl ReadOwned for TcpStream {
 
 impl WriteOwned for TcpStream {
     async fn write<B: IoBuf>(&self, buf: B) -> BufResult<usize, B> {
+        eprintln!("TcpStream::write, bytes_init = {}", buf.bytes_init());
         TcpStream::write(self, buf).await
     }
 
     async fn writev<B: IoBuf>(&self, list: Vec<B>) -> BufResult<usize, Vec<B>> {
+        eprintln!("TcpStream::write_v with {} buffers", list.len());
         TcpStream::writev(self, list).await
     }
 }
