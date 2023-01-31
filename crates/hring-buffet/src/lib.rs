@@ -110,11 +110,24 @@ impl BufPool {
         let mut inner = self.inner.borrow_mut();
         if inner.is_none() {
             let len = self.num_buf as usize * self.buf_size as usize;
-            let mut map = memmap2::MmapOptions::new().len(len).map_anon()?;
-            let ptr = map.as_mut_ptr();
-            BUF_POOL_DESTRUCTOR.with(|destructor| {
-                *destructor.borrow_mut() = Some(map);
-            });
+
+            let ptr: *mut u8;
+
+            #[cfg(feature = "miri")]
+            {
+                let mut map = vec![0; len];
+                ptr = map.as_mut_ptr();
+                std::mem::forget(map);
+            }
+
+            #[cfg(not(feature = "miri"))]
+            {
+                let mut map = memmap2::MmapOptions::new().len(len).map_anon()?;
+                ptr = map.as_mut_ptr();
+                BUF_POOL_DESTRUCTOR.with(|destructor| {
+                    *destructor.borrow_mut() = Some(map);
+                });
+            }
 
             let mut free = VecDeque::with_capacity(self.num_buf as usize);
             for i in 0..self.num_buf {

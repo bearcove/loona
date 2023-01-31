@@ -1003,6 +1003,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "miri"))]
     fn test_roll_readfrom_start() {
         tokio_uring::start(async move {
             let mut rm = RollMut::alloc().unwrap();
