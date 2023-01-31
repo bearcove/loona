@@ -10,8 +10,10 @@ use std::{
 
 use color_eyre::eyre;
 use hring::{
-    buffet::RollMut, h1, h2, tokio_uring::net::TcpStream, Body, Encoder, ExpectResponseHeaders,
-    Responder, ResponseDone, ServerDriver,
+    buffet::{Piece, RollMut},
+    h1, h2,
+    tokio_uring::net::TcpStream,
+    Body, Encoder, ExpectResponseHeaders, Method, Request, Responder, ResponseDone, ServerDriver,
 };
 use http::Version;
 use pretty_hex::PrettyHex;
@@ -31,6 +33,11 @@ async fn async_main() -> eyre::Result<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+
+    if std::env::args().any(|a| a == "--get") {
+        sample_http_request().await.unwrap();
+        return Ok(());
+    }
 
     let pair = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
     let crt = pair.serialize_der()?;
@@ -264,12 +271,23 @@ where
 
         let mut respond = respond.write_final_response(res).await?;
 
+        let mut index = 0;
+
         let trailers = loop {
             debug!("Reading from body {body:?}");
             match body.next_chunk().await? {
                 hring::BodyChunk::Chunk(chunk) => {
                     debug!("Client got chunk of len {}", chunk.len());
+
                     debug!("Read body chunk {:?}", chunk.as_ref().hex_dump());
+
+                    let path = format!("/tmp/chunk-read-{index:06}.bin");
+                    std::fs::write(path, chunk.as_ref()).unwrap();
+                    index += 1;
+
+                    // // XXX: just testing
+                    // let chunk = Piece::Vec(chunk.as_ref().to_vec());
+
                     respond.write_chunk(chunk).await?;
                 }
                 hring::BodyChunk::Done { trailers } => {
@@ -280,4 +298,71 @@ where
 
         respond.finish_body(trailers).await
     }
+}
+
+struct SampleCDriver {}
+
+impl h1::ClientDriver for SampleCDriver {
+    type Return = ();
+
+    async fn on_informational_response(&mut self, _res: hring::Response) -> eyre::Result<()> {
+        // ignore informational responses
+
+        Ok(())
+    }
+
+    async fn on_final_response(
+        self,
+        res: hring::Response,
+        body: &mut impl Body,
+    ) -> eyre::Result<Self::Return> {
+        info!("Client got final response: {}", res.status);
+
+        let mut index = 0;
+
+        loop {
+            debug!("Reading from body {body:?}");
+            match body.next_chunk().await? {
+                hring::BodyChunk::Chunk(chunk) => {
+                    debug!("Client got chunk of len {}", chunk.len());
+
+                    // debug!("Read body chunk {:?}", chunk.as_ref().hex_dump());
+
+                    let path = format!("/tmp/chunk-read-{index:06}.bin");
+                    std::fs::write(path, chunk.as_ref()).unwrap();
+                    index += 1;
+                }
+                hring::BodyChunk::Done { .. } => {
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+async fn sample_http_request() -> color_eyre::Result<()> {
+    info!("Doing sample HTTP request to httpbingo");
+
+    let addr = "httpbingo.org:80"
+        .to_socket_addrs()?
+        .next()
+        .expect("http bingo should be up");
+    let transport = Rc::new(TcpStream::connect(addr).await?);
+    debug!("Connected to httpbingo");
+
+    let driver = SampleCDriver {};
+
+    let req = Request {
+        method: Method::Get,
+        uri: "http://httpbingo.org/image/jpeg".parse().unwrap(),
+        version: Version::HTTP_11,
+        headers: Default::default(),
+    };
+
+    let (transport, _) = h1::request(transport, req, &mut (), driver).await?;
+    // don't re-use transport for now
+    drop(transport);
+
+    Ok(())
 }
