@@ -14,6 +14,7 @@ use hring::{
     ResponseDone, RollMut, ServerDriver,
 };
 use http::Version;
+use pretty_hex::PrettyHex;
 use rustls::ServerConfig;
 use tokio::net::TcpListener;
 use tracing::{debug, info};
@@ -180,6 +181,7 @@ where
             match body.next_chunk().await? {
                 hring::BodyChunk::Chunk(chunk) => {
                     debug!("Client got chunk of len {}", chunk.len());
+                    debug!("Read body chunk {:?}", chunk.as_ref().hex_dump());
                     respond.write_chunk(chunk).await?;
                 }
                 hring::BodyChunk::Done { trailers } => {

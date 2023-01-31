@@ -7,6 +7,7 @@ use http::{
     Version,
 };
 use nom::Finish;
+use pretty_hex::PrettyHex;
 use smallvec::{smallvec, SmallVec};
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
@@ -547,6 +548,7 @@ async fn h2_write_loop(
                         res?;
                     }
                     H2EventPayload::BodyChunk(piece) => {
+                        debug!("Writing body chunk {:?}", piece.as_ref().hex_dump());
                         let flags = BitFlags::<DataFlags>::default();
                         let frame = Frame::new(FrameType::Data(flags), ev.stream_id)
                             .with_len(piece.len().try_into().unwrap());
@@ -648,7 +650,6 @@ fn end_headers(
                     let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
                     if value.len() == 0 || path.replace(value).is_some() {
                         unreachable!(); // No empty path nor duplicate allowed.
-
                     }
                 }
                 b"authority" => {
