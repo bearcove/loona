@@ -7,7 +7,6 @@ use http::{
     Version,
 };
 use nom::Finish;
-use pretty_hex::PrettyHex;
 use smallvec::{smallvec, SmallVec};
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
@@ -550,8 +549,6 @@ async fn h2_write_loop(
                         res?;
                     }
                     H2EventPayload::BodyChunk(chunk) => {
-                        debug!("Writing body chunk {:?}", chunk.as_ref().hex_dump());
-
                         let path = format!("/tmp/chunk-write-{index:06}.bin");
                         std::fs::write(path, chunk.as_ref()).unwrap();
                         index += 1;

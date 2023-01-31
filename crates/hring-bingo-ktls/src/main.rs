@@ -10,13 +10,10 @@ use std::{
 
 use color_eyre::eyre;
 use hring::{
-    buffet::{Piece, RollMut},
-    h1, h2,
-    tokio_uring::net::TcpStream,
-    Body, Encoder, ExpectResponseHeaders, Method, Request, Responder, ResponseDone, ServerDriver,
+    buffet::RollMut, h1, h2, tokio_uring::net::TcpStream, Body, Encoder, ExpectResponseHeaders,
+    Method, Request, Responder, ResponseDone, ServerDriver,
 };
 use http::Version;
-use pretty_hex::PrettyHex;
 use rustls::ServerConfig;
 use tokio::net::TcpListener;
 use tracing::{debug, info};
@@ -271,22 +268,11 @@ where
 
         let mut respond = respond.write_final_response(res).await?;
 
-        let mut index = 0;
-
         let trailers = loop {
             debug!("Reading from body {body:?}");
             match body.next_chunk().await? {
                 hring::BodyChunk::Chunk(chunk) => {
                     debug!("Client got chunk of len {}", chunk.len());
-
-                    debug!("Read body chunk {:?}", chunk.as_ref().hex_dump());
-
-                    let path = format!("/tmp/chunk-read-{index:06}.bin");
-                    std::fs::write(path, chunk.as_ref()).unwrap();
-                    index += 1;
-
-                    // // XXX: just testing
-                    // let chunk = Piece::Vec(chunk.as_ref().to_vec());
 
                     respond.write_chunk(chunk).await?;
                 }
@@ -318,19 +304,11 @@ impl h1::ClientDriver for SampleCDriver {
     ) -> eyre::Result<Self::Return> {
         info!("Client got final response: {}", res.status);
 
-        let mut index = 0;
-
         loop {
             debug!("Reading from body {body:?}");
             match body.next_chunk().await? {
                 hring::BodyChunk::Chunk(chunk) => {
                     debug!("Client got chunk of len {}", chunk.len());
-
-                    // debug!("Read body chunk {:?}", chunk.as_ref().hex_dump());
-
-                    let path = format!("/tmp/chunk-read-{index:06}.bin");
-                    std::fs::write(path, chunk.as_ref()).unwrap();
-                    index += 1;
                 }
                 hring::BodyChunk::Done { .. } => {
                     break;
