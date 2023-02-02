@@ -2,7 +2,7 @@ use std::fmt;
 
 use http::{StatusCode, Version};
 use tokio::sync::mpsc;
-use tracing::{debug, warn};
+use tracing::warn;
 
 use crate::{h1::body::BodyWriteMode, Encoder, Response};
 use hring_buffet::{Piece, Roll};
