@@ -252,7 +252,7 @@ impl Frame {
     pub const HEADER_LEN: usize = 9;
 
     /// Serialize a frame header to the given buffer
-    pub fn serialize(&self, header: &mut [u8; Self::HEADER_LEN]) -> eyre::Result<()> {
+    pub fn serialize(self, header: &mut [u8; Self::HEADER_LEN]) -> eyre::Result<()> {
         let mut header = &mut header[..];
 
         use byteorder::{BigEndian, WriteBytesExt};
@@ -268,7 +268,7 @@ impl Frame {
 
     /// Serialize a frame header to a `RollMut` whose filled portion is
     /// empty, and return a `Roll` from it
-    pub fn to_roll(&self, buf: &mut RollMut) -> eyre::Result<Roll> {
+    pub fn into_roll(self, buf: &mut RollMut) -> eyre::Result<Roll> {
         buf.put_to_roll(Self::HEADER_LEN, |buf| {
             self.serialize(buf.try_into().unwrap())
         })

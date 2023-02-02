@@ -106,7 +106,7 @@ pub async fn serve(
             StreamId::CONNECTION,
         );
         transport
-            .write_all(frame.to_roll(&mut out_scratch)?)
+            .write_all(frame.into_roll(&mut out_scratch)?)
             .await?;
         debug!("sent settings frame");
     }
@@ -525,7 +525,7 @@ async fn h2_write_loop(
                     StreamId::CONNECTION,
                 );
                 transport
-                    .write_all(frame.to_roll(&mut out_scratch)?)
+                    .write_all(frame.into_roll(&mut out_scratch)?)
                     .await?;
             }
             H2ConnEvent::ServerEvent(ev) => {
@@ -537,8 +537,11 @@ async fn h2_write_loop(
                         let flags = HeadersFlags::EndHeaders;
                         let mut frame = Frame::new(FrameType::Headers(flags.into()), ev.stream_id);
 
-                        // TODO: don't allocate so much for headers
-                        // TODO: limt header size
+                        // TODO: don't allocate so much for headers. all `encode_into`
+                        // wants is an `IntoIter`, we can definitely have a custom iterator
+                        // that operates on all this instead of using a `Vec`.
+
+                        // TODO: limit header size
                         let mut headers: Vec<(&[u8], &[u8])> = vec![];
                         headers.push((b":status", res.status.as_str().as_bytes()));
                         for (name, value) in res.headers.iter() {
@@ -548,11 +551,16 @@ async fn h2_write_loop(
                             }
                             headers.push((name.as_str().as_bytes(), value));
                         }
-                        let headers_encoded = hpack_enc.encode(headers);
-                        frame.len = headers_encoded.len() as u32;
-                        let frame_roll = frame.to_roll(&mut out_scratch)?;
+
+                        assert_eq!(out_scratch.len(), 0);
+                        hpack_enc.encode_into(headers, &mut out_scratch)?;
+                        let fragment_block = out_scratch.take_all();
+
+                        frame.len = fragment_block.len() as u32;
+                        let frame_roll = frame.into_roll(&mut out_scratch)?;
+
                         transport
-                            .writev_all(PieceList::default().with(frame_roll).with(headers_encoded))
+                            .writev_all(PieceList::default().with(frame_roll).with(fragment_block))
                             .await?;
                     }
                     H2EventPayload::BodyChunk(chunk) => {
@@ -563,7 +571,7 @@ async fn h2_write_loop(
                         let flags = BitFlags::<DataFlags>::default();
                         let frame = Frame::new(FrameType::Data(flags), ev.stream_id)
                             .with_len(chunk.len().try_into().unwrap());
-                        let frame_roll = frame.to_roll(&mut out_scratch)?;
+                        let frame_roll = frame.into_roll(&mut out_scratch)?;
                         transport
                             .writev_all(PieceList::default().with(frame_roll).with(chunk))
                             .await?;
@@ -572,7 +580,7 @@ async fn h2_write_loop(
                         let flags = DataFlags::EndStream;
                         let frame = Frame::new(FrameType::Data(flags.into()), ev.stream_id);
                         transport
-                            .write_all(frame.to_roll(&mut out_scratch)?)
+                            .write_all(frame.into_roll(&mut out_scratch)?)
                             .await?;
                     }
                 }
@@ -585,7 +593,7 @@ async fn h2_write_loop(
                 transport
                     .writev_all(
                         PieceList::default()
-                            .with(frame.to_roll(&mut out_scratch)?)
+                            .with(frame.into_roll(&mut out_scratch)?)
                             .with(payload),
                     )
                     .await?;
@@ -615,7 +623,7 @@ async fn h2_write_loop(
                 transport
                     .writev_all(
                         PieceList::default()
-                            .with(frame.to_roll(&mut out_scratch)?)
+                            .with(frame.into_roll(&mut out_scratch)?)
                             .with(header)
                             .with(additional_debug_data),
                     )
