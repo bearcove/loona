@@ -1,5 +1,6 @@
 use std::{any::Any, net::SocketAddr, path::PathBuf, process::Stdio};
 
+use libc::{prctl, PR_SET_PDEATHSIG, SIGKILL};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::Command,
@@ -21,6 +22,12 @@ pub async fn start() -> eyre::Result<(SocketAddr, impl Any)> {
     debug!("Using testbed binary: {}", binary_path.display());
     let mut cmd = Command::new(binary_path);
     cmd.stdout(Stdio::piped());
+    unsafe {
+        cmd.pre_exec(|| {
+            prctl(PR_SET_PDEATHSIG, SIGKILL);
+            Ok(())
+        })
+    };
     cmd.kill_on_drop(true);
 
     let mut child = cmd.spawn()?;
