@@ -402,6 +402,28 @@ impl RollMut {
     }
 }
 
+impl std::io::Write for RollMut {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = buf.len();
+        if self.cap() < n {
+            // TODO: this is wrong, `reserve` might not reserve _enough data_.
+            // we know how much data we need here, so we should reserve exactly
+            // that amount (rounded up so it aligns nicely with the default
+            // buffer size)
+            self.reserve()
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        }
+        self.put(buf)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        // no need to flush
+        Ok(())
+    }
+}
+
 impl Deref for RollMut {
     type Target = [u8];
 
@@ -1326,5 +1348,14 @@ mod tests {
 
             buf.keep(rest);
         }
+    }
+
+    #[test]
+    fn test_roll_io_write() {
+        let mut rm = RollMut::alloc().unwrap();
+        std::io::Write::write_all(&mut rm, b"hello").unwrap();
+
+        let roll = rm.take_all();
+        assert_eq!(std::str::from_utf8(&roll).unwrap(), "hello");
     }
 }
