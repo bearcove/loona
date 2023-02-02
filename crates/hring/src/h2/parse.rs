@@ -249,29 +249,22 @@ impl Frame {
         Ok((i, frame))
     }
 
-    pub const HEADER_LEN: usize = 9;
-
-    /// Serialize a frame header to the given buffer
-    pub fn serialize(self, header: &mut [u8; Self::HEADER_LEN]) -> eyre::Result<()> {
-        let mut header = &mut header[..];
-
+    pub fn write_into(self, mut w: impl std::io::Write) -> eyre::Result<()> {
         use byteorder::{BigEndian, WriteBytesExt};
-        header.write_u24::<BigEndian>(self.len as _)?;
+        w.write_u24::<BigEndian>(self.len as _)?;
         let ft = self.frame_type.encode();
-        header.write_u8(ft.ty)?;
-        header.write_u8(ft.flags)?;
+        w.write_u8(ft.ty)?;
+        w.write_u8(ft.flags)?;
         // TODO: do we ever need to write the reserved bit?
-        header.write_u32::<BigEndian>(self.stream_id.0)?;
+        w.write_u32::<BigEndian>(self.stream_id.0)?;
 
         Ok(())
     }
 
-    /// Serialize a frame header to a `RollMut` whose filled portion is
-    /// empty, and return a `Roll` from it
-    pub fn into_roll(self, buf: &mut RollMut) -> eyre::Result<Roll> {
-        buf.put_to_roll(Self::HEADER_LEN, |buf| {
-            self.serialize(buf.try_into().unwrap())
-        })
+    pub fn into_roll(self, mut scratch: &mut RollMut) -> eyre::Result<Roll> {
+        debug_assert_eq!(scratch.len(), 0);
+        self.write_into(&mut scratch)?;
+        Ok(scratch.take_all())
     }
 }
 
