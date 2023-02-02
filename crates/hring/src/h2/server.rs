@@ -23,7 +23,7 @@ use crate::{
     util::read_and_parse,
     ExpectResponseHeaders, Headers, Method, Request, Responder, ServerDriver,
 };
-use hring_buffet::{Piece, PieceStr, ReadWriteOwned, Roll, RollMut};
+use hring_buffet::{Piece, PieceList, PieceStr, ReadWriteOwned, Roll, RollMut};
 
 /// HTTP/2 server configuration
 pub struct ServerConf {
@@ -97,13 +97,17 @@ pub async fn serve(
     };
     debug!("read preface");
 
+    let mut out_scratch = RollMut::alloc()?;
+
     // we have to send a settings frame
     {
         let frame = Frame::new(
             FrameType::Settings(Default::default()),
             StreamId::CONNECTION,
         );
-        frame.write(transport.as_ref()).await?;
+        transport
+            .write_all(frame.to_roll(&mut out_scratch)?)
+            .await?;
         debug!("sent settings frame");
     }
 
@@ -116,7 +120,7 @@ pub async fn serve(
         client_buf,
         state.clone(),
     );
-    let write_task = h2_write_loop(ev_rx, transport);
+    let write_task = h2_write_loop(ev_rx, transport, out_scratch);
     tokio::try_join!(read_task, write_task)?;
     debug!("joined read_task / write_task");
 
@@ -505,6 +509,7 @@ async fn send_goaway(
 async fn h2_write_loop(
     mut ev_rx: mpsc::Receiver<H2ConnEvent>,
     transport: Rc<impl ReadWriteOwned>,
+    mut out_scratch: RollMut,
 ) -> eyre::Result<()> {
     let mut hpack_enc = hring_hpack::Encoder::new();
 
@@ -515,11 +520,13 @@ async fn h2_write_loop(
         match ev {
             H2ConnEvent::AcknowledgeSettings => {
                 debug!("acknowledging new settings");
-                let res_frame = Frame::new(
+                let frame = Frame::new(
                     FrameType::Settings(SettingsFlags::Ack.into()),
                     StreamId::CONNECTION,
                 );
-                res_frame.write(transport.as_ref()).await?;
+                transport
+                    .write_all(frame.to_roll(&mut out_scratch)?)
+                    .await?;
             }
             H2ConnEvent::ServerEvent(ev) => {
                 debug!("Sending server event: {ev:?}");
@@ -543,9 +550,10 @@ async fn h2_write_loop(
                         }
                         let headers_encoded = hpack_enc.encode(headers);
                         frame.len = headers_encoded.len() as u32;
-                        frame.write(transport.as_ref()).await?;
-
-                        transport.write_all(headers_encoded).await?;
+                        let frame_roll = frame.to_roll(&mut out_scratch)?;
+                        transport
+                            .writev_all(PieceList::default().with(frame_roll).with(headers_encoded))
+                            .await?;
                     }
                     H2EventPayload::BodyChunk(chunk) => {
                         let path = format!("/tmp/chunk-write-{index:06}.bin");
@@ -555,13 +563,17 @@ async fn h2_write_loop(
                         let flags = BitFlags::<DataFlags>::default();
                         let frame = Frame::new(FrameType::Data(flags), ev.stream_id)
                             .with_len(chunk.len().try_into().unwrap());
-                        frame.write(transport.as_ref()).await?;
-                        transport.write_all(chunk).await?;
+                        let frame_roll = frame.to_roll(&mut out_scratch)?;
+                        transport
+                            .writev_all(PieceList::default().with(frame_roll).with(chunk))
+                            .await?;
                     }
                     H2EventPayload::BodyEnd => {
                         let flags = DataFlags::EndStream;
                         let frame = Frame::new(FrameType::Data(flags.into()), ev.stream_id);
-                        frame.write(transport.as_ref()).await?;
+                        transport
+                            .write_all(frame.to_roll(&mut out_scratch)?)
+                            .await?;
                     }
                 }
             }
@@ -570,8 +582,13 @@ async fn h2_write_loop(
                 let flags = PingFlags::Ack.into();
                 let frame = Frame::new(FrameType::Ping(flags), StreamId::CONNECTION)
                     .with_len(payload.len() as u32);
-                frame.write(transport.as_ref()).await?;
-                transport.write_all(payload).await?;
+                transport
+                    .writev_all(
+                        PieceList::default()
+                            .with(frame.to_roll(&mut out_scratch)?)
+                            .with(payload),
+                    )
+                    .await?;
             }
             H2ConnEvent::GoAway {
                 error_code,
@@ -579,14 +596,14 @@ async fn h2_write_loop(
                 additional_debug_data,
             } => {
                 debug!("must send goaway");
-                let mut header = vec![0u8; 8];
-                {
+                let header = out_scratch.put_to_roll(8, |mut slice| {
                     use byteorder::{BigEndian, WriteBytesExt};
-                    let mut header = &mut header[..];
                     // TODO: do we ever need to write the reserved bit?
-                    header.write_u32::<BigEndian>(last_stream_id.0)?;
-                    header.write_u32::<BigEndian>(error_code.repr())?;
-                }
+                    slice.write_u32::<BigEndian>(last_stream_id.0)?;
+                    slice.write_u32::<BigEndian>(error_code.repr())?;
+
+                    Ok(())
+                })?;
 
                 debug!("sending goaway frame");
                 let frame = Frame::new(FrameType::GoAway, StreamId::CONNECTION).with_len(
@@ -594,10 +611,15 @@ async fn h2_write_loop(
                         .try_into()
                         .unwrap(),
                 );
-                // TODO: use `writev`
-                frame.write(transport.as_ref()).await?;
-                transport.write_all(header).await?;
-                transport.write_all(additional_debug_data).await?;
+
+                transport
+                    .writev_all(
+                        PieceList::default()
+                            .with(frame.to_roll(&mut out_scratch)?)
+                            .with(header)
+                            .with(additional_debug_data),
+                    )
+                    .await?;
             }
         }
     }

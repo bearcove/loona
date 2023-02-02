@@ -79,10 +79,10 @@ pub trait WriteOwned {
     }
 
     /// Write a list of buffers, re-trying the write if the kernel does a partial write.
-    async fn writev_all<B: IoBuf>(&self, list: Vec<B>) -> std::io::Result<()> {
+    async fn writev_all<B: IoBuf>(&self, list: impl Into<Vec<B>>) -> std::io::Result<()> {
         // Workaround for https://github.com/rust-lang/rust/issues/107002,
         // remove after https://github.com/rust-lang/rust/pull/107013 is merged
-        writev_all(self, list).await
+        writev_all(self, list.into()).await
     }
 }
 
