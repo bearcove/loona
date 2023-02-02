@@ -15,7 +15,7 @@ use tracing::{debug, trace, warn};
 
 use crate::{
     h2::{
-        body::H2Body,
+        body::{H2Body, PieceOrTrailers},
         encode::{EncoderState, H2ConnEvent, H2Encoder, H2EventPayload},
         parse::{
             self, ContinuationFlags, DataFlags, Frame, FrameType, HeadersFlags, KnownErrorCode,
@@ -26,6 +26,8 @@ use crate::{
     ExpectResponseHeaders, Headers, Method, Request, Responder, ServerDriver,
 };
 use hring_buffet::{Piece, PieceList, PieceStr, ReadWriteOwned, Roll, RollMut};
+
+use super::body::{H2BodyItem, H2BodySender};
 
 /// HTTP/2 server configuration
 pub struct ServerConf {
@@ -56,7 +58,8 @@ struct StreamState {
 
 enum StreamRxStage {
     Headers(HeadersData),
-    Body(mpsc::Sender<eyre::Result<Piece>>),
+    Body(H2BodySender),
+    Trailers(H2BodySender, HeadersData),
     Done,
 }
 
@@ -237,7 +240,11 @@ async fn h2_read_loop(
                             match &mut stream.rx_stage {
                                 StreamRxStage::Headers(_) => {
                                     // TODO: proper error handling (stream error)
-                                    panic!("received data for stream before headers")
+                                    panic!("expected headers, received data")
+                                }
+                                StreamRxStage::Trailers(..) => {
+                                    // TODO: proper error handling (stream error)
+                                    panic!("expected trailers, received data")
                                 }
                                 StreamRxStage::Body(tx) => {
                                     // TODO: we can get rid of that clone sometimes
@@ -254,19 +261,38 @@ async fn h2_read_loop(
                             }
                         };
 
-                        if body_tx.send(Ok(payload.into())).await.is_err() {
+                        if body_tx
+                            .send(Ok(PieceOrTrailers::Piece(payload.into())))
+                            .await
+                            .is_err()
+                        {
                             warn!("TODO: The body is being ignored, we should reset the stream");
                         }
                     }
                     FrameType::Headers(flags) => {
+                        #[derive(Debug)]
+                        enum HeadersOrTrailers {
+                            Headers,
+                            Trailers,
+                        }
+
+                        let headers_or_trailers;
                         {
                             let state = state.borrow();
+                            // TODO: validate state a little better than that?
                             if state.streams.contains_key(&frame.stream_id) {
-                                todo!(
-                                    "handle connection error: received headers for existing stream {}", frame.stream_id
-                                );
+                                if !flags.contains(HeadersFlags::EndStream) {
+                                    todo!(
+                                        "handle connection error: trailers must have EndStream, this just looks like duplicate headers for stream {}",
+                                        frame.stream_id
+                                    );
+                                }
+
+                                headers_or_trailers = HeadersOrTrailers::Trailers;
+                            } else {
+                                headers_or_trailers = HeadersOrTrailers::Headers;
                             }
-                        }
+                        };
 
                         let padding_length = if flags.contains(HeadersFlags::Padded) {
                             if payload.is_empty() {
@@ -299,7 +325,10 @@ async fn h2_read_loop(
                             (payload, _) = payload.split_at(at);
                         }
 
-                        debug!("Receiving initial headers for stream {}", frame.stream_id);
+                        debug!(
+                            "Receiving {headers_or_trailers:?} for stream {}",
+                            frame.stream_id
+                        );
                         let headers_data = HeadersData {
                             end_stream: flags.contains(HeadersFlags::EndStream),
                             fragments: smallvec![payload],
@@ -334,18 +363,40 @@ async fn h2_read_loop(
                                 }
                             }
                         } else {
-                            debug!("expecting more headers for stream {}", frame.stream_id);
+                            debug!(
+                                "expecting more {headers_or_trailers:?} for stream {}",
+                                frame.stream_id
+                            );
                             continuation_state =
                                 ContinuationState::ContinuingHeaders(frame.stream_id);
 
                             {
                                 let mut state = state.borrow_mut();
-                                state.streams.insert(
-                                    frame.stream_id,
-                                    StreamState {
-                                        rx_stage: StreamRxStage::Headers(headers_data),
-                                    },
-                                );
+                                match headers_or_trailers {
+                                    HeadersOrTrailers::Headers => {
+                                        state.streams.insert(
+                                            frame.stream_id,
+                                            StreamState {
+                                                rx_stage: StreamRxStage::Headers(headers_data),
+                                            },
+                                        );
+                                    }
+                                    HeadersOrTrailers::Trailers => {
+                                        let ss = state
+                                            .streams
+                                            .get_mut(&frame.stream_id)
+                                            .expect("stream should exist when receiving trailers");
+                                        let mut rx_stage = StreamRxStage::Done;
+                                        std::mem::swap(&mut rx_stage, &mut ss.rx_stage);
+
+                                        let body_tx = match rx_stage {
+                                            StreamRxStage::Body(tx) => tx,
+                                            _ => todo!("handle connection error: trailers must follow headers"),
+                                        };
+                                        ss.rx_stage =
+                                            StreamRxStage::Trailers(body_tx, headers_data);
+                                    }
+                                }
                             }
                         }
                     }
@@ -541,8 +592,6 @@ async fn h2_write_loop(
 ) -> eyre::Result<()> {
     let mut hpack_enc = hring_hpack::Encoder::new();
 
-    let mut index = 0;
-
     while let Some(ev) = ev_rx.recv().await {
         trace!("h2_write_loop: received H2 event");
         match ev {
@@ -593,10 +642,6 @@ async fn h2_write_loop(
                             .wrap_err("writing headers")?;
                     }
                     H2EventPayload::BodyChunk(chunk) => {
-                        let path = format!("/tmp/chunk-write-{index:06}.bin");
-                        std::fs::write(path, chunk.as_ref()).unwrap();
-                        index += 1;
-
                         let flags = BitFlags::<DataFlags>::default();
                         let frame = Frame::new(FrameType::Data(flags), ev.stream_id)
                             .with_len(chunk.len().try_into().unwrap());
@@ -799,7 +844,7 @@ fn end_headers(
         state: ExpectResponseHeaders,
     };
 
-    let (piece_tx, piece_rx) = mpsc::channel::<eyre::Result<Piece>>(1);
+    let (piece_tx, piece_rx) = mpsc::channel::<H2BodyItem>(1); // TODO: is 1 a sensible value here?
 
     let next_rx_stage = if data.end_stream {
         StreamRxStage::Done
