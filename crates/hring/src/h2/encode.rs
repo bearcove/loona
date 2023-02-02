@@ -10,6 +10,7 @@ use hring_buffet::{Piece, Roll};
 use super::parse::{KnownErrorCode, StreamId};
 
 pub(crate) enum H2ConnEvent {
+    ConnectionClose,
     Ping(Roll),
     ServerEvent(H2Event),
     AcknowledgeSettings,

@@ -125,6 +125,7 @@ async fn run_server(ln: TcpListener) -> color_eyre::Result<()> {
         let conf = Rc::new(hring::h2::ServerConf::default());
         let client_buf = RollMut::alloc()?;
         let driver = Rc::new(SDriver);
+
         tokio_uring::spawn(async move {
             if let Err(e) = hring::h2::serve(stream, conf, client_buf, driver).await {
                 tracing::error!("error serving client {}: {}", addr, e);

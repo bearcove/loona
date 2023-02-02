@@ -1,6 +1,7 @@
 use std::{borrow::Cow, cell::RefCell, collections::HashMap, rc::Rc};
 
 use enumflags2::BitFlags;
+use eyre::Context;
 use http::{
     header::{self, HeaderName},
     uri::{Authority, PathAndQuery, Scheme},
@@ -121,7 +122,17 @@ pub async fn serve(
         state.clone(),
     );
     let write_task = h2_write_loop(ev_rx, transport, out_scratch);
-    tokio::try_join!(read_task, write_task)?;
+    debug!("joining read_task / write_task");
+
+    let res = tokio::try_join!(
+        async move { read_task.await.map_err(|e| eyre::eyre!("read_task: {e}")) },
+        async move { write_task.await.map_err(|e| eyre::eyre!("write_task: {e}")) },
+    );
+    if let Err(e) = &res {
+        debug!("caught error from one of the tasks: {e} / {e:#?}");
+    }
+    res?;
+
     debug!("joined read_task / write_task");
 
     Ok(())
@@ -144,6 +155,7 @@ async fn h2_read_loop(
                 Some((client_buf, frame)) => (client_buf, frame),
                 None => {
                     debug!("h2 client closed connection");
+                    _ = ev_tx.send(H2ConnEvent::ConnectionClose).await;
                     return Ok(());
                 }
             };
@@ -526,7 +538,8 @@ async fn h2_write_loop(
                 );
                 transport
                     .write_all(frame.into_roll(&mut out_scratch)?)
-                    .await?;
+                    .await
+                    .wrap_err("writing acknowledge settings")?;
             }
             H2ConnEvent::ServerEvent(ev) => {
                 debug!("Sending server event: {ev:?}");
@@ -561,7 +574,8 @@ async fn h2_write_loop(
 
                         transport
                             .writev_all(PieceList::default().with(frame_roll).with(fragment_block))
-                            .await?;
+                            .await
+                            .wrap_err("writing headers")?;
                     }
                     H2EventPayload::BodyChunk(chunk) => {
                         let path = format!("/tmp/chunk-write-{index:06}.bin");
@@ -574,14 +588,16 @@ async fn h2_write_loop(
                         let frame_roll = frame.into_roll(&mut out_scratch)?;
                         transport
                             .writev_all(PieceList::default().with(frame_roll).with(chunk))
-                            .await?;
+                            .await
+                            .wrap_err("writing bodychunk")?;
                     }
                     H2EventPayload::BodyEnd => {
                         let flags = DataFlags::EndStream;
                         let frame = Frame::new(FrameType::Data(flags.into()), ev.stream_id);
                         transport
                             .write_all(frame.into_roll(&mut out_scratch)?)
-                            .await?;
+                            .await
+                            .wrap_err("writing BodyEnd")?;
                     }
                 }
             }
@@ -596,7 +612,8 @@ async fn h2_write_loop(
                             .with(frame.into_roll(&mut out_scratch)?)
                             .with(payload),
                     )
-                    .await?;
+                    .await
+                    .wrap_err("writing pong")?;
             }
             H2ConnEvent::GoAway {
                 error_code,
@@ -627,7 +644,12 @@ async fn h2_write_loop(
                             .with(header)
                             .with(additional_debug_data),
                     )
-                    .await?;
+                    .await
+                    .wrap_err("writing goaway")?;
+            }
+            H2ConnEvent::ConnectionClose => {
+                tracing::debug!("client closed connection, write loop bailing out");
+                break;
             }
         }
     }
