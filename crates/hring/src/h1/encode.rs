@@ -5,7 +5,6 @@ use http::{StatusCode, Version};
 
 use crate::{
     types::{Headers, Request, Response},
-    util::write_all_list,
     Encoder,
 };
 use hring_buffet::{Piece, PieceList, WriteOwned};
@@ -152,12 +151,10 @@ where
         let mut list = PieceList::default();
         encode_response(res, &mut list)?;
 
-        let list = write_all_list(self.transport.as_ref(), list)
+        self.transport
+            .writev_all(list.into_vec())
             .await
             .wrap_err("writing response headers upstream")?;
-
-        // TODO: can we re-use that list? pool it?
-        drop(list);
 
         Ok(())
     }
@@ -178,12 +175,10 @@ where
         let mut list = PieceList::default();
         encode_headers(*trailers, &mut list)?;
 
-        let list = write_all_list(self.transport.as_ref(), list)
+        self.transport
+            .writev_all(list.into_vec())
             .await
             .wrap_err("writing response headers upstream")?;
-
-        // TODO: can we re-use that list? pool it?
-        drop(list);
 
         Ok(())
     }

@@ -4,11 +4,7 @@ use eyre::Context;
 use http::header;
 use tracing::debug;
 
-use crate::{
-    types::Request,
-    util::{read_and_parse, write_all_list},
-    Body, HeadersExt, Response,
-};
+use crate::{types::Request, util::read_and_parse, Body, HeadersExt, Response};
 use hring_buffet::{PieceList, ReadWriteOwned, RollMut};
 
 use super::{
@@ -56,7 +52,8 @@ where
 
     let mut list = PieceList::default();
     encode_request(req, &mut list)?;
-    _ = write_all_list(transport.as_ref(), list)
+    transport
+        .writev_all(list.into_vec())
         .await
         .wrap_err("writing request headers")?;
 
