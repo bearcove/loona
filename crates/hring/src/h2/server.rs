@@ -235,7 +235,7 @@ async fn h2_read_loop(
                             let state = state.borrow();
                             if state.streams.contains_key(&frame.stream_id) {
                                 todo!(
-                                    "handle connection error: received headers for existing stream"
+                                    "handle connection error: received headers for existing stream {}", frame.stream_id
                                 );
                             }
                         }
