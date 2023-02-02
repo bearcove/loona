@@ -50,10 +50,12 @@ where
         None => BodyWriteMode::Chunked,
     };
 
+    let mut buf = RollMut::alloc()?;
+
     let mut list = PieceList::default();
-    encode_request(req, &mut list)?;
+    encode_request(req, &mut list, &mut buf)?;
     transport
-        .writev_all(list.into_vec())
+        .writev_all(list)
         .await
         .wrap_err("writing request headers")?;
 
@@ -79,7 +81,6 @@ where
     let recv_res_fut = {
         let transport = transport.clone();
         async move {
-            let buf = RollMut::alloc()?;
             let (buf, res) = read_and_parse(
                 super::parse::response,
                 transport.as_ref(),

@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{io::Write, rc::Rc};
 
 use eyre::Context;
 use http::{StatusCode, Version};
@@ -7,15 +7,22 @@ use crate::{
     types::{Headers, Request, Response},
     Encoder,
 };
-use hring_buffet::{Piece, PieceList, WriteOwned};
+use hring_buffet::{Piece, PieceList, RollMut, WriteOwned};
 
 use super::body::{write_h1_body_chunk, write_h1_body_end, BodyWriteMode};
 
-pub(crate) fn encode_request(req: Request, list: &mut PieceList) -> eyre::Result<()> {
+pub(crate) fn encode_request(
+    req: Request,
+    list: &mut PieceList,
+    out_scratch: &mut RollMut,
+) -> eyre::Result<()> {
     list.push(req.method.into_chunk());
     list.push(" ");
-    // TODO: get rid of allocation here, or at least go through `RollMut`
-    list.push(req.uri.path().to_string().into_bytes());
+
+    assert_eq!(out_scratch.len(), 0);
+    out_scratch.write_all(req.uri.path().as_bytes())?;
+    list.push(out_scratch.take_all());
+
     match req.version {
         Version::HTTP_10 => list.push(" HTTP/1.0\r\n"),
         Version::HTTP_11 => list.push(" HTTP/1.1\r\n"),
@@ -152,7 +159,7 @@ where
         encode_response(res, &mut list)?;
 
         self.transport
-            .writev_all(list.into_vec())
+            .writev_all(list)
             .await
             .wrap_err("writing response headers upstream")?;
 
@@ -176,7 +183,7 @@ where
         encode_headers(*trailers, &mut list)?;
 
         self.transport
-            .writev_all(list.into_vec())
+            .writev_all(list)
             .await
             .wrap_err("writing response headers upstream")?;
 

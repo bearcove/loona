@@ -275,11 +275,14 @@ pub(crate) async fn write_h1_body_chunk(
 ) -> eyre::Result<()> {
     match mode {
         BodyWriteMode::Chunked => {
-            let mut list = PieceList::default();
-            list.push(format!("{:x}\r\n", chunk.len()).into_bytes());
-            list.push(chunk);
-            list.push("\r\n");
-            transport.writev_all(list.into_vec()).await?;
+            transport
+                .writev_all(
+                    PieceList::default()
+                        .with(format!("{:x}\r\n", chunk.len()).into_bytes())
+                        .with(chunk)
+                        .with("\r\n"),
+                )
+                .await?;
         }
         BodyWriteMode::ContentLength => {
             transport.write_all(chunk).await?;
