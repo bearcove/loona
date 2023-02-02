@@ -44,8 +44,8 @@ where
                     }
 
                     if buf.cap() == 0 {
-                        trace!("buf had zero cap, growing");
-                        buf.grow()
+                        trace!("buf had zero cap, reserving");
+                        buf.reserve()?;
                     }
                     trace!(
                         "calling read_into, buf.cap={}, buf.len={} read_limit={read_limit}",
