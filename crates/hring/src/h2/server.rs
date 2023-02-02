@@ -2,6 +2,7 @@ use std::{borrow::Cow, cell::RefCell, collections::HashMap, rc::Rc};
 
 use enumflags2::BitFlags;
 use eyre::Context;
+use futures_util::TryFutureExt;
 use http::{
     header::{self, HeaderName},
     uri::{Authority, PathAndQuery, Scheme},
@@ -121,22 +122,38 @@ pub async fn serve(
         client_buf,
         state.clone(),
     );
+
     let write_task = h2_write_loop(ev_rx, transport, out_scratch);
-    debug!("joining read_task / write_task");
 
     let res = tokio::try_join!(
-        async move { read_task.await.map_err(|e| eyre::eyre!("read_task: {e}")) },
-        async move { write_task.await.map_err(|e| eyre::eyre!("write_task: {e}")) },
+        read_task.map_err(LoopError::Read),
+        write_task.map_err(LoopError::Write),
     );
     if let Err(e) = &res {
+        if let LoopError::Read(r) = e {
+            if r.downcast_ref::<ConnectionClosed>().is_some() {
+                return Ok(());
+            }
+        }
         debug!("caught error from one of the tasks: {e} / {e:#?}");
     }
     res?;
 
-    debug!("joined read_task / write_task");
-
     Ok(())
 }
+
+#[derive(thiserror::Error, Debug)]
+enum LoopError {
+    #[error("read error: {0}")]
+    Read(eyre::Report),
+
+    #[error("write error: {0}")]
+    Write(eyre::Report),
+}
+
+#[derive(thiserror::Error, Debug)]
+#[error("connection closed")]
+struct ConnectionClosed;
 
 async fn h2_read_loop(
     driver: Rc<impl ServerDriver + 'static>,
@@ -155,12 +172,11 @@ async fn h2_read_loop(
                 Some((client_buf, frame)) => (client_buf, frame),
                 None => {
                     debug!("h2 client closed connection");
-                    _ = ev_tx.send(H2ConnEvent::ConnectionClose).await;
-                    return Ok(());
+                    return Err(eyre::Report::from(ConnectionClosed));
                 }
             };
 
-        debug!(?frame, "received h2 frame");
+        debug!(?frame, "Received");
 
         // TODO: there might be optimizations to be done for `Data` frames later
         // on, but for now, let's unconditionally read the payload (if it's not
@@ -283,7 +299,7 @@ async fn h2_read_loop(
                             (payload, _) = payload.split_at(at);
                         }
 
-                        debug!("receiving initial headers for stream {}", frame.stream_id);
+                        debug!("Receiving initial headers for stream {}", frame.stream_id);
                         let headers_data = HeadersData {
                             end_stream: flags.contains(HeadersFlags::EndStream),
                             fragments: smallvec![payload],
@@ -542,11 +558,10 @@ async fn h2_write_loop(
                     .wrap_err("writing acknowledge settings")?;
             }
             H2ConnEvent::ServerEvent(ev) => {
-                debug!("Sending server event: {ev:?}");
+                debug!(?ev, "Writing");
 
                 match ev.payload {
                     H2EventPayload::Headers(res) => {
-                        debug!("Sending headers on stream {}", ev.stream_id);
                         let flags = HeadersFlags::EndHeaders;
                         let mut frame = Frame::new(FrameType::Headers(flags.into()), ev.stream_id);
 
@@ -620,7 +635,7 @@ async fn h2_write_loop(
                 last_stream_id,
                 additional_debug_data,
             } => {
-                debug!("must send goaway");
+                debug!(%last_stream_id, ?error_code, "Sending GoAway");
                 let header = out_scratch.put_to_roll(8, |mut slice| {
                     use byteorder::{BigEndian, WriteBytesExt};
                     // TODO: do we ever need to write the reserved bit?
@@ -630,7 +645,6 @@ async fn h2_write_loop(
                     Ok(())
                 })?;
 
-                debug!("sending goaway frame");
                 let frame = Frame::new(FrameType::GoAway, StreamId::CONNECTION).with_len(
                     (header.len() + additional_debug_data.len())
                         .try_into()
@@ -647,13 +661,8 @@ async fn h2_write_loop(
                     .await
                     .wrap_err("writing goaway")?;
             }
-            H2ConnEvent::ConnectionClose => {
-                tracing::debug!("client closed connection, write loop bailing out");
-                break;
-            }
         }
     }
-    debug!("h2_write_loop is done");
 
     Ok(())
 }
@@ -806,7 +815,6 @@ fn end_headers(
         rx: piece_rx,
     };
 
-    debug!("Calling handler with the given body");
     tokio_uring::spawn({
         let driver = driver.clone();
         async move {

@@ -1,5 +1,4 @@
 use http::header;
-use tracing::debug;
 
 use crate::{h1::body::BodyWriteMode, Body, BodyChunk, Headers, HeadersExt, Response};
 use hring_buffet::Piece;
@@ -86,8 +85,6 @@ where
         mut res: Response,
         body: &mut impl Body,
     ) -> eyre::Result<Responder<E, ResponseDone>> {
-        debug!("write final response with body");
-
         if let Some(clen) = body.content_len() {
             res.headers
                 .entry(header::CONTENT_LENGTH)
@@ -99,16 +96,13 @@ where
         }
 
         let mut this = self.write_final_response(res).await?;
-        debug!("wrote final response");
 
         loop {
             match body.next_chunk().await? {
                 BodyChunk::Chunk(chunk) => {
-                    debug!("proxying chunk of length {}", chunk.len());
                     this.write_chunk(chunk).await?;
                 }
                 BodyChunk::Done { trailers } => {
-                    debug!(mode = ?this.state.mode, "done proxying body");
                     // TODO: should we do something here in case of
                     // content-length mismatches?
                     return this.finish_body(trailers).await;

@@ -33,7 +33,7 @@ bench *args:
 
 h2spec *args:
 	#!/bin/bash -eux
-	export RUST_LOG="${RUST_LOG:-debug,hpack=info}"
+	export RUST_LOG="${RUST_LOG:-hring=debug,hring_hpack=info}"
 	export RUST_BACKTRACE=1
 	cargo run --manifest-path test-crates/hring-h2spec/Cargo.toml -- {{args}}
 
