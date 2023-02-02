@@ -14,7 +14,7 @@ use nom::{
     IResult,
 };
 
-use hring_buffet::{Roll, WriteOwned};
+use hring_buffet::{Roll, RollMut};
 
 /// This is sent by h2 clients after negotiating over ALPN, or when doing h2c.
 pub const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
@@ -249,24 +249,29 @@ impl Frame {
         Ok((i, frame))
     }
 
-    /// Write a frame (without payload)
-    pub async fn write(&self, w: &impl WriteOwned) -> eyre::Result<()> {
-        // TODO: we need an owned type here, but do we need to re-allocate it
-        // here? can we have a pool of them?
-        let mut header = vec![0u8; 9];
-        {
-            use byteorder::{BigEndian, WriteBytesExt};
-            let mut header = &mut header[..];
-            header.write_u24::<BigEndian>(self.len as _)?;
-            let ft = self.frame_type.encode();
-            header.write_u8(ft.ty)?;
-            header.write_u8(ft.flags)?;
-            // TODO: do we ever need to write the reserved bit?
-            header.write_u32::<BigEndian>(self.stream_id.0)?;
-        }
+    pub const HEADER_LEN: usize = 9;
 
-        w.write_all(header).await?;
+    /// Serialize a frame header to the given buffer
+    pub fn serialize(&self, header: &mut [u8; Self::HEADER_LEN]) -> eyre::Result<()> {
+        let mut header = &mut header[..];
+
+        use byteorder::{BigEndian, WriteBytesExt};
+        header.write_u24::<BigEndian>(self.len as _)?;
+        let ft = self.frame_type.encode();
+        header.write_u8(ft.ty)?;
+        header.write_u8(ft.flags)?;
+        // TODO: do we ever need to write the reserved bit?
+        header.write_u32::<BigEndian>(self.stream_id.0)?;
+
         Ok(())
+    }
+
+    /// Serialize a frame header to a `RollMut` whose filled portion is
+    /// empty, and return a `Roll` from it
+    pub fn to_roll(&self, buf: &mut RollMut) -> eyre::Result<Roll> {
+        buf.put_to_roll(Self::HEADER_LEN, |buf| {
+            self.serialize(buf.try_into().unwrap())
+        })
     }
 }
 

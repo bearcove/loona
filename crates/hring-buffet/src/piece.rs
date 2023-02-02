@@ -147,6 +147,12 @@ impl PieceList {
         self.pieces.push(chunk.into());
     }
 
+    /// Add a single chunk to the list and return self
+    pub fn with(mut self, chunk: impl Into<Piece>) -> Self {
+        self.push(chunk);
+        self
+    }
+
     /// Returns total length
     pub fn len(&self) -> usize {
         self.pieces.iter().map(|c| c.len()).sum()
@@ -172,6 +178,12 @@ impl PieceList {
 impl From<Vec<Piece>> for PieceList {
     fn from(chunks: Vec<Piece>) -> Self {
         Self { pieces: chunks }
+    }
+}
+
+impl From<PieceList> for Vec<Piece> {
+    fn from(list: PieceList) -> Self {
+        list.pieces
     }
 }
 

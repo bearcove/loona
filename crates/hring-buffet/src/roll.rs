@@ -274,6 +274,47 @@ impl RollMut {
         Ok(())
     }
 
+    /// Put data into this RollMut with a closure. Panics if `len > self.cap()`
+    pub fn put_with<T, E>(
+        &mut self,
+        len: usize,
+        f: impl FnOnce(&mut [u8]) -> Result<T, E>,
+    ) -> Result<T, E> {
+        assert!(len <= self.cap());
+
+        let u32_len: u32 = len.try_into().unwrap();
+        let slice = unsafe {
+            std::slice::from_raw_parts_mut(self.storage.as_mut_ptr().add(self.len as usize), len)
+        };
+        let res = f(slice);
+        if res.is_ok() {
+            self.len += u32_len;
+        }
+        res
+    }
+
+    /// Assert that this RollMut isn't filled at all, reserve enough size to put
+    /// `len` bytes in it, then fill it with the given closure. If the closure
+    /// returns `Err`, it's as if the put never happened.
+    pub fn put_to_roll(
+        &mut self,
+        len: usize,
+        f: impl FnOnce(&mut [u8]) -> eyre::Result<()>,
+    ) -> eyre::Result<Roll> {
+        // TODO: this whole dance is a bit silly: the idea is to have a
+        // `RollMut` around that we use whenever we need to serialize something.
+        // it's weird that we need to do all this for it to happen but ah well.
+
+        assert_eq!(self.len(), 0);
+        if self.cap() < len {
+            self.reserve()?;
+        }
+        self.put_with(len, f)?;
+        let roll = self.take_all();
+        debug_assert_eq!(roll.len(), len);
+        Ok(roll)
+    }
+
     /// Get a [Roll] corresponding to the filled portion of this buffer
     pub fn filled(&self) -> Roll {
         match &self.storage {
