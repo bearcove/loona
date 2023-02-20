@@ -46,7 +46,7 @@ impl Default for ServerConf {
 #[derive(Default)]
 struct ConnState {
     streams: HashMap<StreamId, StreamState>,
-    our_settings: Settings,
+    self_settings: Settings,
     peer_settings: Settings,
 }
 
@@ -83,7 +83,7 @@ pub async fn serve(
     driver: Rc<impl ServerDriver + 'static>,
 ) -> eyre::Result<()> {
     let mut state = ConnState::default();
-    state.our_settings.max_concurrent_streams = conf.max_streams;
+    state.self_settings.max_concurrent_streams = conf.max_streams;
 
     let state = Rc::new(RefCell::new(state));
 
