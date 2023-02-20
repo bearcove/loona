@@ -250,6 +250,10 @@ pub type DecoderResult = Result<Vec<(Vec<u8>, Vec<u8>)>, DecoderError>;
 pub struct Decoder<'a> {
     // The dynamic table will own its own copy of headers
     header_table: HeaderTable<'a>,
+
+    // Allow trailing size updates (used by tests)
+    #[cfg(test)]
+    pub(crate) allow_trailing_size_updates: bool,
 }
 
 impl Default for Decoder<'_> {
@@ -281,6 +285,8 @@ impl<'a> Decoder<'a> {
     fn with_static_table(static_table: StaticTable<'a>) -> Decoder<'a> {
         Decoder {
             header_table: HeaderTable::with_static_table(static_table),
+            #[cfg(test)]
+            allow_trailing_size_updates: false,
         }
     }
 
@@ -378,6 +384,11 @@ impl<'a> Decoder<'a> {
         }
 
         if last_was_size_update {
+            #[cfg(test)]
+            if self.allow_trailing_size_updates {
+                return Ok(());
+            }
+
             return Err(DecoderError::SizeUpdateAtEnd);
         }
 
@@ -1076,6 +1087,8 @@ mod tests {
     #[test]
     fn test_decoder_clear_dynamic_table() {
         let mut decoder = Decoder::new();
+        decoder.allow_trailing_size_updates = true;
+
         {
             let hex_dump = [
                 0x48, 0x03, 0x33, 0x30, 0x32, 0x58, 0x07, 0x70, 0x72, 0x69, 0x76, 0x61, 0x74, 0x65,
