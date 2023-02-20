@@ -449,7 +449,7 @@ pub struct Settings {
     ///
     /// The initial value is 2^14 (16,384) octets. The value advertised by an
     /// endpoint MUST be between this initial value and the maximum allowed frame
-    /// size (224-1 or 16,777,215 octets), inclusive. Values outside this range MUST
+    /// size (2^24-1 or 16,777,215 octets), inclusive. Values outside this range MUST
     /// be treated as a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
     pub max_frame_size: u32,
 
@@ -490,7 +490,8 @@ enum SettingIdentifier {
 }
 
 impl Settings {
-    const MAX_FRAME_SIZE_ALLOWED_RANGE: RangeInclusive<u32> = (2 << 14)..=((2 << 24) - 1);
+    const MAX_INITIAL_WINDOW_SIZE: u32 = (1 << 31) - 1;
+    const MAX_FRAME_SIZE_ALLOWED_RANGE: RangeInclusive<u32> = (1 << 14)..=((1 << 24) - 1);
 
     pub fn parse(mut i: Roll) -> IResult<Roll, Self> {
         let mut settings = Self::default();
@@ -513,6 +514,12 @@ impl Settings {
                         settings.max_concurrent_streams = value;
                     }
                     SettingIdentifier::InitialWindowSize => {
+                        if value > Self::MAX_INITIAL_WINDOW_SIZE {
+                            return Err(nom::Err::Error(nom::error::Error::new(
+                                rest,
+                                nom::error::ErrorKind::Digit,
+                            )));
+                        }
                         settings.initial_window_size = value;
                     }
                     SettingIdentifier::MaxFrameSize => {
