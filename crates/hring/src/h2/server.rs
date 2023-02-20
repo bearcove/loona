@@ -50,6 +50,20 @@ struct ConnState {
     peer_settings: Settings,
 }
 
+impl ConnState {
+    /// Returns the last stream ID.
+    ///
+    /// FIXME: this is bad for multiple reasons: it goes through
+    /// all streams, and it doesn't care about the direction of the streams.
+    fn last_stream_id(&self) -> StreamId {
+        self.streams
+            .keys()
+            .copied()
+            .max()
+            .unwrap_or(StreamId::CONNECTION)
+    }
+}
+
 #[derive(Default, Clone, Copy)]
 enum ContinuationState {
     #[default]
@@ -279,6 +293,20 @@ async fn h2_read_loop(
                         }
                     }
                     FrameType::Headers(flags) => {
+                        if frame.stream_id.is_even() {
+                            let e =
+                                eyre::eyre!("client is trying to initiate even-numbered stream");
+                            send_goaway(&ev_tx, &state, e, KnownErrorCode::ProtocolError).await;
+                            continue;
+                        }
+
+                        if frame.stream_id.0 < state.borrow().last_stream_id().0 {
+                            let e =
+                                eyre::eyre!("client is trying to initiate stream with id lower than the last one it initiated");
+                            send_goaway(&ev_tx, &state, e, KnownErrorCode::ProtocolError).await;
+                            continue;
+                        }
+
                         let headers_or_trailers;
                         {
                             let state = state.borrow();
@@ -639,19 +667,10 @@ async fn send_goaway(
     warn!("connection error: {e:?}");
     debug!("error_code = {error_code:?}");
 
-    // FIXME: this is almost definitely wrong. we must separate
-    // client-initiated streams from server-initiated streams, and
-    // take stream state into account
-    let last_stream_id = state
-        .borrow()
-        .streams
-        .keys()
-        .copied()
-        .max()
-        .unwrap_or(StreamId::CONNECTION);
+    let last_stream_id = state.borrow().last_stream_id();
     debug!("last_stream_id = {last_stream_id}");
     // TODO: is this a good idea?
-    let additional_debug_data = format!("hpack error: {e:?}").into_bytes();
+    let additional_debug_data = format!("{e:?}").into_bytes();
 
     if ev_tx
         .send(H2ConnEvent::GoAway {
