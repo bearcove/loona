@@ -471,8 +471,8 @@ impl Default for Settings {
             header_table_size: 4096,
             enable_push: false,
             max_concurrent_streams: 100,
-            initial_window_size: (2 << 16) - 1,
-            max_frame_size: (2 << 14),
+            initial_window_size: (1 << 16) - 1,
+            max_frame_size: (1 << 14),
             max_header_list_size: 0,
         }
     }
