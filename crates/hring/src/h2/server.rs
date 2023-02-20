@@ -173,6 +173,8 @@ async fn h2_read_loop(
     state: Rc<RefCell<ConnState>>,
 ) -> eyre::Result<()> {
     let mut hpack_dec = hring_hpack::Decoder::new();
+    hpack_dec.set_max_table_size(Settings::default().header_table_size.try_into().unwrap());
+
     let mut continuation_state = ContinuationState::Idle;
 
     loop {
@@ -440,10 +442,17 @@ async fn h2_read_loop(
                             let (_, settings) = Settings::parse(payload)
                                 .finish()
                                 .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
+                            let new_max_header_table_size = settings.header_table_size;
                             debug!(?settings, "Received settings");
                             state.borrow_mut().peer_settings = settings;
 
-                            if ev_tx.send(H2ConnEvent::AcknowledgeSettings).await.is_err() {
+                            if ev_tx
+                                .send(H2ConnEvent::AcknowledgeSettings {
+                                    new_max_header_table_size,
+                                })
+                                .await
+                                .is_err()
+                            {
                                 return Err(eyre::eyre!(
                                     "could not send H2 acknowledge settings event"
                                 ));
@@ -667,8 +676,12 @@ async fn h2_write_loop(
     while let Some(ev) = ev_rx.recv().await {
         trace!("h2_write_loop: received H2 event");
         match ev {
-            H2ConnEvent::AcknowledgeSettings => {
+            H2ConnEvent::AcknowledgeSettings {
+                new_max_header_table_size,
+            } => {
                 debug!("Acknowledging new settings");
+                hpack_enc.set_max_table_size(new_max_header_table_size.try_into().unwrap());
+
                 let frame = Frame::new(
                     FrameType::Settings(SettingsFlags::Ack.into()),
                     StreamId::CONNECTION,

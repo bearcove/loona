@@ -48,7 +48,7 @@
 use std::borrow::Cow;
 use std::num::Wrapping;
 
-use tracing::{debug, info};
+use tracing::{debug, trace};
 
 use super::huffman::HuffmanDecoder;
 use super::huffman::HuffmanDecoderError;
@@ -376,7 +376,7 @@ impl<'a> Decoder<'a> {
                 }
                 FieldRepresentation::SizeUpdate => {
                     // Handle the dynamic table size update...
-                    self.update_max_dynamic_size(buffer_leftover)
+                    self.update_max_dynamic_size(buffer_leftover)?
                 }
             };
 
@@ -478,17 +478,20 @@ impl<'a> Decoder<'a> {
     /// octet in the `SizeUpdate` block.
     ///
     /// Returns the number of octets consumed from the given buffer.
-    fn update_max_dynamic_size(&mut self, buf: &[u8]) -> usize {
+    fn update_max_dynamic_size(&mut self, buf: &[u8]) -> Result<usize, DecoderError> {
         let (new_size, consumed) = decode_integer(buf, 5).ok().unwrap();
+        if new_size > self.header_table.dynamic_table.get_max_table_size() {
+            return Err(DecoderError::InvalidMaxDynamicSize);
+        }
         self.header_table.dynamic_table.set_max_table_size(new_size);
 
-        info!(
+        trace!(
             "Decoder changed max table size from {} to {}",
             self.header_table.dynamic_table.get_size(),
             new_size
         );
 
-        consumed
+        Ok(consumed)
     }
 }
 

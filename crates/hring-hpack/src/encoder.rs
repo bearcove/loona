@@ -187,6 +187,13 @@ impl<'a> Encoder<'a> {
         }
     }
 
+    /// Sets a new maximum dynamic table size for the encoder.
+    pub fn set_max_table_size(&mut self, new_max_size: usize) {
+        self.header_table
+            .dynamic_table
+            .set_max_table_size(new_max_size);
+    }
+
     /// Encodes the given headers using the HPACK rules and returns a newly
     /// allocated `Vec` containing the bytes representing the encoded header
     /// set.

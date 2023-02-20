@@ -12,7 +12,9 @@ use super::parse::{KnownErrorCode, StreamId};
 pub(crate) enum H2ConnEvent {
     Ping(Roll),
     ServerEvent(H2Event),
-    AcknowledgeSettings,
+    AcknowledgeSettings {
+        new_max_header_table_size: u32,
+    },
     GoAway {
         error_code: KnownErrorCode,
         last_stream_id: StreamId,
