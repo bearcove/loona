@@ -26,4 +26,4 @@ jobs:
         with:
           name: h2spec-hpack
           path: h2spec-hpack.xml
-          reporter: java-generic
+          reporter: java-junit

@@ -26,4 +26,4 @@ jobs:
         with:
           name: h2spec-http2
           path: h2spec-http2.xml
-          reporter: java-generic
+          reporter: java-junit
