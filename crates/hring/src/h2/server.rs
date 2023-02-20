@@ -315,6 +315,12 @@ async fn h2_read_loop(
                                 .finish()
                                 .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
                             debug!(exclusive = %pri_spec.exclusive, stream_dependency = ?pri_spec.stream_dependency, weight = %pri_spec.weight, "received priority, exclusive");
+
+                            if pri_spec.stream_dependency == frame.stream_id {
+                                let e = eyre::eyre!("invalid priority: stream depends on itself");
+                                send_goaway(&ev_tx, &state, e, KnownErrorCode::ProtocolError).await;
+                                continue;
+                            }
                         }
 
                         if padding_length > 0 {
@@ -432,6 +438,12 @@ async fn h2_read_loop(
                             Err(e) => todo!("handle connection error: invalid priority frame {e}"),
                         };
                         debug!(?pri_spec, "received priority frame");
+
+                        if pri_spec.stream_dependency == frame.stream_id {
+                            let e = eyre::eyre!("invalid priority: stream depends on itself");
+                            send_goaway(&ev_tx, &state, e, KnownErrorCode::ProtocolError).await;
+                            continue;
+                        }
                     }
                     FrameType::RstStream => todo!(),
                     FrameType::Settings(s) => {
