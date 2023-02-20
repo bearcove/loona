@@ -111,13 +111,15 @@ pub async fn serve(
 
     // we have to send a settings frame
     {
-        let frame = Frame::new(
+        let payload_roll = state.borrow().self_settings.into_roll(&mut out_scratch)?;
+        let frame_roll = Frame::new(
             FrameType::Settings(Default::default()),
             StreamId::CONNECTION,
-        );
-        transport
-            .write_all(frame.into_roll(&mut out_scratch)?)
-            .await?;
+        )
+        .with_len(payload_roll.len().try_into().unwrap())
+        .into_roll(&mut out_scratch)?;
+
+        transport.writev_all(vec![frame_roll, payload_roll]).await?;
         debug!("sent settings frame");
     }
 

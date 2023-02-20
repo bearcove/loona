@@ -536,4 +536,54 @@ impl Settings {
 
         Ok((i, settings))
     }
+
+    /// Iterates over pairs of id/values
+    pub fn pairs(&self) -> impl Iterator<Item = (u16, u32)> {
+        [
+            (
+                SettingIdentifier::HeaderTableSize as u16,
+                self.header_table_size,
+            ),
+            (
+                // note: as a server, we're free to omit this, but it doesn't
+                // hurt to send 0 there I guess.
+                SettingIdentifier::EnablePush as u16,
+                self.enable_push as u32,
+            ),
+            (
+                SettingIdentifier::MaxConcurrentStreams as u16,
+                self.max_concurrent_streams,
+            ),
+            (
+                SettingIdentifier::InitialWindowSize as u16,
+                self.initial_window_size,
+            ),
+            (SettingIdentifier::MaxFrameSize as u16, self.max_frame_size),
+            (
+                SettingIdentifier::MaxHeaderListSize as u16,
+                self.max_header_list_size,
+            ),
+        ]
+        .into_iter()
+    }
+
+    /// Encode these settings into (u16, u32) pairs as specified in
+    /// https://httpwg.org/specs/rfc9113.html#SETTINGS
+    pub fn write_into(self, mut w: impl std::io::Write) -> eyre::Result<()> {
+        use byteorder::{BigEndian, WriteBytesExt};
+
+        for (id, value) in self.pairs() {
+            w.write_u16::<BigEndian>(id)?;
+            w.write_u32::<BigEndian>(value)?;
+        }
+
+        Ok(())
+    }
+
+    /// Same as `write_into` but uses a scratch [RollMut] to return a [Roll]
+    pub fn into_roll(self, mut scratch: &mut RollMut) -> eyre::Result<Roll> {
+        debug_assert_eq!(scratch.len(), 0);
+        self.write_into(&mut scratch)?;
+        Ok(scratch.take_all())
+    }
 }
