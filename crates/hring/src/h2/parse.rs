@@ -174,6 +174,16 @@ pub struct StreamId(pub(crate) u32);
 impl StreamId {
     /// Stream ID used for connection control frames
     pub const CONNECTION: Self = Self(0);
+
+    /// Only server-initiated streams have even IDs
+    pub fn is_even(&self) -> bool {
+        self.0 % 2 == 0
+    }
+
+    /// Only client-initiated streams have odd IDs
+    pub fn is_odd(&self) -> bool {
+        self.0 % 2 == 1
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
