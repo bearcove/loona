@@ -3,7 +3,7 @@
 //! HTTP/2 https://httpwg.org/specs/rfc9113.html
 //! HTTP semantics https://httpwg.org/specs/rfc9110.html
 
-use std::fmt;
+use std::{fmt, ops::RangeInclusive};
 
 use enum_repr::EnumRepr;
 use enumflags2::{bitflags, BitFlags};
@@ -439,7 +439,7 @@ pub struct Settings {
     ///
     /// This setting affects the window size of all streams (see Section 6.9.2).
     ///
-    /// Values above the maximum flow-control window size of 23^1-1 MUST be
+    /// Values above the maximum flow-control window size of 2^31-1 MUST be
     /// treated as a connection error (Section 5.4.1) of type
     /// FLOW_CONTROL_ERROR.
     pub initial_window_size: u32,
@@ -490,7 +490,7 @@ enum SettingIdentifier {
 }
 
 impl Settings {
-    const MAX_INITIAL_WINDOW_SIZE: u32 = (2 << 23) - 1;
+    const MAX_FRAME_SIZE_ALLOWED_RANGE: RangeInclusive<u32> = (2 << 14)..=((2 << 24) - 1);
 
     pub fn parse(mut i: Roll) -> IResult<Roll, Self> {
         let mut settings = Self::default();
@@ -513,17 +513,17 @@ impl Settings {
                         settings.max_concurrent_streams = value;
                     }
                     SettingIdentifier::InitialWindowSize => {
-                        if value > Self::MAX_INITIAL_WINDOW_SIZE {
-                            return Err(nom::Err::Error(nom::error::Error::new(
-                                rest,
-                                // FIXME: this isn't really the kind of quality
-                                // error handling we're striving for
-                                nom::error::ErrorKind::Digit,
-                            )));
-                        }
                         settings.initial_window_size = value;
                     }
                     SettingIdentifier::MaxFrameSize => {
+                        if !Self::MAX_FRAME_SIZE_ALLOWED_RANGE.contains(&value) {
+                            return Err(nom::Err::Error(nom::error::Error::new(
+                                rest,
+                                // FIXME: this isn't really representative of
+                                // the quality error handling we're striving for
+                                nom::error::ErrorKind::Digit,
+                            )));
+                        }
                         settings.max_frame_size = value;
                     }
                     SettingIdentifier::MaxHeaderListSize => {
