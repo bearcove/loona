@@ -190,6 +190,28 @@ async fn h2_read_loop(
 
         debug!(?frame, "Received");
 
+        match &frame.frame_type {
+            FrameType::Headers(..) | FrameType::Data(..) => {
+                let max_frame_size = state.borrow().self_settings.max_frame_size;
+                debug!(
+                    "frame len = {}, max_frame_size = {max_frame_size}",
+                    frame.len
+                );
+                if frame.len > max_frame_size {
+                    let e = eyre::eyre!(
+                        "frame too large: {} > {}",
+                        frame.len,
+                        state.borrow().self_settings.max_frame_size
+                    );
+
+                    send_goaway(&ev_tx, &state, e, KnownErrorCode::FrameSizeError).await;
+                }
+            }
+            _ => {
+                // muffin.
+            }
+        }
+
         // TODO: there might be optimizations to be done for `Data` frames later
         // on, but for now, let's unconditionally read the payload (if it's not
         // empty).
