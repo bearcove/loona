@@ -231,9 +231,12 @@ pub enum DecoderError {
     IntegerDecodingError(IntegerDecodingError),
     StringDecodingError(StringDecodingError),
     /// The size of the dynamic table can never be allowed to exceed the max
-    /// size mandated to the decoder by the protocol. (by perfroming changes
+    /// size mandated to the decoder by the protocol. (by performing changes
     /// made by SizeUpdate blocks).
     InvalidMaxDynamicSize,
+    /// A header block cannot end with a dynamic table size update, it
+    /// must be treating as a decoding error.
+    SizeUpdateAtEnd,
 }
 
 /// The result returned by the `decode` method of the `Decoder`.
@@ -309,6 +312,7 @@ impl<'a> Decoder<'a> {
     {
         let mut current_octet_index = 0;
 
+        let mut last_was_size_update = false;
         while current_octet_index < buf.len() {
             // At this point we are always at the beginning of the next block
             // within the HPACK data.
@@ -316,7 +320,10 @@ impl<'a> Decoder<'a> {
             // byte.
             let initial_octet = buf[current_octet_index];
             let buffer_leftover = &buf[current_octet_index..];
-            let consumed = match FieldRepresentation::new(initial_octet) {
+            let field_representation = FieldRepresentation::new(initial_octet);
+            last_was_size_update = matches!(field_representation, FieldRepresentation::SizeUpdate);
+
+            let consumed = match field_representation {
                 FieldRepresentation::Indexed => {
                     let ((name, value), consumed) = self.decode_indexed(buffer_leftover)?;
                     cb(Cow::Borrowed(name), Cow::Borrowed(value));
@@ -368,6 +375,10 @@ impl<'a> Decoder<'a> {
             };
 
             current_octet_index += consumed;
+        }
+
+        if last_was_size_update {
+            return Err(DecoderError::SizeUpdateAtEnd);
         }
 
         Ok(())
