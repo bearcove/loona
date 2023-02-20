@@ -1,4 +1,4 @@
-name: report
+name: report-generic
 
 on:
   workflow_run:
@@ -21,12 +21,9 @@ jobs:
       - name: Stub Git repo for test-reporter
         run: |
           git init
-      - name: Cat report file
-        run: |
-          cat h2spec-junit.xml
-      - name: Publish h2spec Report
+      - name: Publish h2spec-generic report
         uses: dorny/test-reporter@v1
         with:
-          name: h2spec results
-          path: h2spec-junit.xml
-          reporter: java-junit
+          name: h2spec-generic
+          path: h2spec-generic.xml
+          reporter: java-generic

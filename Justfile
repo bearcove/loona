@@ -9,7 +9,9 @@ ci-test:
 	just build-testbed
 	cargo nextest run --manifest-path crates/hring-hpack/Cargo.toml --features interop-tests --release
 	cargo llvm-cov --no-report nextest --profile ci
-	cargo llvm-cov --no-report run --manifest-path test-crates/hring-h2spec/Cargo.toml -- -j 'target/h2spec-junit.xml'
+	cargo llvm-cov --no-report run --manifest-path test-crates/hring-h2spec/Cargo.toml -- generic -j 'target/h2spec-generic.xml'
+	cargo llvm-cov --no-report run --manifest-path test-crates/hring-h2spec/Cargo.toml -- hpack -j 'target/h2spec-hpack.xml'
+	cargo llvm-cov --no-report run --manifest-path test-crates/hring-h2spec/Cargo.toml -- http2 -j 'target/h2spec-http2.xml'
 	cargo llvm-cov report --lcov --output-path coverage.lcov
 	codecov
 

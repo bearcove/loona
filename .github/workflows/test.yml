@@ -36,5 +36,8 @@ jobs:
         if: always() # always run even if the previous step fails
         with:
           name: h2spec-results
-          path: 'target/h2spec-junit.xml'
-          retention-days: 30
+          path: |
+            target/h2spec-generic.xml
+            target/h2spec-hpack.xml
+            target/h2spec-http2.xml
+          retention-days: 280
