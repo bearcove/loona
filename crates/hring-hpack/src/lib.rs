@@ -92,6 +92,7 @@ impl DynamicTable {
     }
 
     /// Returns the maximum size of the table in octets.
+    #[cfg(test)]
     fn get_max_table_size(&self) -> usize {
         self.max_size
     }

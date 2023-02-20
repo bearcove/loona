@@ -173,7 +173,7 @@ async fn h2_read_loop(
     state: Rc<RefCell<ConnState>>,
 ) -> eyre::Result<()> {
     let mut hpack_dec = hring_hpack::Decoder::new();
-    hpack_dec.set_max_table_size(Settings::default().header_table_size.try_into().unwrap());
+    hpack_dec.set_max_allowed_table_size(Settings::default().header_table_size.try_into().unwrap());
 
     let mut continuation_state = ContinuationState::Idle;
 

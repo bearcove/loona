@@ -251,6 +251,8 @@ pub struct Decoder<'a> {
     // The dynamic table will own its own copy of headers
     header_table: HeaderTable<'a>,
 
+    max_allowed_table_size: Option<usize>,
+
     // Allow trailing size updates (used by tests)
     #[cfg(test)]
     pub(crate) allow_trailing_size_updates: bool,
@@ -285,16 +287,37 @@ impl<'a> Decoder<'a> {
     fn with_static_table(static_table: StaticTable<'a>) -> Decoder<'a> {
         Decoder {
             header_table: HeaderTable::with_static_table(static_table),
+            max_allowed_table_size: None,
             #[cfg(test)]
             allow_trailing_size_updates: false,
         }
     }
 
     /// Sets a new maximum dynamic table size for the decoder.
+    ///
+    /// If `max_allowed_table_size` is set, `new_max_size` must be <= to it.
     pub fn set_max_table_size(&mut self, new_max_size: usize) {
+        if let Some(max_allowed_size) = self.max_allowed_table_size {
+            // this lives as an assert for now, since if you're calling this
+            // explicitly so you can check preconditions first.
+            assert!(
+                new_max_size <= max_allowed_size,
+                "new_max_size ({}) > max_allowed_size ({})",
+                new_max_size,
+                max_allowed_size
+            );
+        }
+
         self.header_table
             .dynamic_table
             .set_max_table_size(new_max_size);
+    }
+
+    /// Sets max allowed table size: any "dynamic table size updates" that try
+    /// to bring the table size over that value will error out with
+    /// [DecoderError::InvalidMaxDynamicSize]
+    pub fn set_max_allowed_table_size(&mut self, max_allowed_size: usize) {
+        self.max_allowed_table_size = Some(max_allowed_size);
     }
 
     /// Decodes the headers found in the given buffer `buf`. Invokes the callback `cb` for each
@@ -480,8 +503,10 @@ impl<'a> Decoder<'a> {
     /// Returns the number of octets consumed from the given buffer.
     fn update_max_dynamic_size(&mut self, buf: &[u8]) -> Result<usize, DecoderError> {
         let (new_size, consumed) = decode_integer(buf, 5).ok().unwrap();
-        if new_size > self.header_table.dynamic_table.get_max_table_size() {
-            return Err(DecoderError::InvalidMaxDynamicSize);
+        if let Some(max_size) = self.max_allowed_table_size {
+            if new_size > max_size {
+                return Err(DecoderError::InvalidMaxDynamicSize);
+            }
         }
         self.header_table.dynamic_table.set_max_table_size(new_size);
 
@@ -1608,6 +1633,7 @@ mod interop_tests {
         };
         // Set up the decoder
         let mut decoder = Decoder::new();
+        // decoder.allow_trailing_size_updates = true;
 
         // Now check whether we correctly decode each case
         for case in story.cases.iter() {
