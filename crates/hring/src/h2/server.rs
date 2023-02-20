@@ -27,7 +27,10 @@ use crate::{
 };
 use hring_buffet::{Piece, PieceList, PieceStr, ReadWriteOwned, Roll, RollMut};
 
-use super::body::{H2BodyItem, H2BodySender};
+use super::{
+    body::{H2BodyItem, H2BodySender},
+    parse::Settings,
+};
 
 /// HTTP/2 server configuration
 pub struct ServerConf {
@@ -43,6 +46,8 @@ impl Default for ServerConf {
 #[derive(Default)]
 struct ConnState {
     streams: HashMap<StreamId, StreamState>,
+    self_settings: Settings,
+    peer_settings: Settings,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -77,9 +82,9 @@ pub async fn serve(
     mut client_buf: RollMut,
     driver: Rc<impl ServerDriver + 'static>,
 ) -> eyre::Result<()> {
-    debug!("TODO: enforce max_streams {}", conf.max_streams);
+    let mut state = ConnState::default();
+    state.self_settings.max_concurrent_streams = conf.max_streams;
 
-    let state = ConnState::default();
     let state = Rc::new(RefCell::new(state));
 
     const MAX_FRAME_LEN: usize = 64 * 1024;
@@ -106,13 +111,15 @@ pub async fn serve(
 
     // we have to send a settings frame
     {
-        let frame = Frame::new(
+        let payload_roll = state.borrow().self_settings.into_roll(&mut out_scratch)?;
+        let frame_roll = Frame::new(
             FrameType::Settings(Default::default()),
             StreamId::CONNECTION,
-        );
-        transport
-            .write_all(frame.into_roll(&mut out_scratch)?)
-            .await?;
+        )
+        .with_len(payload_roll.len().try_into().unwrap())
+        .into_roll(&mut out_scratch)?;
+
+        transport.writev_all(vec![frame_roll, payload_roll]).await?;
         debug!("sent settings frame");
     }
 
@@ -166,6 +173,8 @@ async fn h2_read_loop(
     state: Rc<RefCell<ConnState>>,
 ) -> eyre::Result<()> {
     let mut hpack_dec = hring_hpack::Decoder::new();
+    hpack_dec.set_max_allowed_table_size(Settings::default().header_table_size.try_into().unwrap());
+
     let mut continuation_state = ContinuationState::Idle;
 
     loop {
@@ -430,8 +439,20 @@ async fn h2_read_loop(
                             debug!("Peer has acknowledged our settings, cool");
                         } else {
                             // TODO: actually apply settings
+                            let (_, settings) = Settings::parse(payload)
+                                .finish()
+                                .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
+                            let new_max_header_table_size = settings.header_table_size;
+                            debug!(?settings, "Received settings");
+                            state.borrow_mut().peer_settings = settings;
 
-                            if ev_tx.send(H2ConnEvent::AcknowledgeSettings).await.is_err() {
+                            if ev_tx
+                                .send(H2ConnEvent::AcknowledgeSettings {
+                                    new_max_header_table_size,
+                                })
+                                .await
+                                .is_err()
+                            {
                                 return Err(eyre::eyre!(
                                     "could not send H2 acknowledge settings event"
                                 ));
@@ -655,8 +676,12 @@ async fn h2_write_loop(
     while let Some(ev) = ev_rx.recv().await {
         trace!("h2_write_loop: received H2 event");
         match ev {
-            H2ConnEvent::AcknowledgeSettings => {
-                debug!("acknowledging new settings");
+            H2ConnEvent::AcknowledgeSettings {
+                new_max_header_table_size,
+            } => {
+                debug!("Acknowledging new settings");
+                hpack_enc.set_max_table_size(new_max_header_table_size.try_into().unwrap());
+
                 let frame = Frame::new(
                     FrameType::Settings(SettingsFlags::Ack.into()),
                     StreamId::CONNECTION,

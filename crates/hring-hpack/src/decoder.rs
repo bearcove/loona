@@ -48,7 +48,7 @@
 use std::borrow::Cow;
 use std::num::Wrapping;
 
-use tracing::{debug, info};
+use tracing::{debug, trace};
 
 use super::huffman::HuffmanDecoder;
 use super::huffman::HuffmanDecoderError;
@@ -231,9 +231,12 @@ pub enum DecoderError {
     IntegerDecodingError(IntegerDecodingError),
     StringDecodingError(StringDecodingError),
     /// The size of the dynamic table can never be allowed to exceed the max
-    /// size mandated to the decoder by the protocol. (by perfroming changes
+    /// size mandated to the decoder by the protocol. (by performing changes
     /// made by SizeUpdate blocks).
     InvalidMaxDynamicSize,
+    /// A header block cannot end with a dynamic table size update, it
+    /// must be treating as a decoding error.
+    SizeUpdateAtEnd,
 }
 
 /// The result returned by the `decode` method of the `Decoder`.
@@ -247,6 +250,12 @@ pub type DecoderResult = Result<Vec<(Vec<u8>, Vec<u8>)>, DecoderError>;
 pub struct Decoder<'a> {
     // The dynamic table will own its own copy of headers
     header_table: HeaderTable<'a>,
+
+    max_allowed_table_size: Option<usize>,
+
+    // Allow trailing size updates (used by tests)
+    #[cfg(test)]
+    pub(crate) allow_trailing_size_updates: bool,
 }
 
 impl Default for Decoder<'_> {
@@ -278,14 +287,37 @@ impl<'a> Decoder<'a> {
     fn with_static_table(static_table: StaticTable<'a>) -> Decoder<'a> {
         Decoder {
             header_table: HeaderTable::with_static_table(static_table),
+            max_allowed_table_size: None,
+            #[cfg(test)]
+            allow_trailing_size_updates: false,
         }
     }
 
     /// Sets a new maximum dynamic table size for the decoder.
+    ///
+    /// If `max_allowed_table_size` is set, `new_max_size` must be <= to it.
     pub fn set_max_table_size(&mut self, new_max_size: usize) {
+        if let Some(max_allowed_size) = self.max_allowed_table_size {
+            // this lives as an assert for now, since if you're calling this
+            // explicitly so you can check preconditions first.
+            assert!(
+                new_max_size <= max_allowed_size,
+                "new_max_size ({}) > max_allowed_size ({})",
+                new_max_size,
+                max_allowed_size
+            );
+        }
+
         self.header_table
             .dynamic_table
             .set_max_table_size(new_max_size);
+    }
+
+    /// Sets max allowed table size: any "dynamic table size updates" that try
+    /// to bring the table size over that value will error out with
+    /// [DecoderError::InvalidMaxDynamicSize]
+    pub fn set_max_allowed_table_size(&mut self, max_allowed_size: usize) {
+        self.max_allowed_table_size = Some(max_allowed_size);
     }
 
     /// Decodes the headers found in the given buffer `buf`. Invokes the callback `cb` for each
@@ -309,6 +341,7 @@ impl<'a> Decoder<'a> {
     {
         let mut current_octet_index = 0;
 
+        let mut last_was_size_update = false;
         while current_octet_index < buf.len() {
             // At this point we are always at the beginning of the next block
             // within the HPACK data.
@@ -316,7 +349,10 @@ impl<'a> Decoder<'a> {
             // byte.
             let initial_octet = buf[current_octet_index];
             let buffer_leftover = &buf[current_octet_index..];
-            let consumed = match FieldRepresentation::new(initial_octet) {
+            let field_representation = FieldRepresentation::new(initial_octet);
+            last_was_size_update = matches!(field_representation, FieldRepresentation::SizeUpdate);
+
+            let consumed = match field_representation {
                 FieldRepresentation::Indexed => {
                     let ((name, value), consumed) = self.decode_indexed(buffer_leftover)?;
                     cb(Cow::Borrowed(name), Cow::Borrowed(value));
@@ -363,11 +399,20 @@ impl<'a> Decoder<'a> {
                 }
                 FieldRepresentation::SizeUpdate => {
                     // Handle the dynamic table size update...
-                    self.update_max_dynamic_size(buffer_leftover)
+                    self.update_max_dynamic_size(buffer_leftover)?
                 }
             };
 
             current_octet_index += consumed;
+        }
+
+        if last_was_size_update {
+            #[cfg(test)]
+            if self.allow_trailing_size_updates {
+                return Ok(());
+            }
+
+            return Err(DecoderError::SizeUpdateAtEnd);
         }
 
         Ok(())
@@ -456,17 +501,22 @@ impl<'a> Decoder<'a> {
     /// octet in the `SizeUpdate` block.
     ///
     /// Returns the number of octets consumed from the given buffer.
-    fn update_max_dynamic_size(&mut self, buf: &[u8]) -> usize {
+    fn update_max_dynamic_size(&mut self, buf: &[u8]) -> Result<usize, DecoderError> {
         let (new_size, consumed) = decode_integer(buf, 5).ok().unwrap();
+        if let Some(max_size) = self.max_allowed_table_size {
+            if new_size > max_size {
+                return Err(DecoderError::InvalidMaxDynamicSize);
+            }
+        }
         self.header_table.dynamic_table.set_max_table_size(new_size);
 
-        info!(
+        trace!(
             "Decoder changed max table size from {} to {}",
             self.header_table.dynamic_table.get_size(),
             new_size
         );
 
-        consumed
+        Ok(consumed)
     }
 }
 
@@ -1065,6 +1115,8 @@ mod tests {
     #[test]
     fn test_decoder_clear_dynamic_table() {
         let mut decoder = Decoder::new();
+        decoder.allow_trailing_size_updates = true;
+
         {
             let hex_dump = [
                 0x48, 0x03, 0x33, 0x30, 0x32, 0x58, 0x07, 0x70, 0x72, 0x69, 0x76, 0x61, 0x74, 0x65,
@@ -1581,6 +1633,7 @@ mod interop_tests {
         };
         // Set up the decoder
         let mut decoder = Decoder::new();
+        // decoder.allow_trailing_size_updates = true;
 
         // Now check whether we correctly decode each case
         for case in story.cases.iter() {
