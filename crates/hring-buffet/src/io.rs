@@ -80,55 +80,47 @@ pub trait WriteOwned {
 
     /// Write a list of buffers, re-trying the write if the kernel does a partial write.
     async fn writev_all<B: IoBuf>(&self, list: impl Into<Vec<B>>) -> std::io::Result<()> {
-        // Workaround for https://github.com/rust-lang/rust/issues/107002,
-        // remove after https://github.com/rust-lang/rust/pull/107013 is merged
-        writev_all(self, list.into()).await
-    }
-}
+        // FIXME: converting into a `Vec` and _then_ into an iterator is silly,
+        // we can probably find a better function signature here.
+        let mut list: Vec<_> = list.into().into_iter().map(BufOrSlice::Buf).collect();
 
-/// Write a list of buffers, re-trying the write if the kernel does a partial write.
-async fn writev_all<B: IoBuf>(
-    this: &(impl WriteOwned + ?Sized),
-    list: Vec<B>,
-) -> std::io::Result<()> {
-    let mut list: Vec<_> = list.into_iter().map(BufOrSlice::Buf).collect();
+        while !list.is_empty() {
+            let res;
+            (res, list) = self.writev(list).await;
+            let n = res?;
 
-    while !list.is_empty() {
-        let res;
-        (res, list) = this.writev(list).await;
-        let n = res?;
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "write zero",
+                ));
+            }
 
-        if n == 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::WriteZero,
-                "write zero",
-            ));
+            let mut n = n;
+            list = list
+                .into_iter()
+                .filter_map(|item| {
+                    if n == 0 {
+                        Some(item)
+                    } else {
+                        let item_len = item.len();
+
+                        if n >= item_len {
+                            n -= item_len;
+                            None
+                        } else {
+                            let item = item.consume(n);
+                            n = 0;
+                            Some(item)
+                        }
+                    }
+                })
+                .collect();
+            assert_eq!(n, 0);
         }
 
-        let mut n = n;
-        list = list
-            .into_iter()
-            .filter_map(|item| {
-                if n == 0 {
-                    Some(item)
-                } else {
-                    let item_len = item.len();
-
-                    if n >= item_len {
-                        n -= item_len;
-                        None
-                    } else {
-                        let item = item.consume(n);
-                        n = 0;
-                        Some(item)
-                    }
-                }
-            })
-            .collect();
-        assert_eq!(n, 0);
+        Ok(())
     }
-
-    Ok(())
 }
 
 enum BufOrSlice<B: IoBuf> {
