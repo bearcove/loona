@@ -10,9 +10,10 @@ use hring::{
 use hring_buffet::{RollMut, SplitOwned};
 use http::StatusCode;
 use std::{cell::RefCell, future::Future, net::SocketAddr, rc::Rc};
+use tokio_uring::net::TcpStream;
 use tracing::debug;
 
-pub type TransportPool = Rc<RefCell<Vec<Rc<tokio_uring::net::TcpStream>>>>;
+pub type TransportPool = Rc<RefCell<Vec<Rc<TcpStream>>>>;
 
 pub struct ProxyDriver {
     pub upstream_addr: SocketAddr,
@@ -50,11 +51,19 @@ impl ServerDriver for ProxyDriver {
 
         let driver = ProxyClientDriver { respond };
 
-        let (transport, res) = h1::request(transport, req, req_body, driver).await?;
+        let (transport, res) = h1::request(
+            (transport.clone(), transport.clone()),
+            req,
+            req_body,
+            driver,
+        )
+        .await?;
 
         if let Some(transport) = transport {
             let mut pool = self.pool.borrow_mut();
-            pool.push(transport);
+            // FIXME: leaky abstraction, `h1::request` returns both halves of the
+            // transport, which are both actually `Rc<TcpStream>`
+            pool.push(transport.0);
         }
 
         Ok(res)

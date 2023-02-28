@@ -10,7 +10,7 @@ use hring::{
     h1, h2, Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, HeadersExt, Method, Request,
     Responder, Response, ResponseDone, ServerDriver,
 };
-use hring_buffet::{ChanRead, ChanWrite, Piece, ReadWritePair, RollMut, SplitOwned};
+use hring_buffet::{ChanRead, ChanWrite, Piece, RollMut, SplitOwned};
 use http::{header, StatusCode};
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
