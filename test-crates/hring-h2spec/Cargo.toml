@@ -6,8 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+hring = { version = "0.1.0", path = "../../crates/hring", default-features = false }
 color-eyre = "0.6.2"
-hring = { version = "0.1.0", path = "../../crates/hring" }
 tokio = { version = "1.23.0", features = ["full"] }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
@@ -17,5 +17,5 @@ which = "4.4.0"
 opt-level = 2
 
 [features]
-# default = ["non-uring"]
-non-uring = ["hring/non-uring"]
+default = ["tokio-uring"]
+tokio-uring = ["hring/tokio-uring"]
