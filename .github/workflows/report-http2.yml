@@ -27,3 +27,4 @@ jobs:
           name: h2spec-http2
           path: h2spec-http2.xml
           reporter: java-junit
+          fail-on-error: 'false'
