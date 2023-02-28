@@ -10,7 +10,7 @@ use hring::{
     h1, h2, Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, HeadersExt, Method, Request,
     Responder, Response, ResponseDone, ServerDriver,
 };
-use hring_buffet::{ChanRead, ChanWrite, Piece, ReadWritePair, RollMut};
+use hring_buffet::{ChanRead, ChanWrite, Piece, RollMut, SplitOwned};
 use http::{header, StatusCode};
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
@@ -88,10 +88,9 @@ fn serve_api() {
 
         let (tx, read) = ChanRead::new();
         let (mut rx, write) = ChanWrite::new();
-        let transport = ReadWritePair(read, write);
         let client_buf = RollMut::alloc()?;
         let driver = TestDriver;
-        let serve_fut = tokio_uring::spawn(h1::serve(transport, conf, client_buf, driver));
+        let serve_fut = tokio_uring::spawn(h1::serve((read, write), conf, client_buf, driver));
 
         tx.send("GET / HTTP/1.1\r\n\r\n").await?;
         let mut res_buf = BytesMut::new();
@@ -137,7 +136,6 @@ fn request_api() {
     helpers::run(async move {
         let (tx, read) = ChanRead::new();
         let (mut rx, write) = ChanWrite::new();
-        let transport = ReadWritePair(read, write);
 
         let req = Request {
             method: Method::Get,
@@ -177,7 +175,7 @@ fn request_api() {
         let request_fut = tokio_uring::spawn(async {
             #[allow(clippy::let_unit_value)]
             let mut body = ();
-            h1::request(Rc::new(transport), req, &mut body, driver).await
+            h1::request((read, write), req, &mut body, driver).await
         });
 
         let mut req_buf = BytesMut::new();
@@ -748,9 +746,14 @@ fn curl_echo_body_noproxy(typ: BodyType) {
 
                         tokio_uring::spawn(async move {
                             let driver = TestDriver;
-                            h1::serve(transport, conf, RollMut::alloc().unwrap(), driver)
-                                .await
-                                .unwrap();
+                            h1::serve(
+                                transport.split_owned(),
+                                conf,
+                                RollMut::alloc().unwrap(),
+                                driver,
+                            )
+                            .await
+                            .unwrap();
                             debug!("Done serving h1 connection");
                         });
                     }
@@ -914,9 +917,14 @@ fn h2_basic_post() {
                         let driver = driver.clone();
 
                         tokio_uring::spawn(async move {
-                            h2::serve(transport, conf, RollMut::alloc().unwrap(), driver)
-                                .await
-                                .unwrap();
+                            h2::serve(
+                                transport.split_owned(),
+                                conf,
+                                RollMut::alloc().unwrap(),
+                                driver,
+                            )
+                            .await
+                            .unwrap();
                             debug!("Done serving h1 connection");
                         });
                     }
@@ -1096,9 +1104,14 @@ fn h2_basic_get() {
                         let driver = driver.clone();
 
                         tokio_uring::spawn(async move {
-                            h2::serve(transport, conf, RollMut::alloc().unwrap(), driver)
-                                .await
-                                .unwrap();
+                            h2::serve(
+                                transport.split_owned(),
+                                conf,
+                                RollMut::alloc().unwrap(),
+                                driver,
+                            )
+                            .await
+                            .unwrap();
                             debug!("Done serving h1 connection");
                         });
                     }

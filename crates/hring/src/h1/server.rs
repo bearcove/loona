@@ -8,7 +8,7 @@ use crate::{
     util::{read_and_parse, SemanticError},
     ExpectResponseHeaders, HeadersExt, Responder, ServerDriver,
 };
-use hring_buffet::{ReadWriteOwned, RollMut};
+use hring_buffet::{ReadOwned, RollMut, WriteOwned};
 
 use super::encode::H1Encoder;
 
@@ -43,18 +43,16 @@ pub enum ServeOutcome {
 }
 
 pub async fn serve(
-    transport: impl ReadWriteOwned,
+    (mut transport_r, mut transport_w): (impl ReadOwned, impl WriteOwned),
     conf: Rc<ServerConf>,
     mut client_buf: RollMut,
     driver: impl ServerDriver,
 ) -> eyre::Result<ServeOutcome> {
-    let transport = Rc::new(transport);
-
     loop {
         let req;
         (client_buf, req) = match read_and_parse(
             super::parse::request,
-            transport.as_ref(),
+            &transport_r,
             client_buf,
             conf.max_http_header_len,
         )
@@ -69,7 +67,7 @@ pub async fn serve(
             },
             Err(e) => {
                 if let Some(se) = e.downcast_ref::<SemanticError>() {
-                    transport
+                    transport_w
                         .write_all(se.as_http_response())
                         .await
                         .wrap_err("writing error response downstream")?;
@@ -86,7 +84,7 @@ pub async fn serve(
         let content_len = req.headers.content_length().unwrap_or_default();
 
         let mut req_body = H1Body::new(
-            transport.clone(),
+            transport_r,
             client_buf,
             if chunked {
                 H1BodyKind::Chunked
@@ -96,9 +94,7 @@ pub async fn serve(
         );
 
         let responder = Responder {
-            encoder: H1Encoder {
-                transport: transport.clone(),
-            },
+            encoder: H1Encoder { transport_w },
             state: ExpectResponseHeaders,
         };
 
@@ -108,10 +104,10 @@ pub async fn serve(
             .wrap_err("handling request")?;
 
         // TODO: if we sent `connection: close` we should close now
-        _ = resp;
+        transport_w = resp.into_inner().transport_w;
 
-        client_buf = req_body
-            .into_buf()
+        (client_buf, transport_r) = req_body
+            .into_inner()
             .ok_or_else(|| eyre::eyre!("request body not drained, have to close connection"))?;
 
         if connection_close {

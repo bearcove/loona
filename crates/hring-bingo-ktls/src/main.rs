@@ -10,8 +10,10 @@ use std::{
 
 use color_eyre::eyre;
 use hring::{
-    buffet::RollMut, h1, h2, tokio_uring::net::TcpStream, Body, Encoder, ExpectResponseHeaders,
-    Method, Request, Responder, ResponseDone, ServerDriver,
+    buffet::{RollMut, SplitOwned},
+    h1, h2,
+    tokio_uring::net::TcpStream,
+    Body, Encoder, ExpectResponseHeaders, Method, Request, Responder, ResponseDone, ServerDriver,
 };
 use http::Version;
 use rustls::ServerConfig;
@@ -152,11 +154,11 @@ async fn handle_plaintext_conn(
     match proto {
         Proto::H1(h1_conf) => {
             info!("Using HTTP/1.1");
-            hring::h1::serve(stream, h1_conf, buf, driver).await?;
+            hring::h1::serve(stream.split_owned(), h1_conf, buf, driver).await?;
         }
         Proto::H2(h2_conf) => {
             info!("Using HTTP/2");
-            hring::h2::serve(stream, h2_conf, buf, Rc::new(driver)).await?;
+            hring::h2::serve(stream.split_owned(), h2_conf, buf, Rc::new(driver)).await?;
         }
     }
 
@@ -198,11 +200,11 @@ async fn handle_tls_conn(
     match alpn_proto.as_deref() {
         Some("h2") => {
             info!("Using HTTP/2");
-            hring::h2::serve(stream, h2_conf, buf, Rc::new(driver)).await?;
+            hring::h2::serve(stream.split_owned(), h2_conf, buf, Rc::new(driver)).await?;
         }
         Some("http/1.1") | None => {
             info!("Using HTTP/1.1");
-            hring::h1::serve(stream, h1_conf, buf, driver).await?;
+            hring::h1::serve(stream.split_owned(), h1_conf, buf, driver).await?;
         }
         Some(other) => return Err(eyre::eyre!("Unsupported ALPN protocol: {}", other)),
     }
@@ -225,13 +227,15 @@ impl ServerDriver for SDriver {
             .to_socket_addrs()?
             .next()
             .expect("http bingo should be up");
-        let transport = Rc::new(TcpStream::connect(addr).await?);
+        let transport = TcpStream::connect(addr).await?;
         debug!("Connected to httpbingo");
 
         let driver = CDriver { respond };
 
         req.version = Version::HTTP_11;
-        let (transport, respond) = h1::request(transport, req, req_body, driver).await?;
+        let (transport, respond) =
+            h1::request(transport.split_owned(), req, req_body, driver).await?;
+
         // don't re-use transport for now
         drop(transport);
 
@@ -326,7 +330,7 @@ async fn sample_http_request() -> color_eyre::Result<()> {
         .to_socket_addrs()?
         .next()
         .expect("http bingo should be up");
-    let transport = Rc::new(TcpStream::connect(addr).await?);
+    let transport = TcpStream::connect(addr).await?;
     debug!("Connected to httpbingo");
 
     let driver = SampleCDriver {};
@@ -338,7 +342,7 @@ async fn sample_http_request() -> color_eyre::Result<()> {
         headers: Default::default(),
     };
 
-    let (transport, _) = h1::request(transport, req, &mut (), driver).await?;
+    let (transport, _) = h1::request(transport.split_owned(), req, &mut (), driver).await?;
     // don't re-use transport for now
     drop(transport);
 

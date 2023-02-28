@@ -1,4 +1,4 @@
-use std::{fmt, rc::Rc};
+use std::fmt;
 
 use tracing::debug;
 
@@ -7,7 +7,7 @@ use hring_buffet::{Piece, PieceList, ReadOwned, RollMut, WriteOwned};
 
 /// An HTTP/1.1 body, either chunked or content-length.
 pub(crate) struct H1Body<T> {
-    transport: Rc<T>,
+    transport_r: T,
     buf: Option<RollMut>,
     state: Decoder,
 }
@@ -48,7 +48,7 @@ impl<T> fmt::Debug for H1Body<T> {
 }
 
 impl<T: ReadOwned> H1Body<T> {
-    pub(crate) fn new(transport: Rc<T>, buf: RollMut, kind: H1BodyKind) -> Self {
+    pub(crate) fn new(transport_r: T, buf: RollMut, kind: H1BodyKind) -> Self {
         let state = match kind {
             H1BodyKind::Chunked => Decoder::Chunked(ChunkedDecoder::ReadingChunkHeader),
             H1BodyKind::ContentLength(len) => {
@@ -56,19 +56,20 @@ impl<T: ReadOwned> H1Body<T> {
             }
         };
         H1Body {
-            transport,
+            transport_r,
             buf: Some(buf),
             state,
         }
     }
 
-    /// Returns the inner buffer, but only if the body has been
+    /// Returns the inner buffer and transport, but only if the body has been
     /// fully read.
-    pub(crate) fn into_buf(self) -> Option<RollMut> {
+    pub(crate) fn into_inner(self) -> Option<(RollMut, T)> {
         if !self.eof() {
             return None;
         }
-        self.buf
+        let buf = self.buf?;
+        Some((buf, self.transport_r))
     }
 }
 
@@ -86,15 +87,9 @@ impl<T: ReadOwned> Body for H1Body<T> {
         }
 
         match &mut self.state {
-            Decoder::Chunked(state) => {
-                state
-                    .next_chunk(&mut self.buf, self.transport.as_ref())
-                    .await
-            }
+            Decoder::Chunked(state) => state.next_chunk(&mut self.buf, &self.transport_r).await,
             Decoder::ContentLength(state) => {
-                state
-                    .next_chunk(&mut self.buf, self.transport.as_ref())
-                    .await
+                state.next_chunk(&mut self.buf, &self.transport_r).await
             }
         }
     }
@@ -249,17 +244,17 @@ pub enum BodyWriteMode {
 }
 
 pub(crate) async fn write_h1_body(
-    transport: Rc<impl WriteOwned>,
+    transport: &impl WriteOwned,
     body: &mut impl Body,
     mode: BodyWriteMode,
 ) -> eyre::Result<()> {
     loop {
         match body.next_chunk().await? {
-            BodyChunk::Chunk(chunk) => write_h1_body_chunk(transport.as_ref(), chunk, mode).await?,
+            BodyChunk::Chunk(chunk) => write_h1_body_chunk(transport, chunk, mode).await?,
             BodyChunk::Done { .. } => {
                 // TODO: check that we've sent what we announced in terms of
                 // content length
-                write_h1_body_end(transport.as_ref(), mode).await?;
+                write_h1_body_end(transport, mode).await?;
                 break;
             }
         }

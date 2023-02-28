@@ -1,11 +1,9 @@
-use std::rc::Rc;
-
 use eyre::Context;
 use http::header;
 use tracing::debug;
 
 use crate::{types::Request, util::read_and_parse, Body, HeadersExt, Response};
-use hring_buffet::{PieceList, ReadWriteOwned, RollMut};
+use hring_buffet::{PieceList, ReadOwned, RollMut, WriteOwned};
 
 use super::{
     body::{write_h1_body, BodyWriteMode, H1Body, H1BodyKind},
@@ -27,15 +25,17 @@ pub trait ClientDriver {
 
 /// Perform an HTTP/1.1 request against an HTTP/1.1 server
 ///
-/// The transport will be returned unless the server requested connection close.
-pub async fn request<T, D>(
-    transport: Rc<T>,
+/// The transport halves will be returned unless the server requested connection
+/// close or the request body wasn't fully drained
+pub async fn request<R, W, D>(
+    (transport_r, transport_w): (R, W),
     mut req: Request,
     body: &mut impl Body,
     driver: D,
-) -> eyre::Result<(Option<Rc<T>>, D::Return)>
+) -> eyre::Result<(Option<(R, W)>, D::Return)>
 where
-    T: ReadWriteOwned,
+    R: ReadOwned,
+    W: WriteOwned,
     D: ClientDriver,
 {
     let mode = match body.content_len() {
@@ -54,7 +54,7 @@ where
 
     let mut list = PieceList::default();
     encode_request(req, &mut list, &mut buf)?;
-    transport
+    transport_w
         .writev_all(list)
         .await
         .wrap_err("writing request headers")?;
@@ -62,28 +62,26 @@ where
     // TODO: handle `expect: 100-continue` (don't start sending body until we get a 100 response)
 
     let send_body_fut = {
-        let transport = transport.clone();
         async move {
-            match write_h1_body(transport, body, mode).await {
+            match write_h1_body(&transport_w, body, mode).await {
                 Err(err) => {
                     // TODO: find way to report this error to the driver without
                     // spawning, without ref-counting the driver, etc.
                     panic!("error writing request body: {err:?}");
                 }
-                Ok(body) => {
+                Ok(_) => {
                     debug!("done writing request body");
-                    Ok::<_, eyre::Report>(body)
+                    Ok::<_, eyre::Report>(transport_w)
                 }
             }
         }
     };
 
     let recv_res_fut = {
-        let transport = transport.clone();
         async move {
             let (buf, res) = read_and_parse(
                 super::parse::response,
-                transport.as_ref(),
+                &transport_r,
                 buf,
                 // TODO: make this configurable
                 64 * 1024,
@@ -104,7 +102,7 @@ where
             let content_len = res.headers.content_length().unwrap_or_default();
 
             let mut res_body = H1Body::new(
-                transport,
+                transport_r,
                 buf,
                 if chunked {
                     // TODO: even with chunked transfer-encoding, we can announce
@@ -119,15 +117,21 @@ where
 
             let ret = driver.on_final_response(res, &mut res_body).await?;
 
-            // TODO: check that res_body is fully drained
+            let transport_r = match (conn_close, res_body.into_inner()) {
+                // can only re-use the body if conn_close is false and the body was fully draided
+                (false, Some((_buf, transport_r))) => Some(transport_r),
+                _ => None,
+            };
 
-            Ok((ret, conn_close))
+            Ok((transport_r, ret))
         }
     };
 
     // TODO: cancel sending the body if we get a response early?
-    let (_, (ret, conn_close)) = tokio::try_join!(send_body_fut, recv_res_fut)?;
+    let (send_res, recv_res) = tokio::try_join!(send_body_fut, recv_res_fut)?;
+    let transport_w = send_res;
+    let (transport_r, ret) = recv_res;
 
-    let transport = if conn_close { None } else { Some(transport) };
+    let transport = transport_r.map(|transport_r| (transport_r, transport_w));
     Ok((transport, ret))
 }

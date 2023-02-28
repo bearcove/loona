@@ -25,7 +25,7 @@ use crate::{
     util::read_and_parse,
     ExpectResponseHeaders, Headers, Method, Request, Responder, ServerDriver,
 };
-use hring_buffet::{Piece, PieceList, PieceStr, ReadWriteOwned, Roll, RollMut};
+use hring_buffet::{Piece, PieceList, PieceStr, ReadOwned, Roll, RollMut, WriteOwned};
 
 use super::{
     body::{H2BodyItem, H2BodySender},
@@ -91,7 +91,7 @@ struct HeadersData {
 }
 
 pub async fn serve(
-    transport: impl ReadWriteOwned,
+    (transport_r, transport_w): (impl ReadOwned, impl WriteOwned),
     conf: Rc<ServerConf>,
     mut client_buf: RollMut,
     driver: Rc<impl ServerDriver + 'static>,
@@ -103,11 +103,9 @@ pub async fn serve(
 
     const MAX_FRAME_LEN: usize = 64 * 1024;
 
-    let transport = Rc::new(transport);
-
     (client_buf, _) = match read_and_parse(
         parse::preface,
-        transport.as_ref(),
+        &transport_r,
         client_buf,
         parse::PREFACE.len(),
     )
@@ -133,7 +131,9 @@ pub async fn serve(
         .with_len(payload_roll.len().try_into().unwrap())
         .into_roll(&mut out_scratch)?;
 
-        transport.writev_all(vec![frame_roll, payload_roll]).await?;
+        transport_w
+            .writev_all(vec![frame_roll, payload_roll])
+            .await?;
         debug!("sent settings frame");
     }
 
@@ -142,12 +142,12 @@ pub async fn serve(
     let read_task = h2_read_loop(
         driver.clone(),
         ev_tx.clone(),
-        transport.clone(),
+        transport_r,
         client_buf,
         state.clone(),
     );
 
-    let write_task = h2_write_loop(ev_rx, transport, out_scratch);
+    let write_task = h2_write_loop(ev_rx, transport_w, out_scratch);
 
     let res = tokio::try_join!(
         read_task.map_err(LoopError::Read),
@@ -182,7 +182,7 @@ struct ConnectionClosed;
 async fn h2_read_loop(
     driver: Rc<impl ServerDriver + 'static>,
     ev_tx: mpsc::Sender<H2ConnEvent>,
-    transport: Rc<impl ReadWriteOwned>,
+    transport_r: impl ReadOwned,
     mut client_buf: RollMut,
     state: Rc<RefCell<ConnState>>,
 ) -> eyre::Result<()> {
@@ -194,7 +194,7 @@ async fn h2_read_loop(
     loop {
         let frame;
         (client_buf, frame) =
-            match read_and_parse(Frame::parse, transport.as_ref(), client_buf, 32 * 1024).await? {
+            match read_and_parse(Frame::parse, &transport_r, client_buf, 32 * 1024).await? {
                 Some((client_buf, frame)) => (client_buf, frame),
                 None => {
                     debug!("h2 client closed connection");
@@ -235,7 +235,7 @@ async fn h2_read_loop(
             let payload_roll;
             (client_buf, payload_roll) = match read_and_parse(
                 nom::bytes::streaming::take(frame.len as usize),
-                transport.as_ref(),
+                &transport_r,
                 client_buf,
                 frame.len as usize,
             )
@@ -315,7 +315,7 @@ async fn h2_read_loop(
                         }
                     }
                     FrameType::Headers(flags) => {
-                        if frame.stream_id.is_even() {
+                        if frame.stream_id.is_server_initiated() {
                             let e =
                                 eyre::eyre!("client is trying to initiate even-numbered stream");
                             send_goaway(&ev_tx, &state, e, KnownErrorCode::ProtocolError).await;
@@ -721,7 +721,7 @@ async fn send_goaway(
 
 async fn h2_write_loop(
     mut ev_rx: mpsc::Receiver<H2ConnEvent>,
-    transport: Rc<impl ReadWriteOwned>,
+    transport_w: impl WriteOwned,
     mut out_scratch: RollMut,
 ) -> eyre::Result<()> {
     let mut hpack_enc = hring_hpack::Encoder::new();
@@ -739,7 +739,7 @@ async fn h2_write_loop(
                     FrameType::Settings(SettingsFlags::Ack.into()),
                     StreamId::CONNECTION,
                 );
-                transport
+                transport_w
                     .write_all(frame.into_roll(&mut out_scratch)?)
                     .await
                     .wrap_err("writing acknowledge settings")?;
@@ -774,7 +774,7 @@ async fn h2_write_loop(
                         frame.len = fragment_block.len() as u32;
                         let frame_roll = frame.into_roll(&mut out_scratch)?;
 
-                        transport
+                        transport_w
                             .writev_all(PieceList::default().with(frame_roll).with(fragment_block))
                             .await
                             .wrap_err("writing headers")?;
@@ -784,7 +784,7 @@ async fn h2_write_loop(
                         let frame = Frame::new(FrameType::Data(flags), ev.stream_id)
                             .with_len(chunk.len().try_into().unwrap());
                         let frame_roll = frame.into_roll(&mut out_scratch)?;
-                        transport
+                        transport_w
                             .writev_all(PieceList::default().with(frame_roll).with(chunk))
                             .await
                             .wrap_err("writing bodychunk")?;
@@ -792,7 +792,7 @@ async fn h2_write_loop(
                     H2EventPayload::BodyEnd => {
                         let flags = DataFlags::EndStream;
                         let frame = Frame::new(FrameType::Data(flags.into()), ev.stream_id);
-                        transport
+                        transport_w
                             .write_all(frame.into_roll(&mut out_scratch)?)
                             .await
                             .wrap_err("writing BodyEnd")?;
@@ -804,7 +804,7 @@ async fn h2_write_loop(
                 let flags = PingFlags::Ack.into();
                 let frame = Frame::new(FrameType::Ping(flags), StreamId::CONNECTION)
                     .with_len(payload.len() as u32);
-                transport
+                transport_w
                     .writev_all(
                         PieceList::default()
                             .with(frame.into_roll(&mut out_scratch)?)
@@ -834,7 +834,7 @@ async fn h2_write_loop(
                         .unwrap(),
                 );
 
-                transport
+                transport_w
                     .writev_all(
                         PieceList::default()
                             .with(frame.into_roll(&mut out_scratch)?)

@@ -958,7 +958,7 @@ mod tests {
     use nom::IResult;
     use tracing::trace;
 
-    use crate::{ChanRead, Roll, RollMut, BUF_SIZE};
+    use crate::{Roll, RollMut, BUF_SIZE};
 
     #[test]
     fn test_roll_put() {
@@ -1091,6 +1091,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "miri"))]
     fn test_roll_readfrom_start() {
+        use crate::ChanRead;
+
         tokio_uring::start(async move {
             let mut rm = RollMut::alloc().unwrap();
 
