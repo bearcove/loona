@@ -117,7 +117,7 @@ impl Drop for ChanReadSend {
 }
 
 impl ReadOwned for ChanRead {
-    async fn read<B: IoBufMut>(&self, mut buf: B) -> BufResult<usize, B> {
+    async fn read<B: IoBufMut>(&mut self, mut buf: B) -> BufResult<usize, B> {
         trace!("Reading {} bytes", buf.bytes_total());
         let out =
             unsafe { std::slice::from_raw_parts_mut(buf.stable_mut_ptr(), buf.bytes_total()) };
@@ -175,7 +175,7 @@ impl ChanWrite {
 }
 
 impl WriteOwned for ChanWrite {
-    async fn write<B: IoBuf>(&self, buf: B) -> BufResult<usize, B> {
+    async fn write<B: IoBuf>(&mut self, buf: B) -> BufResult<usize, B> {
         let slice = unsafe { std::slice::from_raw_parts(buf.stable_ptr(), buf.bytes_init()) };
         match self.tx.send(slice.to_vec()).await {
             Ok(()) => (Ok(buf.bytes_init()), buf),
@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn test_chan_reader() {
         tokio_uring::start(async move {
-            let (send, cr) = ChanRead::new();
+            let (send, mut cr) = ChanRead::new();
             let wrote_three = Rc::new(RefCell::new(false));
 
             tokio_uring::spawn({
@@ -253,7 +253,7 @@ mod tests {
                 assert_eq!(n, 0, "reached EOF");
             }
 
-            let (send, cr) = ChanRead::new();
+            let (send, mut cr) = ChanRead::new();
 
             tokio_uring::spawn({
                 async move {

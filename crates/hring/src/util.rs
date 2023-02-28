@@ -8,7 +8,7 @@ use hring_buffet::{ReadOwned, Roll, RollMut};
 /// Returns `None` on EOF, error if partially parsed message.
 pub(crate) async fn read_and_parse<Parser, Output>(
     parser: Parser,
-    stream: &impl ReadOwned,
+    stream: &mut impl ReadOwned,
     mut buf: RollMut,
     max_len: usize,
 ) -> eyre::Result<Option<(RollMut, Output)>>

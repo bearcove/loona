@@ -7,13 +7,12 @@ use hring::{
     h1, Body, BodyChunk, Encoder, ExpectResponseHeaders, HeadersExt, Responder, Response,
     ResponseDone, ServerDriver,
 };
-use hring_buffet::{RollMut, SplitOwned};
+use hring_buffet::{IntoSplit, RollMut, TcpReadHalf, TcpWriteHalf};
 use http::StatusCode;
 use std::{cell::RefCell, future::Future, net::SocketAddr, rc::Rc};
-use tokio_uring::net::TcpStream;
 use tracing::debug;
 
-pub type TransportPool = Rc<RefCell<Vec<Rc<TcpStream>>>>;
+pub type TransportPool = Rc<RefCell<Vec<(TcpReadHalf, TcpWriteHalf)>>>;
 
 pub struct ProxyDriver {
     pub upstream_addr: SocketAddr,
@@ -46,24 +45,20 @@ impl ServerDriver for ProxyDriver {
             transport
         } else {
             debug!("making new connection to upstream!");
-            Rc::new(tokio_uring::net::TcpStream::connect(self.upstream_addr).await?)
+            tokio_uring::net::TcpStream::connect(self.upstream_addr)
+                .await?
+                .into_split()
         };
 
         let driver = ProxyClientDriver { respond };
 
-        let (transport, res) = h1::request(
-            (transport.clone(), transport.clone()),
-            req,
-            req_body,
-            driver,
-        )
-        .await?;
+        let (transport, res) = h1::request(transport, req, req_body, driver).await?;
 
         if let Some(transport) = transport {
             let mut pool = self.pool.borrow_mut();
             // FIXME: leaky abstraction, `h1::request` returns both halves of the
             // transport, which are both actually `Rc<TcpStream>`
-            pool.push(transport.0);
+            pool.push(transport);
         }
 
         Ok(res)
@@ -159,7 +154,7 @@ pub async fn start(
                             pool,
                         };
                         h1::serve(
-                            transport.split_owned(),
+                            transport.into_split(),
                             conf,
                             RollMut::alloc().unwrap(),
                             driver,

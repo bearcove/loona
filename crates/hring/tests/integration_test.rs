@@ -10,7 +10,7 @@ use hring::{
     h1, h2, Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, HeadersExt, Method, Request,
     Responder, Response, ResponseDone, ServerDriver,
 };
-use hring_buffet::{ChanRead, ChanWrite, Piece, RollMut, SplitOwned};
+use hring_buffet::{ChanRead, ChanWrite, IntoSplit, Piece, RollMut};
 use http::{header, StatusCode};
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
@@ -747,7 +747,7 @@ fn curl_echo_body_noproxy(typ: BodyType) {
                         tokio_uring::spawn(async move {
                             let driver = TestDriver;
                             h1::serve(
-                                transport.split_owned(),
+                                transport.into_split(),
                                 conf,
                                 RollMut::alloc().unwrap(),
                                 driver,
@@ -918,7 +918,7 @@ fn h2_basic_post() {
 
                         tokio_uring::spawn(async move {
                             h2::serve(
-                                transport.split_owned(),
+                                transport.into_split(),
                                 conf,
                                 RollMut::alloc().unwrap(),
                                 driver,
@@ -1105,7 +1105,7 @@ fn h2_basic_get() {
 
                         tokio_uring::spawn(async move {
                             h2::serve(
-                                transport.split_owned(),
+                                transport.into_split(),
                                 conf,
                                 RollMut::alloc().unwrap(),
                                 driver,
