@@ -1,4 +1,4 @@
-use std::{io::Write, rc::Rc};
+use std::io::Write;
 
 use eyre::Context;
 use http::{StatusCode, Version};
@@ -147,7 +147,7 @@ pub struct H1Encoder<T>
 where
     T: WriteOwned,
 {
-    pub(crate) transport: Rc<T>,
+    pub(crate) transport_w: T,
 }
 
 impl<T> Encoder for H1Encoder<T>
@@ -158,7 +158,7 @@ where
         let mut list = PieceList::default();
         encode_response(res, &mut list)?;
 
-        self.transport
+        self.transport_w
             .writev_all(list)
             .await
             .wrap_err("writing response headers upstream")?;
@@ -169,12 +169,12 @@ where
     // TODO: move `mode` into `H1Encoder`? we don't need it for h2
     async fn write_body_chunk(&mut self, chunk: Piece, mode: BodyWriteMode) -> eyre::Result<()> {
         // TODO: inline
-        write_h1_body_chunk(self.transport.as_ref(), chunk, mode).await
+        write_h1_body_chunk(&self.transport_w, chunk, mode).await
     }
 
     async fn write_body_end(&mut self, mode: BodyWriteMode) -> eyre::Result<()> {
         // TODO: inline
-        write_h1_body_end(self.transport.as_ref(), mode).await
+        write_h1_body_end(&self.transport_w, mode).await
     }
 
     async fn write_trailers(&mut self, trailers: Box<Headers>) -> eyre::Result<()> {
@@ -182,7 +182,7 @@ where
         let mut list = PieceList::default();
         encode_headers(*trailers, &mut list)?;
 
-        self.transport
+        self.transport_w
             .writev_all(list)
             .await
             .wrap_err("writing response headers upstream")?;

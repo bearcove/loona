@@ -91,7 +91,8 @@ fn serve_api() {
         let transport = ReadWritePair(read, write);
         let client_buf = RollMut::alloc()?;
         let driver = TestDriver;
-        let serve_fut = tokio_uring::spawn(h1::serve(transport, conf, client_buf, driver));
+        let serve_fut =
+            tokio_uring::spawn(h1::serve(transport.split_owned(), conf, client_buf, driver));
 
         tx.send("GET / HTTP/1.1\r\n\r\n").await?;
         let mut res_buf = BytesMut::new();
@@ -748,9 +749,14 @@ fn curl_echo_body_noproxy(typ: BodyType) {
 
                         tokio_uring::spawn(async move {
                             let driver = TestDriver;
-                            h1::serve(transport, conf, RollMut::alloc().unwrap(), driver)
-                                .await
-                                .unwrap();
+                            h1::serve(
+                                transport.split_owned(),
+                                conf,
+                                RollMut::alloc().unwrap(),
+                                driver,
+                            )
+                            .await
+                            .unwrap();
                             debug!("Done serving h1 connection");
                         });
                     }

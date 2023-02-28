@@ -154,7 +154,7 @@ async fn handle_plaintext_conn(
     match proto {
         Proto::H1(h1_conf) => {
             info!("Using HTTP/1.1");
-            hring::h1::serve(stream, h1_conf, buf, driver).await?;
+            hring::h1::serve(stream.split_owned(), h1_conf, buf, driver).await?;
         }
         Proto::H2(h2_conf) => {
             info!("Using HTTP/2");
@@ -204,7 +204,7 @@ async fn handle_tls_conn(
         }
         Some("http/1.1") | None => {
             info!("Using HTTP/1.1");
-            hring::h1::serve(stream, h1_conf, buf, driver).await?;
+            hring::h1::serve(stream.split_owned(), h1_conf, buf, driver).await?;
         }
         Some(other) => return Err(eyre::eyre!("Unsupported ALPN protocol: {}", other)),
     }

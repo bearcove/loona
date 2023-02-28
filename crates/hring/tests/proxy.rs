@@ -7,7 +7,7 @@ use hring::{
     h1, Body, BodyChunk, Encoder, ExpectResponseHeaders, HeadersExt, Responder, Response,
     ResponseDone, ServerDriver,
 };
-use hring_buffet::RollMut;
+use hring_buffet::{RollMut, SplitOwned};
 use http::StatusCode;
 use std::{cell::RefCell, future::Future, net::SocketAddr, rc::Rc};
 use tracing::debug;
@@ -149,9 +149,14 @@ pub async fn start(
                             upstream_addr,
                             pool,
                         };
-                        h1::serve(transport, conf, RollMut::alloc().unwrap(), driver)
-                            .await
-                            .unwrap();
+                        h1::serve(
+                            transport.split_owned(),
+                            conf,
+                            RollMut::alloc().unwrap(),
+                            driver,
+                        )
+                        .await
+                        .unwrap();
                         debug!("Done serving h1 connection");
                     });
                 }
