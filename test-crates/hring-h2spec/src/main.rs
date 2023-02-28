@@ -1,18 +1,27 @@
 #![allow(incomplete_features)]
 #![feature(async_fn_in_trait)]
 
-use std::{collections::VecDeque, net::SocketAddr, path::PathBuf, rc::Rc};
+use std::{collections::VecDeque, path::PathBuf};
 
 use hring::{
-    buffet::{RollMut, SplitOwned},
     http::{StatusCode, Version},
-    tokio_uring::{self, net::TcpListener},
     Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, Request, Responder, Response,
     ResponseDone, ServerDriver,
 };
 use tokio::process::Command;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
+
+#[cfg(not(feature = "non-uring"))]
+mod uring;
+#[cfg(not(feature = "non-uring"))]
+use uring as server_impl;
+
+#[cfg(feature = "non-uring")]
+mod non_uring;
+
+#[cfg(feature = "non-uring")]
+use non_uring as server_impl;
 
 fn main() {
     color_eyre::install().unwrap();
@@ -92,12 +101,7 @@ impl Body for TestBody {
 }
 
 async fn real_main(h2spec_binary: PathBuf) -> color_eyre::Result<()> {
-    let addr: SocketAddr = "[::]:0".parse()?;
-    let ln = TcpListener::bind(addr)?;
-    let addr = ln.local_addr()?;
-    tracing::info!("Listening on {}", ln.local_addr()?);
-
-    let _task = tokio_uring::spawn(async move { run_server(ln).await.unwrap() });
+    let addr = server_impl::spawn_server("[::]:0".parse()?).await?;
 
     let mut args = std::env::args().skip(1).collect::<VecDeque<_>>();
     if matches!(args.get(0).map(|s| s.as_str()), Some("--")) {
@@ -116,20 +120,4 @@ async fn real_main(h2spec_binary: PathBuf) -> color_eyre::Result<()> {
         .await?;
 
     Ok(())
-}
-
-async fn run_server(ln: TcpListener) -> color_eyre::Result<()> {
-    loop {
-        let (stream, addr) = ln.accept().await?;
-        tracing::info!(%addr, "Accepted connection from");
-        let conf = Rc::new(hring::h2::ServerConf::default());
-        let client_buf = RollMut::alloc()?;
-        let driver = Rc::new(SDriver);
-
-        tokio_uring::spawn(async move {
-            if let Err(e) = hring::h2::serve(stream.split_owned(), conf, client_buf, driver).await {
-                tracing::error!("error serving client {}: {}", addr, e);
-            }
-        });
-    }
 }
