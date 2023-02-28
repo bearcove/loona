@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use tokio_uring::{
     buf::{IoBuf, IoBufMut},
@@ -242,6 +242,53 @@ impl SplitOwned for TcpStream {
     }
 }
 
+#[cfg(feature = "non-uring")]
+impl SplitOwned for tokio::net::TcpStream {
+    // we have to use a RefCell here since `ReadOwned` only takes `&self`
+    type Read = RefCell<tokio::net::tcp::OwnedReadHalf>;
+    type Write = RefCell<tokio::net::tcp::OwnedWriteHalf>;
+
+    fn split_owned(self) -> (Self::Read, Self::Write) {
+        let (r, w) = self.into_split();
+        (r.into(), w.into())
+    }
+}
+
+#[cfg(feature = "non-uring")]
+impl ReadOwned for RefCell<tokio::net::tcp::OwnedReadHalf> {
+    // we actually do want to panic if we try borrowing this mutably twice.
+    // this is a wonky interface to start with, only to compare uring and
+    // non-uring. the safer choice is to use an async mutex, but that might
+    // impact performance.
+    #[allow(clippy::await_holding_refcell_ref)]
+    async fn read<B: IoBufMut>(&self, mut buf: B) -> BufResult<usize, B> {
+        let mut this = self.borrow_mut();
+        let buf_slice =
+            unsafe { std::slice::from_raw_parts_mut(buf.stable_mut_ptr(), buf.bytes_total()) };
+        let res = tokio::io::AsyncReadExt::read(&mut *this, buf_slice).await;
+        if let Ok(n) = &res {
+            unsafe {
+                buf.set_init(*n);
+            }
+        }
+        (res, buf)
+    }
+}
+
+#[cfg(feature = "non-uring")]
+impl WriteOwned for RefCell<tokio::net::tcp::OwnedWriteHalf> {
+    // see the `impl ReadOwned` above
+    #[allow(clippy::await_holding_refcell_ref)]
+    async fn write<B: IoBuf>(&self, buf: B) -> BufResult<usize, B> {
+        let mut this = self.borrow_mut();
+        let buf_slice = unsafe { std::slice::from_raw_parts(buf.stable_ptr(), buf.bytes_init()) };
+        let res = tokio::io::AsyncWriteExt::write(&mut *this, buf_slice).await;
+        (res, buf)
+    }
+
+    // TODO: implement writev, etc.
+}
+
 /// Unites a [ReadOwned] and a [WriteOwned] into a single [ReadWriteOwned] type.
 pub struct ReadWritePair<R, W>(pub R, pub W)
 where
@@ -266,6 +313,19 @@ where
 {
     async fn write<B: IoBuf>(&self, buf: B) -> BufResult<usize, B> {
         self.1.write(buf).await
+    }
+}
+
+impl<R, W> SplitOwned for ReadWritePair<R, W>
+where
+    R: ReadOwned,
+    W: WriteOwned,
+{
+    type Read = R;
+    type Write = W;
+
+    fn split_owned(self) -> (Self::Read, Self::Write) {
+        (self.0, self.1)
     }
 }
 

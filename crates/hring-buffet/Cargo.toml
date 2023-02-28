@@ -13,7 +13,9 @@ Buffer management for the `hring` crate.
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
+default = ["non-uring"]
 miri = []
+non-uring = ["tokio/net", "tokio/rt"]
 
 [dependencies]
 eyre = "0.6.8"
