@@ -12,15 +12,16 @@ use tokio::process::Command;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-#[cfg(not(feature = "non-uring"))]
+#[cfg(feature = "tokio-uring")]
 mod uring;
-#[cfg(not(feature = "non-uring"))]
+
+#[cfg(feature = "tokio-uring")]
 use uring as server_impl;
 
-#[cfg(feature = "non-uring")]
+#[cfg(not(feature = "tokio-uring"))]
 mod non_uring;
 
-#[cfg(feature = "non-uring")]
+#[cfg(not(feature = "tokio-uring"))]
 use non_uring as server_impl;
 
 fn main() {
@@ -43,7 +44,24 @@ fn main() {
         }
     };
 
-    hring::tokio_uring::start(async move { real_main(h2spec_binary).await.unwrap() })
+    #[cfg(feature = "tokio-uring")]
+    hring::tokio_uring::start(async move { real_main(h2spec_binary).await.unwrap() });
+
+    #[cfg(not(feature = "tokio-uring"))]
+    {
+        use tokio::task::LocalSet;
+
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async move {
+                let local = LocalSet::new();
+                local
+                    .run_until(async move { real_main(h2spec_binary).await.unwrap() })
+                    .await;
+            })
+    }
 }
 
 struct SDriver;

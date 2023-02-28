@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, rc::Rc};
 
-use hring::buffet::{RollMut, SplitOwned};
+use hring::buffet::RollMut;
 use tokio::net::TcpListener;
 
 use crate::SDriver;
@@ -24,7 +24,7 @@ pub(crate) async fn run_server(ln: TcpListener) -> color_eyre::Result<()> {
         let driver = Rc::new(SDriver);
 
         tokio::task::spawn_local(async move {
-            if let Err(e) = hring::h2::serve(stream.split_owned(), conf, client_buf, driver).await {
+            if let Err(e) = hring::h2::serve(stream.into_split(), conf, client_buf, driver).await {
                 tracing::error!("error serving client {}: {}", addr, e);
             }
         });
