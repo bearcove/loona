@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use tokio_uring::{
     buf::{IoBuf, IoBufMut},
@@ -19,10 +19,10 @@ pub trait ReadOwned {
 pub trait WriteOwned {
     /// Write a single buffer, taking ownership for the duration of the write.
     /// Might perform a partial write, see [WriteOwned::write_all]
-    async fn write<B: IoBuf>(&self, buf: B) -> BufResult<usize, B>;
+    async fn write<B: IoBuf>(&mut self, buf: B) -> BufResult<usize, B>;
 
     /// Write a single buffer, re-trying the write if the kernel does a partial write.
-    async fn write_all<B: IoBuf>(&self, mut buf: B) -> std::io::Result<()> {
+    async fn write_all<B: IoBuf>(&mut self, mut buf: B) -> std::io::Result<()> {
         let mut written = 0;
         let len = buf.bytes_init();
         while written < len {
@@ -42,7 +42,7 @@ pub trait WriteOwned {
 
     /// Write a list of buffers, taking ownership for the duration of the write.
     /// Might perform a partial write, see [WriteOwned::writev_all]
-    async fn writev<B: IoBuf>(&self, list: Vec<B>) -> BufResult<usize, Vec<B>> {
+    async fn writev<B: IoBuf>(&mut self, list: Vec<B>) -> BufResult<usize, Vec<B>> {
         let mut out_list = Vec::with_capacity(list.len());
         let mut list = list.into_iter();
         let mut total = 0;
@@ -83,7 +83,7 @@ pub trait WriteOwned {
     }
 
     /// Write a list of buffers, re-trying the write if the kernel does a partial write.
-    async fn writev_all<B: IoBuf>(&self, list: impl Into<Vec<B>>) -> std::io::Result<()> {
+    async fn writev_all<B: IoBuf>(&mut self, list: impl Into<Vec<B>>) -> std::io::Result<()> {
         // FIXME: converting into a `Vec` and _then_ into an iterator is silly,
         // we can probably find a better function signature here.
         let mut list: Vec<_> = list.into().into_iter().map(BufOrSlice::Buf).collect();
@@ -146,11 +146,11 @@ impl ReadOwned for TcpReadHalf {
 pub struct TcpWriteHalf(Rc<TcpStream>);
 
 impl WriteOwned for TcpWriteHalf {
-    async fn write<B: IoBuf>(&self, buf: B) -> BufResult<usize, B> {
+    async fn write<B: IoBuf>(&mut self, buf: B) -> BufResult<usize, B> {
         self.0.write(buf).await
     }
 
-    async fn writev<B: IoBuf>(&self, list: Vec<B>) -> BufResult<usize, Vec<B>> {
+    async fn writev<B: IoBuf>(&mut self, list: Vec<B>) -> BufResult<usize, Vec<B>> {
         self.0.writev(list).await
     }
 }
@@ -167,23 +167,16 @@ impl SplitOwned for TcpStream {
 
 #[cfg(feature = "non-uring")]
 impl SplitOwned for tokio::net::TcpStream {
-    // we have to use a RefCell here since `ReadOwned` only takes `&self`
     type Read = tokio::net::tcp::OwnedReadHalf;
-    type Write = RefCell<tokio::net::tcp::OwnedWriteHalf>;
+    type Write = tokio::net::tcp::OwnedWriteHalf;
 
     fn split_owned(self) -> (Self::Read, Self::Write) {
-        let (r, w) = self.into_split();
-        (r, w.into())
+        self.into_split()
     }
 }
 
 #[cfg(feature = "non-uring")]
 impl ReadOwned for tokio::net::tcp::OwnedReadHalf {
-    // we actually do want to panic if we try borrowing this mutably twice.
-    // this is a wonky interface to start with, only to compare uring and
-    // non-uring. the safer choice is to use an async mutex, but that might
-    // impact performance.
-    #[allow(clippy::await_holding_refcell_ref)]
     async fn read<B: IoBufMut>(&mut self, mut buf: B) -> BufResult<usize, B> {
         let buf_slice =
             unsafe { std::slice::from_raw_parts_mut(buf.stable_mut_ptr(), buf.bytes_total()) };
@@ -198,13 +191,10 @@ impl ReadOwned for tokio::net::tcp::OwnedReadHalf {
 }
 
 #[cfg(feature = "non-uring")]
-impl WriteOwned for RefCell<tokio::net::tcp::OwnedWriteHalf> {
-    // see the `impl ReadOwned` above
-    #[allow(clippy::await_holding_refcell_ref)]
-    async fn write<B: IoBuf>(&self, buf: B) -> BufResult<usize, B> {
-        let mut this = self.borrow_mut();
+impl WriteOwned for tokio::net::tcp::OwnedWriteHalf {
+    async fn write<B: IoBuf>(&mut self, buf: B) -> BufResult<usize, B> {
         let buf_slice = unsafe { std::slice::from_raw_parts(buf.stable_ptr(), buf.bytes_init()) };
-        let res = tokio::io::AsyncWriteExt::write(&mut *this, buf_slice).await;
+        let res = tokio::io::AsyncWriteExt::write(self, buf_slice).await;
         (res, buf)
     }
 
@@ -231,7 +221,7 @@ mod tests {
 
         impl WriteOwned for Writer {
             async fn write<B: tokio_uring::buf::IoBuf>(
-                &self,
+                &mut self,
                 buf: B,
             ) -> tokio_uring::BufResult<usize, B> {
                 assert!(buf.bytes_init() > 0, "zero-length writes are forbidden");
@@ -252,7 +242,7 @@ mod tests {
         }
 
         tokio_uring::start(async move {
-            let writer = Writer {
+            let mut writer = Writer {
                 mode: Mode::WriteZero,
                 bytes: Default::default(),
             };
@@ -260,7 +250,7 @@ mod tests {
             let res = writer.write_all(buf_a).await;
             assert!(res.is_err());
 
-            let writer = Writer {
+            let mut writer = Writer {
                 mode: Mode::WriteZero,
                 bytes: Default::default(),
             };
@@ -269,7 +259,7 @@ mod tests {
             let res = writer.writev_all(vec![buf_a, buf_b]).await;
             assert!(res.is_err());
 
-            let writer = Writer {
+            let mut writer = Writer {
                 mode: Mode::WritePartial,
                 bytes: Default::default(),
             };
@@ -277,7 +267,7 @@ mod tests {
             writer.write_all(buf_a).await.unwrap();
             assert_eq!(&writer.bytes.borrow()[..], &[1, 2, 3, 4, 5]);
 
-            let writer = Writer {
+            let mut writer = Writer {
                 mode: Mode::WritePartial,
                 bytes: Default::default(),
             };

@@ -169,12 +169,12 @@ where
     // TODO: move `mode` into `H1Encoder`? we don't need it for h2
     async fn write_body_chunk(&mut self, chunk: Piece, mode: BodyWriteMode) -> eyre::Result<()> {
         // TODO: inline
-        write_h1_body_chunk(&self.transport_w, chunk, mode).await
+        write_h1_body_chunk(&mut self.transport_w, chunk, mode).await
     }
 
     async fn write_body_end(&mut self, mode: BodyWriteMode) -> eyre::Result<()> {
         // TODO: inline
-        write_h1_body_end(&self.transport_w, mode).await
+        write_h1_body_end(&mut self.transport_w, mode).await
     }
 
     async fn write_trailers(&mut self, trailers: Box<Headers>) -> eyre::Result<()> {

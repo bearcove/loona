@@ -91,7 +91,7 @@ struct HeadersData {
 }
 
 pub async fn serve(
-    (mut transport_r, transport_w): (impl ReadOwned, impl WriteOwned),
+    (mut transport_r, mut transport_w): (impl ReadOwned, impl WriteOwned),
     conf: Rc<ServerConf>,
     mut client_buf: RollMut,
     driver: Rc<impl ServerDriver + 'static>,
@@ -721,7 +721,7 @@ async fn send_goaway(
 
 async fn h2_write_loop(
     mut ev_rx: mpsc::Receiver<H2ConnEvent>,
-    transport_w: impl WriteOwned,
+    mut transport_w: impl WriteOwned,
     mut out_scratch: RollMut,
 ) -> eyre::Result<()> {
     let mut hpack_enc = hring_hpack::Encoder::new();

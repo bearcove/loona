@@ -175,7 +175,7 @@ impl ChanWrite {
 }
 
 impl WriteOwned for ChanWrite {
-    async fn write<B: IoBuf>(&self, buf: B) -> BufResult<usize, B> {
+    async fn write<B: IoBuf>(&mut self, buf: B) -> BufResult<usize, B> {
         let slice = unsafe { std::slice::from_raw_parts(buf.stable_ptr(), buf.bytes_init()) };
         match self.tx.send(slice.to_vec()).await {
             Ok(()) => (Ok(buf.bytes_init()), buf),

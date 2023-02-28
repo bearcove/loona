@@ -28,7 +28,7 @@ pub trait ClientDriver {
 /// The transport halves will be returned unless the server requested connection
 /// close or the request body wasn't fully drained
 pub async fn request<R, W, D>(
-    (mut transport_r, transport_w): (R, W),
+    (mut transport_r, mut transport_w): (R, W),
     mut req: Request,
     body: &mut impl Body,
     driver: D,
@@ -63,7 +63,7 @@ where
 
     let send_body_fut = {
         async move {
-            match write_h1_body(&transport_w, body, mode).await {
+            match write_h1_body(&mut transport_w, body, mode).await {
                 Err(err) => {
                     // TODO: find way to report this error to the driver without
                     // spawning, without ref-counting the driver, etc.

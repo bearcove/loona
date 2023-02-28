@@ -244,7 +244,7 @@ pub enum BodyWriteMode {
 }
 
 pub(crate) async fn write_h1_body(
-    transport: &impl WriteOwned,
+    transport: &mut impl WriteOwned,
     body: &mut impl Body,
     mode: BodyWriteMode,
 ) -> eyre::Result<()> {
@@ -264,7 +264,7 @@ pub(crate) async fn write_h1_body(
 }
 
 pub(crate) async fn write_h1_body_chunk(
-    transport: &impl WriteOwned,
+    transport: &mut impl WriteOwned,
     chunk: Piece,
     mode: BodyWriteMode,
 ) -> eyre::Result<()> {
@@ -292,7 +292,7 @@ pub(crate) async fn write_h1_body_chunk(
 }
 
 pub(crate) async fn write_h1_body_end(
-    transport: &impl WriteOwned,
+    transport: &mut impl WriteOwned,
     mode: BodyWriteMode,
 ) -> eyre::Result<()> {
     debug!(?mode, "writing h1 body end");
