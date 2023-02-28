@@ -10,7 +10,7 @@ use hring::{
     h1, h2, Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, HeadersExt, Method, Request,
     Responder, Response, ResponseDone, ServerDriver,
 };
-use hring_buffet::{ChanRead, ChanWrite, Piece, ReadWritePair, RollMut};
+use hring_buffet::{ChanRead, ChanWrite, Piece, ReadWritePair, RollMut, SplitOwned};
 use http::{header, StatusCode};
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
@@ -914,9 +914,14 @@ fn h2_basic_post() {
                         let driver = driver.clone();
 
                         tokio_uring::spawn(async move {
-                            h2::serve(transport, conf, RollMut::alloc().unwrap(), driver)
-                                .await
-                                .unwrap();
+                            h2::serve(
+                                transport.split_owned(),
+                                conf,
+                                RollMut::alloc().unwrap(),
+                                driver,
+                            )
+                            .await
+                            .unwrap();
                             debug!("Done serving h1 connection");
                         });
                     }
@@ -1096,9 +1101,14 @@ fn h2_basic_get() {
                         let driver = driver.clone();
 
                         tokio_uring::spawn(async move {
-                            h2::serve(transport, conf, RollMut::alloc().unwrap(), driver)
-                                .await
-                                .unwrap();
+                            h2::serve(
+                                transport.split_owned(),
+                                conf,
+                                RollMut::alloc().unwrap(),
+                                driver,
+                            )
+                            .await
+                            .unwrap();
                             debug!("Done serving h1 connection");
                         });
                     }

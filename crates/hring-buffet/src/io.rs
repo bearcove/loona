@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use tokio_uring::{
     buf::{IoBuf, IoBufMut},
     net::TcpStream,
@@ -10,6 +12,15 @@ pub use chan::*;
 
 pub trait ReadOwned {
     async fn read<B: IoBufMut>(&self, buf: B) -> BufResult<usize, B>;
+}
+
+impl<T> ReadOwned for Rc<T>
+where
+    T: ReadOwned,
+{
+    async fn read<B: IoBufMut>(&self, buf: B) -> BufResult<usize, B> {
+        self.as_ref().read(buf).await
+    }
 }
 
 pub trait WriteOwned {
@@ -123,6 +134,27 @@ pub trait WriteOwned {
     }
 }
 
+impl<T> WriteOwned for Rc<T>
+where
+    T: WriteOwned,
+{
+    async fn write<B: IoBuf>(&self, buf: B) -> BufResult<usize, B> {
+        self.as_ref().write(buf).await
+    }
+
+    async fn write_all<B: IoBuf>(&self, buf: B) -> std::io::Result<()> {
+        self.as_ref().write_all(buf).await
+    }
+
+    async fn writev<B: IoBuf>(&self, list: Vec<B>) -> BufResult<usize, Vec<B>> {
+        self.as_ref().writev(list).await
+    }
+
+    async fn writev_all<B: IoBuf>(&self, list: impl Into<Vec<B>>) -> std::io::Result<()> {
+        self.as_ref().writev_all(list).await
+    }
+}
+
 enum BufOrSlice<B: IoBuf> {
     Buf(B),
     Slice(tokio_uring::buf::Slice<B>),
@@ -190,6 +222,23 @@ impl WriteOwned for TcpStream {
 
     async fn writev<B: IoBuf>(&self, list: Vec<B>) -> BufResult<usize, Vec<B>> {
         TcpStream::writev(self, list).await
+    }
+}
+
+pub trait SplitOwned {
+    type Read: ReadOwned;
+    type Write: WriteOwned;
+
+    fn split_owned(self) -> (Self::Read, Self::Write);
+}
+
+impl SplitOwned for TcpStream {
+    type Read = Rc<TcpStream>;
+    type Write = Rc<TcpStream>;
+
+    fn split_owned(self) -> (Self::Read, Self::Write) {
+        let self_rc = Rc::new(self);
+        (self_rc.clone(), self_rc)
     }
 }
 

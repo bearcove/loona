@@ -175,14 +175,9 @@ impl StreamId {
     /// Stream ID used for connection control frames
     pub const CONNECTION: Self = Self(0);
 
-    /// Only server-initiated streams have even IDs
-    pub fn is_even(&self) -> bool {
+    /// Server-initiated streams have even IDs
+    pub fn is_server_initiated(&self) -> bool {
         self.0 % 2 == 0
-    }
-
-    /// Only client-initiated streams have odd IDs
-    pub fn is_odd(&self) -> bool {
-        self.0 % 2 == 1
     }
 }
 

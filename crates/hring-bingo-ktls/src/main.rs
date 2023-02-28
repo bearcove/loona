@@ -10,8 +10,10 @@ use std::{
 
 use color_eyre::eyre;
 use hring::{
-    buffet::RollMut, h1, h2, tokio_uring::net::TcpStream, Body, Encoder, ExpectResponseHeaders,
-    Method, Request, Responder, ResponseDone, ServerDriver,
+    buffet::{RollMut, SplitOwned},
+    h1, h2,
+    tokio_uring::net::TcpStream,
+    Body, Encoder, ExpectResponseHeaders, Method, Request, Responder, ResponseDone, ServerDriver,
 };
 use http::Version;
 use rustls::ServerConfig;
@@ -156,7 +158,7 @@ async fn handle_plaintext_conn(
         }
         Proto::H2(h2_conf) => {
             info!("Using HTTP/2");
-            hring::h2::serve(stream, h2_conf, buf, Rc::new(driver)).await?;
+            hring::h2::serve(stream.split_owned(), h2_conf, buf, Rc::new(driver)).await?;
         }
     }
 
@@ -198,7 +200,7 @@ async fn handle_tls_conn(
     match alpn_proto.as_deref() {
         Some("h2") => {
             info!("Using HTTP/2");
-            hring::h2::serve(stream, h2_conf, buf, Rc::new(driver)).await?;
+            hring::h2::serve(stream.split_owned(), h2_conf, buf, Rc::new(driver)).await?;
         }
         Some("http/1.1") | None => {
             info!("Using HTTP/1.1");
