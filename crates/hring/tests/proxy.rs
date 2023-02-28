@@ -7,7 +7,7 @@ use hring::{
     h1, Body, BodyChunk, Encoder, ExpectResponseHeaders, HeadersExt, Responder, Response,
     ResponseDone, ServerDriver,
 };
-use hring_buffet::{RollMut, SplitOwned, TcpReadHalf, TcpWriteHalf};
+use hring_buffet::{IntoSplit, RollMut, TcpReadHalf, TcpWriteHalf};
 use http::StatusCode;
 use std::{cell::RefCell, future::Future, net::SocketAddr, rc::Rc};
 use tracing::debug;
@@ -47,7 +47,7 @@ impl ServerDriver for ProxyDriver {
             debug!("making new connection to upstream!");
             tokio_uring::net::TcpStream::connect(self.upstream_addr)
                 .await?
-                .split_owned()
+                .into_split()
         };
 
         let driver = ProxyClientDriver { respond };
@@ -154,7 +154,7 @@ pub async fn start(
                             pool,
                         };
                         h1::serve(
-                            transport.split_owned(),
+                            transport.into_split(),
                             conf,
                             RollMut::alloc().unwrap(),
                             driver,

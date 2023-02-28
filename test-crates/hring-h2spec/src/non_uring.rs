@@ -8,7 +8,7 @@ use crate::SDriver;
 pub(crate) async fn spawn_server(addr: SocketAddr) -> color_eyre::Result<SocketAddr> {
     let ln = TcpListener::bind(addr).await?;
     let addr = ln.local_addr()?;
-    tracing::info!("Listening on {}", ln.local_addr()?);
+    tracing::info!("Listening (without io-uring) on {}", ln.local_addr()?);
 
     let _task = tokio::task::spawn_local(async move { run_server(ln).await.unwrap() });
 

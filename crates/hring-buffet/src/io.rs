@@ -1,8 +1,5 @@
-use std::rc::Rc;
-
 use tokio_uring::{
     buf::{IoBuf, IoBufMut},
-    net::TcpStream,
     BufResult,
 };
 
@@ -11,6 +8,12 @@ use buf_or_slice::*;
 
 mod chan;
 pub use chan::*;
+
+mod uring_tcp;
+pub use uring_tcp::*;
+
+mod non_uring;
+pub use non_uring::*;
 
 pub trait ReadOwned {
     async fn read<B: IoBufMut>(&mut self, buf: B) -> BufResult<usize, B>;
@@ -125,80 +128,6 @@ pub trait WriteOwned {
 
         Ok(())
     }
-}
-
-pub trait SplitOwned {
-    type Read: ReadOwned;
-    type Write: WriteOwned;
-
-    // TODO: rename to `into_split_owned`? it consumes `self`
-    fn split_owned(self) -> (Self::Read, Self::Write);
-}
-
-pub struct TcpReadHalf(Rc<TcpStream>);
-
-impl ReadOwned for TcpReadHalf {
-    async fn read<B: IoBufMut>(&mut self, buf: B) -> BufResult<usize, B> {
-        self.0.read(buf).await
-    }
-}
-
-pub struct TcpWriteHalf(Rc<TcpStream>);
-
-impl WriteOwned for TcpWriteHalf {
-    async fn write<B: IoBuf>(&mut self, buf: B) -> BufResult<usize, B> {
-        self.0.write(buf).await
-    }
-
-    async fn writev<B: IoBuf>(&mut self, list: Vec<B>) -> BufResult<usize, Vec<B>> {
-        self.0.writev(list).await
-    }
-}
-
-impl SplitOwned for TcpStream {
-    type Read = TcpReadHalf;
-    type Write = TcpWriteHalf;
-
-    fn split_owned(self) -> (Self::Read, Self::Write) {
-        let self_rc = Rc::new(self);
-        (TcpReadHalf(self_rc.clone()), TcpWriteHalf(self_rc))
-    }
-}
-
-#[cfg(feature = "non-uring")]
-impl SplitOwned for tokio::net::TcpStream {
-    type Read = tokio::net::tcp::OwnedReadHalf;
-    type Write = tokio::net::tcp::OwnedWriteHalf;
-
-    fn split_owned(self) -> (Self::Read, Self::Write) {
-        self.into_split()
-    }
-}
-
-#[cfg(feature = "non-uring")]
-impl ReadOwned for tokio::net::tcp::OwnedReadHalf {
-    async fn read<B: IoBufMut>(&mut self, mut buf: B) -> BufResult<usize, B> {
-        let buf_slice =
-            unsafe { std::slice::from_raw_parts_mut(buf.stable_mut_ptr(), buf.bytes_total()) };
-        let res = tokio::io::AsyncReadExt::read(self, buf_slice).await;
-        if let Ok(n) = &res {
-            unsafe {
-                buf.set_init(*n);
-            }
-        }
-        (res, buf)
-    }
-}
-
-#[cfg(feature = "non-uring")]
-impl WriteOwned for tokio::net::tcp::OwnedWriteHalf {
-    async fn write<B: IoBuf>(&mut self, buf: B) -> BufResult<usize, B> {
-        let buf_slice = unsafe { std::slice::from_raw_parts(buf.stable_ptr(), buf.bytes_init()) };
-        let res = tokio::io::AsyncWriteExt::write(self, buf_slice).await;
-        (res, buf)
-    }
-
-    // TODO: implement writev, etc.
 }
 
 #[cfg(all(test, not(feature = "miri")))]
