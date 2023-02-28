@@ -28,7 +28,7 @@ pub trait ClientDriver {
 /// The transport halves will be returned unless the server requested connection
 /// close or the request body wasn't fully drained
 pub async fn request<R, W, D>(
-    (transport_r, transport_w): (R, W),
+    (mut transport_r, transport_w): (R, W),
     mut req: Request,
     body: &mut impl Body,
     driver: D,
@@ -81,7 +81,7 @@ where
         async move {
             let (buf, res) = read_and_parse(
                 super::parse::response,
-                &transport_r,
+                &mut transport_r,
                 buf,
                 // TODO: make this configurable
                 64 * 1024,

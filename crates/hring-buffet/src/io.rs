@@ -5,22 +5,15 @@ use tokio_uring::{
     net::TcpStream,
     BufResult,
 };
-use tracing::trace;
+
+mod buf_or_slice;
+use buf_or_slice::*;
 
 mod chan;
 pub use chan::*;
 
 pub trait ReadOwned {
-    async fn read<B: IoBufMut>(&self, buf: B) -> BufResult<usize, B>;
-}
-
-impl<T> ReadOwned for Rc<T>
-where
-    T: ReadOwned,
-{
-    async fn read<B: IoBufMut>(&self, buf: B) -> BufResult<usize, B> {
-        self.as_ref().read(buf).await
-    }
+    async fn read<B: IoBufMut>(&mut self, buf: B) -> BufResult<usize, B>;
 }
 
 pub trait WriteOwned {
@@ -134,138 +127,67 @@ pub trait WriteOwned {
     }
 }
 
-impl<T> WriteOwned for Rc<T>
-where
-    T: WriteOwned,
-{
-    async fn write<B: IoBuf>(&self, buf: B) -> BufResult<usize, B> {
-        self.as_ref().write(buf).await
-    }
-
-    async fn write_all<B: IoBuf>(&self, buf: B) -> std::io::Result<()> {
-        self.as_ref().write_all(buf).await
-    }
-
-    async fn writev<B: IoBuf>(&self, list: Vec<B>) -> BufResult<usize, Vec<B>> {
-        self.as_ref().writev(list).await
-    }
-
-    async fn writev_all<B: IoBuf>(&self, list: impl Into<Vec<B>>) -> std::io::Result<()> {
-        self.as_ref().writev_all(list).await
-    }
-}
-
-enum BufOrSlice<B: IoBuf> {
-    Buf(B),
-    Slice(tokio_uring::buf::Slice<B>),
-}
-
-unsafe impl<B: IoBuf> IoBuf for BufOrSlice<B> {
-    fn stable_ptr(&self) -> *const u8 {
-        match self {
-            BufOrSlice::Buf(b) => b.stable_ptr(),
-            BufOrSlice::Slice(s) => s.stable_ptr(),
-        }
-    }
-
-    fn bytes_init(&self) -> usize {
-        match self {
-            BufOrSlice::Buf(b) => b.bytes_init(),
-            BufOrSlice::Slice(s) => s.bytes_init(),
-        }
-    }
-
-    fn bytes_total(&self) -> usize {
-        match self {
-            BufOrSlice::Buf(b) => b.bytes_total(),
-            BufOrSlice::Slice(s) => s.bytes_total(),
-        }
-    }
-}
-
-impl<B: IoBuf> BufOrSlice<B> {
-    fn len(&self) -> usize {
-        match self {
-            BufOrSlice::Buf(b) => b.bytes_init(),
-            BufOrSlice::Slice(s) => s.len(),
-        }
-    }
-
-    /// Consume the first `n` bytes of the buffer (assuming they've been written).
-    /// This turns a `BufOrSlice::Buf` into a `BufOrSlice::Slice`
-    fn consume(self, n: usize) -> Self {
-        assert!(n <= self.len());
-
-        match self {
-            BufOrSlice::Buf(b) => BufOrSlice::Slice(b.slice(n..)),
-            BufOrSlice::Slice(s) => {
-                let n = s.begin() + n;
-                BufOrSlice::Slice(s.into_inner().slice(n..))
-            }
-        }
-    }
-}
-
-pub trait ReadWriteOwned: ReadOwned + WriteOwned {}
-impl<T> ReadWriteOwned for T where T: ReadOwned + WriteOwned {}
-
-impl ReadOwned for TcpStream {
-    async fn read<B: IoBufMut>(&self, buf: B) -> BufResult<usize, B> {
-        TcpStream::read(self, buf).await
-    }
-}
-
-impl WriteOwned for TcpStream {
-    async fn write<B: IoBuf>(&self, buf: B) -> BufResult<usize, B> {
-        TcpStream::write(self, buf).await
-    }
-
-    async fn writev<B: IoBuf>(&self, list: Vec<B>) -> BufResult<usize, Vec<B>> {
-        TcpStream::writev(self, list).await
-    }
-}
-
 pub trait SplitOwned {
     type Read: ReadOwned;
     type Write: WriteOwned;
 
+    // TODO: rename to `into_split_owned`? it consumes `self`
     fn split_owned(self) -> (Self::Read, Self::Write);
 }
 
+pub struct TcpReadHalf(Rc<TcpStream>);
+
+impl ReadOwned for TcpReadHalf {
+    async fn read<B: IoBufMut>(&mut self, buf: B) -> BufResult<usize, B> {
+        self.0.read(buf).await
+    }
+}
+
+pub struct TcpWriteHalf(Rc<TcpStream>);
+
+impl WriteOwned for TcpWriteHalf {
+    async fn write<B: IoBuf>(&self, buf: B) -> BufResult<usize, B> {
+        self.0.write(buf).await
+    }
+
+    async fn writev<B: IoBuf>(&self, list: Vec<B>) -> BufResult<usize, Vec<B>> {
+        self.0.writev(list).await
+    }
+}
+
 impl SplitOwned for TcpStream {
-    type Read = Rc<TcpStream>;
-    type Write = Rc<TcpStream>;
+    type Read = TcpReadHalf;
+    type Write = TcpWriteHalf;
 
     fn split_owned(self) -> (Self::Read, Self::Write) {
         let self_rc = Rc::new(self);
-        (self_rc.clone(), self_rc)
+        (TcpReadHalf(self_rc.clone()), TcpWriteHalf(self_rc))
     }
 }
 
 #[cfg(feature = "non-uring")]
 impl SplitOwned for tokio::net::TcpStream {
     // we have to use a RefCell here since `ReadOwned` only takes `&self`
-    type Read = RefCell<tokio::net::tcp::OwnedReadHalf>;
+    type Read = tokio::net::tcp::OwnedReadHalf;
     type Write = RefCell<tokio::net::tcp::OwnedWriteHalf>;
 
     fn split_owned(self) -> (Self::Read, Self::Write) {
         let (r, w) = self.into_split();
-        (r.into(), w.into())
+        (r, w.into())
     }
 }
 
 #[cfg(feature = "non-uring")]
-impl ReadOwned for RefCell<tokio::net::tcp::OwnedReadHalf> {
+impl ReadOwned for tokio::net::tcp::OwnedReadHalf {
     // we actually do want to panic if we try borrowing this mutably twice.
     // this is a wonky interface to start with, only to compare uring and
     // non-uring. the safer choice is to use an async mutex, but that might
     // impact performance.
     #[allow(clippy::await_holding_refcell_ref)]
-    async fn read<B: IoBufMut>(&self, mut buf: B) -> BufResult<usize, B> {
-        let mut this = self.borrow_mut();
+    async fn read<B: IoBufMut>(&mut self, mut buf: B) -> BufResult<usize, B> {
         let buf_slice =
             unsafe { std::slice::from_raw_parts_mut(buf.stable_mut_ptr(), buf.bytes_total()) };
-        let res = tokio::io::AsyncReadExt::read(&mut *this, buf_slice).await;
+        let res = tokio::io::AsyncReadExt::read(self, buf_slice).await;
         if let Ok(n) = &res {
             unsafe {
                 buf.set_init(*n);
@@ -287,46 +209,6 @@ impl WriteOwned for RefCell<tokio::net::tcp::OwnedWriteHalf> {
     }
 
     // TODO: implement writev, etc.
-}
-
-/// Unites a [ReadOwned] and a [WriteOwned] into a single [ReadWriteOwned] type.
-pub struct ReadWritePair<R, W>(pub R, pub W)
-where
-    R: ReadOwned,
-    W: WriteOwned;
-
-impl<R, W> ReadOwned for ReadWritePair<R, W>
-where
-    R: ReadOwned,
-    W: WriteOwned,
-{
-    async fn read<B: IoBufMut>(&self, buf: B) -> BufResult<usize, B> {
-        trace!("pair, reading {} bytes", buf.bytes_total());
-        self.0.read(buf).await
-    }
-}
-
-impl<R, W> WriteOwned for ReadWritePair<R, W>
-where
-    R: ReadOwned,
-    W: WriteOwned,
-{
-    async fn write<B: IoBuf>(&self, buf: B) -> BufResult<usize, B> {
-        self.1.write(buf).await
-    }
-}
-
-impl<R, W> SplitOwned for ReadWritePair<R, W>
-where
-    R: ReadOwned,
-    W: WriteOwned,
-{
-    type Read = R;
-    type Write = W;
-
-    fn split_owned(self) -> (Self::Read, Self::Write) {
-        (self.0, self.1)
-    }
 }
 
 #[cfg(all(test, not(feature = "miri")))]

@@ -87,9 +87,9 @@ impl<T: ReadOwned> Body for H1Body<T> {
         }
 
         match &mut self.state {
-            Decoder::Chunked(state) => state.next_chunk(&mut self.buf, &self.transport_r).await,
+            Decoder::Chunked(state) => state.next_chunk(&mut self.buf, &mut self.transport_r).await,
             Decoder::ContentLength(state) => {
-                state.next_chunk(&mut self.buf, &self.transport_r).await
+                state.next_chunk(&mut self.buf, &mut self.transport_r).await
             }
         }
     }
@@ -106,7 +106,7 @@ impl ContentLengthDecoder {
     async fn next_chunk(
         &mut self,
         buf_slot: &mut Option<RollMut>,
-        transport: &impl ReadOwned,
+        transport: &mut impl ReadOwned,
     ) -> eyre::Result<BodyChunk> {
         let remain = self.len - self.read;
         if remain == 0 {
@@ -144,7 +144,7 @@ impl ChunkedDecoder {
     async fn next_chunk(
         &mut self,
         buf_slot: &mut Option<RollMut>,
-        transport: &impl ReadOwned,
+        transport: &mut impl ReadOwned,
     ) -> eyre::Result<BodyChunk> {
         loop {
             let mut buf = buf_slot

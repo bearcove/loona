@@ -238,7 +238,7 @@ impl RollMut {
     pub async fn read_into(
         self,
         limit: usize,
-        r: &impl ReadOwned,
+        r: &mut impl ReadOwned,
     ) -> (std::io::Result<usize>, Self) {
         let read_cap = std::cmp::min(limit, self.cap());
         assert!(read_cap > 0, "refusing to do empty read");
@@ -1096,19 +1096,19 @@ mod tests {
         tokio_uring::start(async move {
             let mut rm = RollMut::alloc().unwrap();
 
-            let (send, read) = ChanRead::new();
+            let (send, mut read) = ChanRead::new();
             tokio_uring::spawn(async move {
                 send.send("123456").await.unwrap();
             });
 
             let mut res;
-            (res, rm) = rm.read_into(3, &read).await;
+            (res, rm) = rm.read_into(3, &mut read).await;
             res.unwrap();
 
             assert_eq!(rm.len(), 3);
             assert_eq!(rm.filled().as_ref(), b"123");
 
-            (res, rm) = rm.read_into(3, &read).await;
+            (res, rm) = rm.read_into(3, &mut read).await;
             res.unwrap();
 
             assert_eq!(rm.len(), 6);

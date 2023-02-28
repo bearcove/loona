@@ -52,7 +52,7 @@ pub async fn serve(
         let req;
         (client_buf, req) = match read_and_parse(
             super::parse::request,
-            &transport_r,
+            &mut transport_r,
             client_buf,
             conf.max_http_header_len,
         )

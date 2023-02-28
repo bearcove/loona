@@ -91,7 +91,7 @@ struct HeadersData {
 }
 
 pub async fn serve(
-    (transport_r, transport_w): (impl ReadOwned, impl WriteOwned),
+    (mut transport_r, transport_w): (impl ReadOwned, impl WriteOwned),
     conf: Rc<ServerConf>,
     mut client_buf: RollMut,
     driver: Rc<impl ServerDriver + 'static>,
@@ -105,7 +105,7 @@ pub async fn serve(
 
     (client_buf, _) = match read_and_parse(
         parse::preface,
-        &transport_r,
+        &mut transport_r,
         client_buf,
         parse::PREFACE.len(),
     )
@@ -182,7 +182,7 @@ struct ConnectionClosed;
 async fn h2_read_loop(
     driver: Rc<impl ServerDriver + 'static>,
     ev_tx: mpsc::Sender<H2ConnEvent>,
-    transport_r: impl ReadOwned,
+    mut transport_r: impl ReadOwned,
     mut client_buf: RollMut,
     state: Rc<RefCell<ConnState>>,
 ) -> eyre::Result<()> {
@@ -194,7 +194,7 @@ async fn h2_read_loop(
     loop {
         let frame;
         (client_buf, frame) =
-            match read_and_parse(Frame::parse, &transport_r, client_buf, 32 * 1024).await? {
+            match read_and_parse(Frame::parse, &mut transport_r, client_buf, 32 * 1024).await? {
                 Some((client_buf, frame)) => (client_buf, frame),
                 None => {
                     debug!("h2 client closed connection");
@@ -235,7 +235,7 @@ async fn h2_read_loop(
             let payload_roll;
             (client_buf, payload_roll) = match read_and_parse(
                 nom::bytes::streaming::take(frame.len as usize),
-                &transport_r,
+                &mut transport_r,
                 client_buf,
                 frame.len as usize,
             )
