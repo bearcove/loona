@@ -4,7 +4,7 @@
 use std::{collections::VecDeque, net::SocketAddr, path::PathBuf, rc::Rc};
 
 use hring::{
-    buffet::RollMut,
+    buffet::{RollMut, SplitOwned},
     http::{StatusCode, Version},
     tokio_uring::{self, net::TcpListener},
     Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, Request, Responder, Response,
@@ -127,7 +127,7 @@ async fn run_server(ln: TcpListener) -> color_eyre::Result<()> {
         let driver = Rc::new(SDriver);
 
         tokio_uring::spawn(async move {
-            if let Err(e) = hring::h2::serve(stream, conf, client_buf, driver).await {
+            if let Err(e) = hring::h2::serve(stream.split_owned(), conf, client_buf, driver).await {
                 tracing::error!("error serving client {}: {}", addr, e);
             }
         });
