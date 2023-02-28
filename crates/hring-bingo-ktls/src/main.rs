@@ -227,13 +227,15 @@ impl ServerDriver for SDriver {
             .to_socket_addrs()?
             .next()
             .expect("http bingo should be up");
-        let transport = Rc::new(TcpStream::connect(addr).await?);
+        let transport = TcpStream::connect(addr).await?;
         debug!("Connected to httpbingo");
 
         let driver = CDriver { respond };
 
         req.version = Version::HTTP_11;
-        let (transport, respond) = h1::request(transport, req, req_body, driver).await?;
+        let (transport, respond) =
+            h1::request(transport.split_owned(), req, req_body, driver).await?;
+
         // don't re-use transport for now
         drop(transport);
 
@@ -328,7 +330,7 @@ async fn sample_http_request() -> color_eyre::Result<()> {
         .to_socket_addrs()?
         .next()
         .expect("http bingo should be up");
-    let transport = Rc::new(TcpStream::connect(addr).await?);
+    let transport = TcpStream::connect(addr).await?;
     debug!("Connected to httpbingo");
 
     let driver = SampleCDriver {};
@@ -340,7 +342,7 @@ async fn sample_http_request() -> color_eyre::Result<()> {
         headers: Default::default(),
     };
 
-    let (transport, _) = h1::request(transport, req, &mut (), driver).await?;
+    let (transport, _) = h1::request(transport.split_owned(), req, &mut (), driver).await?;
     // don't re-use transport for now
     drop(transport);
 

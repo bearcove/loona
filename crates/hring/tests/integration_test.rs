@@ -88,11 +88,9 @@ fn serve_api() {
 
         let (tx, read) = ChanRead::new();
         let (mut rx, write) = ChanWrite::new();
-        let transport = ReadWritePair(read, write);
         let client_buf = RollMut::alloc()?;
         let driver = TestDriver;
-        let serve_fut =
-            tokio_uring::spawn(h1::serve(transport.split_owned(), conf, client_buf, driver));
+        let serve_fut = tokio_uring::spawn(h1::serve((read, write), conf, client_buf, driver));
 
         tx.send("GET / HTTP/1.1\r\n\r\n").await?;
         let mut res_buf = BytesMut::new();
@@ -138,7 +136,6 @@ fn request_api() {
     helpers::run(async move {
         let (tx, read) = ChanRead::new();
         let (mut rx, write) = ChanWrite::new();
-        let transport = ReadWritePair(read, write);
 
         let req = Request {
             method: Method::Get,
@@ -178,7 +175,7 @@ fn request_api() {
         let request_fut = tokio_uring::spawn(async {
             #[allow(clippy::let_unit_value)]
             let mut body = ();
-            h1::request(Rc::new(transport), req, &mut body, driver).await
+            h1::request((read, write), req, &mut body, driver).await
         });
 
         let mut req_buf = BytesMut::new();

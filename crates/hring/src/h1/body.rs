@@ -1,4 +1,4 @@
-use std::{fmt, rc::Rc};
+use std::fmt;
 
 use tracing::debug;
 
@@ -244,17 +244,17 @@ pub enum BodyWriteMode {
 }
 
 pub(crate) async fn write_h1_body(
-    transport: Rc<impl WriteOwned>,
+    transport: &impl WriteOwned,
     body: &mut impl Body,
     mode: BodyWriteMode,
 ) -> eyre::Result<()> {
     loop {
         match body.next_chunk().await? {
-            BodyChunk::Chunk(chunk) => write_h1_body_chunk(transport.as_ref(), chunk, mode).await?,
+            BodyChunk::Chunk(chunk) => write_h1_body_chunk(transport, chunk, mode).await?,
             BodyChunk::Done { .. } => {
                 // TODO: check that we've sent what we announced in terms of
                 // content length
-                write_h1_body_end(transport.as_ref(), mode).await?;
+                write_h1_body_end(transport, mode).await?;
                 break;
             }
         }
