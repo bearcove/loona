@@ -1,4 +1,4 @@
-use tokio_uring::{
+use crate::{
     buf::{IoBuf, IoBufMut},
     BufResult,
 };
@@ -9,7 +9,9 @@ use buf_or_slice::*;
 mod chan;
 pub use chan::*;
 
+#[cfg(all(feature = "tokio-uring", target_os = "linux"))]
 mod uring_tcp;
+#[cfg(all(feature = "tokio-uring", target_os = "linux"))]
 pub use uring_tcp::*;
 
 mod non_uring;
@@ -134,7 +136,7 @@ pub trait WriteOwned {
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
-    use crate::WriteOwned;
+    use crate::{buf::IoBuf, BufResult, WriteOwned};
 
     #[test]
     fn test_write_all() {
@@ -149,10 +151,7 @@ mod tests {
         }
 
         impl WriteOwned for Writer {
-            async fn write<B: tokio_uring::buf::IoBuf>(
-                &mut self,
-                buf: B,
-            ) -> tokio_uring::BufResult<usize, B> {
+            async fn write<B: IoBuf>(&mut self, buf: B) -> BufResult<usize, B> {
                 assert!(buf.bytes_init() > 0, "zero-length writes are forbidden");
 
                 match self.mode {
@@ -170,6 +169,8 @@ mod tests {
             }
         }
 
+        // FIXME: this test doesn't require tokio-uring
+        #[cfg(all(target_os = "linux", feature = "tokio-uring"))]
         tokio_uring::start(async move {
             let mut writer = Writer {
                 mode: Mode::WriteZero,

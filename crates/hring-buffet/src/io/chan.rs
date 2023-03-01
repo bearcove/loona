@@ -1,11 +1,11 @@
 use std::{cell::RefCell, rc::Rc};
 
-use pretty_hex::PrettyHex;
-use tokio::sync::mpsc;
-use tokio_uring::{
+use crate::{
     buf::{IoBuf, IoBufMut},
     BufResult,
 };
+use pretty_hex::PrettyHex;
+use tokio::sync::mpsc;
 use tracing::trace;
 
 use crate::WriteOwned;
@@ -191,6 +191,8 @@ mod tests {
     use super::{ChanRead, ReadOwned};
     use pretty_assertions::assert_eq;
 
+    // FIXME: this test doesn't require tokio-uring
+    #[cfg(all(target_os = "linux", feature = "tokio-uring"))]
     #[test]
     fn test_chan_reader() {
         tokio_uring::start(async move {

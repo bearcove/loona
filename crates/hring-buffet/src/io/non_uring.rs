@@ -1,8 +1,8 @@
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_uring::{
+use crate::{
     buf::{IoBuf, IoBufMut},
     BufResult,
 };
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{ReadOwned, WriteOwned};
 

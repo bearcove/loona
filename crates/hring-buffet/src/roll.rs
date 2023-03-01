@@ -8,11 +8,11 @@ use std::{
     str::Utf8Error,
 };
 
+use crate::buf::{IoBuf, IoBufMut};
 use nom::{
     Compare, CompareResult, FindSubstring, InputIter, InputLength, InputTake, InputTakeAtPosition,
     Needed, Slice,
 };
-use tokio_uring::buf::{IoBuf, IoBufMut};
 
 use crate::{Buf, BufMut, ReadOwned, BUF_SIZE};
 
@@ -1090,6 +1090,8 @@ mod tests {
 
     #[test]
     #[cfg(not(feature = "miri"))]
+    // #FIXME: this isn't tokio-uring-specific
+    #[cfg(all(feature = "tokio-uring", target_os = "linux"))]
     fn test_roll_readfrom_start() {
         use crate::ChanRead;
 
@@ -1223,6 +1225,8 @@ mod tests {
 
     #[test]
     #[cfg(not(feature = "miri"))]
+    // #FIXME: this isn't tokio-uring-specific
+    #[cfg(all(feature = "tokio-uring", target_os = "linux"))]
     fn test_roll_iobuf() {
         use tokio_uring::net::{TcpListener, TcpStream};
 
