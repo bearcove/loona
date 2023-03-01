@@ -17,6 +17,7 @@ default = ["tokio-uring"]
 net = ["tokio/net"]
 
 [dependencies]
+bytemuck = { version = "1.13.1", features = ["extern_crate_std"] }
 tokio = { version = "1.25.0", features = ["rt"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

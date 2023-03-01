@@ -1,7 +1,9 @@
+use bytemuck::TransparentWrapper;
+
 #[repr(transparent)]
-pub struct BufCompat<T>(pub T)
-where
-    T: crate::buf::IoBuf;
+pub struct BufCompat<T>(pub T);
+
+unsafe impl<T> TransparentWrapper<T> for BufCompat<T> {}
 
 unsafe impl<T> tokio_uring::buf::IoBuf for BufCompat<T>
 where

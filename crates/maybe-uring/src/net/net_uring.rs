@@ -46,16 +46,11 @@ impl WriteOwned for TcpWriteHalf {
     }
 
     async fn writev<B: IoBuf>(&mut self, list: Vec<B>) -> BufResult<usize, Vec<B>> {
-        // TODO: use https://docs.rs/bytemuck/latest/bytemuck/trait.TransparentWrapper.html instead
+        use bytemuck::allocation::TransparentWrapperAlloc;
 
-        // Safety: `BufCompat` is `#[repr(transparent)]` but this still might
-        // blow up because I'm not sure the layout of `Vec<T>` and
-        // `Vec<BufCompat<T>>` are guaranteed to be the same.
-        let list: Vec<BufCompat<B>> = unsafe { std::mem::transmute(list) };
+        let list = BufCompat::wrap_vec(list);
         let (res, list) = self.0.writev(list).await;
-
-        // Safety: see above
-        let list: Vec<B> = unsafe { std::mem::transmute(list) };
+        let list: Vec<B> = BufCompat::peel_vec(list);
         (res, list)
     }
 }
