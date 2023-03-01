@@ -1021,7 +1021,7 @@ fn end_headers(
                 rx: piece_rx,
             };
 
-            crate::spawn({
+            maybe_uring::spawn({
                 let driver = driver.clone();
                 async move {
                     let mut req_body = req_body;
