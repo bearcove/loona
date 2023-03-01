@@ -1,4 +1,4 @@
-use crate::{
+use maybe_uring::{
     buf::{IoBuf, IoBufMut},
     BufResult,
 };

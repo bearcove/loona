@@ -1,8 +1,8 @@
-use crate::buf::IoBuf;
+use maybe_uring::buf::IoBuf;
 
 pub(crate) enum BufOrSlice<B: IoBuf> {
     Buf(B),
-    Slice(crate::buf::Slice<B>),
+    Slice(maybe_uring::buf::Slice<B>),
 }
 
 unsafe impl<B: IoBuf> IoBuf for BufOrSlice<B> {

@@ -90,7 +90,7 @@ fn serve_api() {
         let (mut rx, write) = ChanWrite::new();
         let client_buf = RollMut::alloc()?;
         let driver = TestDriver;
-        let serve_fut = tokio_uring::spawn(h1::serve((read, write), conf, client_buf, driver));
+        let serve_fut = maybe_uring::spawn(h1::serve((read, write), conf, client_buf, driver));
 
         tx.send("GET / HTTP/1.1\r\n\r\n").await?;
         let mut res_buf = BytesMut::new();
@@ -172,7 +172,7 @@ fn request_api() {
         }
 
         let driver = TestDriver;
-        let request_fut = tokio_uring::spawn(async {
+        let request_fut = maybe_uring::spawn(async {
             #[allow(clippy::let_unit_value)]
             let mut body = ();
             h1::request((read, write), req, &mut body, driver).await
@@ -296,7 +296,7 @@ fn proxy_echo_body_content_len() {
 
             Ok::<(), eyre::Report>(())
         };
-        tokio_uring::spawn(async move {
+        maybe_uring::spawn(async move {
             if let Err(e) = send_fut.await {
                 panic!("Error sending request: {e}");
             }
@@ -402,7 +402,7 @@ fn proxy_echo_body_chunked() {
 
             Ok::<(), eyre::Report>(())
         };
-        tokio_uring::spawn(async move {
+        maybe_uring::spawn(async move {
             if let Err(e) = send_fut.await {
                 panic!("Error sending request: {e}");
             }
@@ -744,7 +744,7 @@ fn curl_echo_body_noproxy(typ: BodyType) {
 
                         let conf = conf.clone();
 
-                        tokio_uring::spawn(async move {
+                        maybe_uring::spawn(async move {
                             let driver = TestDriver;
                             h1::serve(
                                 transport.into_split(),
@@ -916,7 +916,7 @@ fn h2_basic_post() {
                         let conf = conf.clone();
                         let driver = driver.clone();
 
-                        tokio_uring::spawn(async move {
+                        maybe_uring::spawn(async move {
                             h2::serve(
                                 transport.into_split(),
                                 conf,
@@ -1103,7 +1103,7 @@ fn h2_basic_get() {
                         let conf = conf.clone();
                         let driver = driver.clone();
 
-                        tokio_uring::spawn(async move {
+                        maybe_uring::spawn(async move {
                             h2::serve(
                                 transport.into_split(),
                                 conf,

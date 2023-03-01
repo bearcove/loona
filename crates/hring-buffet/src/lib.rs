@@ -2,11 +2,6 @@
 #![feature(thread_local)]
 #![feature(async_fn_in_trait)]
 
-mod buf;
-pub use buf::*;
-
-pub type BufResult<T, B> = (std::io::Result<T>, B);
-
 mod roll;
 pub use roll::*;
 
@@ -290,7 +285,7 @@ impl ops::DerefMut for BufMut {
     }
 }
 
-unsafe impl crate::buf::IoBuf for BufMut {
+unsafe impl maybe_uring::buf::IoBuf for BufMut {
     fn stable_ptr(&self) -> *const u8 {
         unsafe { BUF_POOL.base_ptr(self.index).add(self.off as _) as *const u8 }
     }
@@ -310,7 +305,7 @@ unsafe impl crate::buf::IoBuf for BufMut {
     }
 }
 
-unsafe impl crate::buf::IoBufMut for BufMut {
+unsafe impl maybe_uring::buf::IoBufMut for BufMut {
     fn stable_mut_ptr(&mut self) -> *mut u8 {
         unsafe { BUF_POOL.base_ptr(self.index).add(self.off as _) }
     }
@@ -402,7 +397,7 @@ impl Buf {
     }
 }
 
-unsafe impl crate::buf::IoBuf for Buf {
+unsafe impl maybe_uring::buf::IoBuf for Buf {
     fn stable_ptr(&self) -> *const u8 {
         unsafe { BUF_POOL.base_ptr(self.index).add(self.off as _) as *const u8 }
     }

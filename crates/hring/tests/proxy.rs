@@ -148,7 +148,7 @@ pub async fn start(
                     let pool = pool.clone();
                     let conf = conf.clone();
 
-                    tokio_uring::spawn(async move {
+                    maybe_uring::spawn(async move {
                         let driver = ProxyDriver {
                             upstream_addr,
                             pool,

@@ -2,8 +2,8 @@
 
 use std::{fmt, ops::Deref, str::Utf8Error};
 
-use crate::buf::IoBuf;
 use http::header::HeaderName;
+use maybe_uring::buf::IoBuf;
 
 use crate::{Roll, RollStr};
 

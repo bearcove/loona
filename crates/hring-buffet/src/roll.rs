@@ -8,7 +8,7 @@ use std::{
     str::Utf8Error,
 };
 
-use crate::buf::{IoBuf, IoBufMut};
+use maybe_uring::buf::{IoBuf, IoBufMut};
 use nom::{
     Compare, CompareResult, FindSubstring, InputIter, InputLength, InputTake, InputTakeAtPosition,
     Needed, Slice,

@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::{
+use maybe_uring::{
     buf::{IoBuf, IoBufMut},
     BufResult,
 };
@@ -191,15 +191,13 @@ mod tests {
     use super::{ChanRead, ReadOwned};
     use pretty_assertions::assert_eq;
 
-    // FIXME: this test doesn't require tokio-uring
-    #[cfg(all(target_os = "linux", feature = "tokio-uring"))]
     #[test]
     fn test_chan_reader() {
-        tokio_uring::start(async move {
+        maybe_uring::start(async move {
             let (send, mut cr) = ChanRead::new();
             let wrote_three = Rc::new(RefCell::new(false));
 
-            tokio_uring::spawn({
+            maybe_uring::spawn({
                 let wrote_three = wrote_three.clone();
                 async move {
                     send.send("one").await.unwrap();
@@ -257,7 +255,7 @@ mod tests {
 
             let (send, mut cr) = ChanRead::new();
 
-            tokio_uring::spawn({
+            maybe_uring::spawn({
                 async move {
                     send.send("two-part").await.unwrap();
                     send.reset();

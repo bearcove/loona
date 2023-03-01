@@ -1,4 +1,4 @@
-use crate::{
+use maybe_uring::{
     buf::{IoBuf, IoBufMut},
     BufResult,
 };
@@ -136,7 +136,8 @@ pub trait WriteOwned {
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
-    use crate::{buf::IoBuf, BufResult, WriteOwned};
+    use crate::WriteOwned;
+    use maybe_uring::{buf::IoBuf, BufResult};
 
     #[test]
     fn test_write_all() {
@@ -169,9 +170,7 @@ mod tests {
             }
         }
 
-        // FIXME: this test doesn't require tokio-uring
-        #[cfg(all(target_os = "linux", feature = "tokio-uring"))]
-        tokio_uring::start(async move {
+        maybe_uring::start(async move {
             let mut writer = Writer {
                 mode: Mode::WriteZero,
                 bytes: Default::default(),
