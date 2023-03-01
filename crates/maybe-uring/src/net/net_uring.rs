@@ -2,7 +2,7 @@ use std::{net::SocketAddr, rc::Rc};
 
 use crate::{
     buf::{tokio_uring_compat::BufCompat, IoBuf, IoBufMut},
-    io::{ReadOwned, WriteOwned},
+    io::{IntoSplit, ReadOwned, WriteOwned},
     BufResult,
 };
 pub use tokio_uring::net::{TcpListener as TokListener, TcpStream as TokStream};
@@ -46,6 +46,8 @@ impl WriteOwned for TcpWriteHalf {
     }
 
     async fn writev<B: IoBuf>(&mut self, list: Vec<B>) -> BufResult<usize, Vec<B>> {
+        // TODO: use https://docs.rs/bytemuck/latest/bytemuck/trait.TransparentWrapper.html instead
+
         // Safety: `BufCompat` is `#[repr(transparent)]` but this still might
         // blow up because I'm not sure the layout of `Vec<T>` and
         // `Vec<BufCompat<T>>` are guaranteed to be the same.
@@ -56,13 +58,6 @@ impl WriteOwned for TcpWriteHalf {
         let list: Vec<B> = unsafe { std::mem::transmute(list) };
         (res, list)
     }
-}
-
-pub trait IntoSplit {
-    type Read: ReadOwned;
-    type Write: WriteOwned;
-
-    fn into_split(self) -> (Self::Read, Self::Write);
 }
 
 impl IntoSplit for TcpStream {

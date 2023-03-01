@@ -9,7 +9,10 @@ use hring::{
 };
 use hring_buffet::RollMut;
 use http::StatusCode;
-use maybe_uring::net::{TcpReadHalf, TcpWriteHalf};
+use maybe_uring::{
+    io::IntoSplit,
+    net::{TcpReadHalf, TcpWriteHalf},
+};
 use std::{cell::RefCell, future::Future, net::SocketAddr, rc::Rc};
 use tracing::debug;
 

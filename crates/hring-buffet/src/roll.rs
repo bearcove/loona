@@ -1228,8 +1228,8 @@ mod tests {
     #[cfg(not(feature = "miri"))]
     fn test_roll_iobuf() {
         use maybe_uring::{
-            io::WriteOwned,
-            net::{IntoSplit, TcpListener, TcpStream},
+            io::{IntoSplit, WriteOwned},
+            net::{TcpListener, TcpStream},
         };
 
         async fn test_roll_iobuf_inner(mut rm: RollMut) -> eyre::Result<()> {

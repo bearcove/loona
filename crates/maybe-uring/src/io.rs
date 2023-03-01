@@ -201,3 +201,10 @@ mod tests {
         });
     }
 }
+
+pub trait IntoSplit {
+    type Read: ReadOwned;
+    type Write: WriteOwned;
+
+    fn into_split(self) -> (Self::Read, Self::Write);
+}

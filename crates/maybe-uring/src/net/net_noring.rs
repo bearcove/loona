@@ -24,3 +24,12 @@ impl TcpListener {
         self.tok.accept().await
     }
 }
+
+impl IntoSplit for TcpStream {
+    type Read = TcpReadHalf;
+    type Write = TcpWriteHalf;
+
+    fn into_split(self) -> (Self::Read, Self::Write) {
+        TcpStream::into_split(self)
+    }
+}

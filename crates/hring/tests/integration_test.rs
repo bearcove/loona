@@ -10,9 +10,10 @@ use hring::{
     h1, h2, Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, HeadersExt, Method, Request,
     Responder, Response, ResponseDone, ServerDriver,
 };
-use hring_buffet::{ChanRead, ChanWrite, Piece, RollMut};
+use hring_buffet::{Piece, RollMut};
 use http::{header, StatusCode};
 use httparse::{Status, EMPTY_HEADER};
+use maybe_uring::io::{ChanRead, ChanWrite, IntoSplit};
 use pretty_assertions::assert_eq;
 use pretty_hex::PrettyHex;
 use std::{future::Future, net::SocketAddr, rc::Rc, time::Duration};

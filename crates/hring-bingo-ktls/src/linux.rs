@@ -11,7 +11,7 @@ use hring::{
     ResponseDone, ServerDriver,
 };
 use http::Version;
-use maybe_uring::tokio_uring::net::TcpStream;
+use maybe_uring::{io::IntoSplit, tokio_uring::net::TcpStream};
 use rustls::ServerConfig;
 use tokio::net::TcpListener;
 use tracing::{debug, info};

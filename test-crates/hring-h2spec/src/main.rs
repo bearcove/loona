@@ -9,7 +9,7 @@ use hring::{
     Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, Request, Responder, Response,
     ResponseDone, ServerDriver,
 };
-use maybe_uring::net::TcpListener;
+use maybe_uring::{io::IntoSplit, net::TcpListener};
 use tokio::process::Command;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
