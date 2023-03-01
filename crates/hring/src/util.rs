@@ -3,7 +3,8 @@ use nom::IResult;
 use pretty_hex::PrettyHex;
 use tracing::{debug, trace};
 
-use hring_buffet::{ReadOwned, Roll, RollMut};
+use hring_buffet::{Roll, RollMut};
+use maybe_uring::io::ReadOwned;
 
 /// Returns `None` on EOF, error if partially parsed message.
 pub(crate) async fn read_and_parse<Parser, Output>(

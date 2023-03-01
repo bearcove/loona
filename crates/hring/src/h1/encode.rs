@@ -7,7 +7,8 @@ use crate::{
     types::{Headers, Request, Response},
     Encoder,
 };
-use hring_buffet::{Piece, PieceList, RollMut, WriteOwned};
+use hring_buffet::{Piece, PieceList, RollMut};
+use maybe_uring::io::WriteOwned;
 
 use super::body::{write_h1_body_chunk, write_h1_body_end, BodyWriteMode};
 

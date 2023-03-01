@@ -8,7 +8,8 @@ use crate::{
     util::{read_and_parse, SemanticError},
     ExpectResponseHeaders, HeadersExt, Responder, ServerDriver,
 };
-use hring_buffet::{ReadOwned, RollMut, WriteOwned};
+use hring_buffet::RollMut;
+use maybe_uring::io::{ReadOwned, WriteOwned};
 
 use super::encode::H1Encoder;
 

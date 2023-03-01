@@ -1093,16 +1093,14 @@ mod tests {
 
     #[test]
     #[cfg(not(feature = "miri"))]
-    // #FIXME: this isn't tokio-uring-specific
-    #[cfg(all(feature = "tokio-uring", target_os = "linux"))]
     fn test_roll_readfrom_start() {
-        use crate::ChanRead;
+        use maybe_uring::io::ChanRead;
 
-        tokio_uring::start(async move {
+        maybe_uring::start(async move {
             let mut rm = RollMut::alloc().unwrap();
 
             let (send, mut read) = ChanRead::new();
-            tokio_uring::spawn(async move {
+            maybe_uring::spawn(async move {
                 send.send("123456").await.unwrap();
             });
 
@@ -1228,23 +1226,23 @@ mod tests {
 
     #[test]
     #[cfg(not(feature = "miri"))]
-    // #FIXME: this isn't tokio-uring-specific
-    #[cfg(all(feature = "tokio-uring", target_os = "linux"))]
     fn test_roll_iobuf() {
-        use tokio_uring::net::{TcpListener, TcpStream};
+        use maybe_uring::{
+            io::WriteOwned,
+            net::{IntoSplit, TcpListener, TcpStream},
+        };
 
         async fn test_roll_iobuf_inner(mut rm: RollMut) -> eyre::Result<()> {
             rm.put(b"hello").unwrap();
             let roll = rm.take_all();
 
-            let ln = TcpListener::bind("[::]:0".parse()?)?;
+            let ln = TcpListener::bind("[::]:0".parse()?).await?;
             let local_addr = ln.local_addr()?;
 
             let send_fut = async move {
                 let stream = TcpStream::connect(local_addr).await?;
-                let res;
-                (res, _) = stream.write_all(roll).await;
-                res?;
+                let (_stream_r, mut stream_w) = stream.into_split();
+                stream_w.write_all(roll).await?;
                 Ok::<_, eyre::Report>(())
             };
 
@@ -1266,7 +1264,7 @@ mod tests {
             Ok(())
         }
 
-        tokio_uring::start(async move {
+        maybe_uring::start(async move {
             let rm = RollMut::alloc().unwrap();
             test_roll_iobuf_inner(rm).await.unwrap();
 

@@ -13,7 +13,7 @@ pub use io_buf_mut::IoBufMut;
 mod slice;
 pub use slice::Slice;
 
-#[cfg(all(feature = "tokio-uring", target_os = "linux"))]
+#[cfg(all(target_os = "linux", feature = "tokio-uring"))]
 pub(crate) mod tokio_uring_compat;
 
 pub(crate) fn deref(buf: &impl IoBuf) -> &[u8] {

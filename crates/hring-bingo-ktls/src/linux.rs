@@ -7,19 +7,18 @@ use std::{
 
 use color_eyre::eyre;
 use hring::{
-    buffet::{IntoSplit, RollMut},
-    h1, h2,
-    tokio_uring::net::TcpStream,
-    Body, Encoder, ExpectResponseHeaders, Method, Request, Responder, ResponseDone, ServerDriver,
+    buffet::RollMut, h1, h2, Body, Encoder, ExpectResponseHeaders, Method, Request, Responder,
+    ResponseDone, ServerDriver,
 };
 use http::Version;
+use maybe_uring::tokio_uring::net::TcpStream;
 use rustls::ServerConfig;
 use tokio::net::TcpListener;
 use tracing::{debug, info};
 use tracing_subscriber::EnvFilter;
 
 pub(crate) fn main() -> eyre::Result<()> {
-    hring::tokio_uring::start(async_main())
+    maybe_uring::start(async_main())
 }
 
 async fn async_main() -> eyre::Result<()> {
@@ -69,7 +68,7 @@ async fn async_main() -> eyre::Result<()> {
 
         async move {
             while let Ok((stream, remote_addr)) = pt_h1_ln.accept().await {
-                hring::tokio_uring::spawn({
+                maybe_uring::spawn({
                     let h1_conf = h1_conf.clone();
                     async move {
                         if let Err(e) =
@@ -90,7 +89,7 @@ async fn async_main() -> eyre::Result<()> {
 
         async move {
             while let Ok((stream, remote_addr)) = pt_h2_ln.accept().await {
-                hring::tokio_uring::spawn({
+                maybe_uring::spawn({
                     let h2_conf = h2_conf.clone();
                     async move {
                         if let Err(e) =
@@ -108,7 +107,7 @@ async fn async_main() -> eyre::Result<()> {
 
     let tls_loop = async move {
         while let Ok((stream, remote_addr)) = tls_ln.accept().await {
-            hring::tokio_uring::spawn({
+            maybe_uring::spawn({
                 let acceptor = acceptor.clone();
                 let h1_conf = h1_conf.clone();
                 let h2_conf = h2_conf.clone();
