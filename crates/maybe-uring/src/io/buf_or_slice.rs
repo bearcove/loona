@@ -1,11 +1,12 @@
-use tokio_uring::buf::IoBuf;
+use crate::buf::IoBuf;
 
 pub(crate) enum BufOrSlice<B: IoBuf> {
     Buf(B),
-    Slice(tokio_uring::buf::Slice<B>),
+    Slice(crate::buf::Slice<B>),
 }
 
 unsafe impl<B: IoBuf> IoBuf for BufOrSlice<B> {
+    #[inline(always)]
     fn stable_ptr(&self) -> *const u8 {
         match self {
             BufOrSlice::Buf(b) => b.stable_ptr(),
@@ -13,6 +14,7 @@ unsafe impl<B: IoBuf> IoBuf for BufOrSlice<B> {
         }
     }
 
+    #[inline(always)]
     fn bytes_init(&self) -> usize {
         match self {
             BufOrSlice::Buf(b) => b.bytes_init(),
@@ -20,6 +22,7 @@ unsafe impl<B: IoBuf> IoBuf for BufOrSlice<B> {
         }
     }
 
+    #[inline(always)]
     fn bytes_total(&self) -> usize {
         match self {
             BufOrSlice::Buf(b) => b.bytes_total(),
@@ -29,6 +32,7 @@ unsafe impl<B: IoBuf> IoBuf for BufOrSlice<B> {
 }
 
 impl<B: IoBuf> BufOrSlice<B> {
+    #[inline(always)]
     pub(crate) fn len(&self) -> usize {
         match self {
             BufOrSlice::Buf(b) => b.bytes_init(),

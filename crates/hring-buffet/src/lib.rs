@@ -8,9 +8,6 @@ pub use roll::*;
 mod piece;
 pub use piece::*;
 
-mod io;
-pub use io::*;
-
 use std::{
     cell::{RefCell, RefMut},
     collections::VecDeque,
@@ -285,7 +282,7 @@ impl ops::DerefMut for BufMut {
     }
 }
 
-unsafe impl tokio_uring::buf::IoBuf for BufMut {
+unsafe impl maybe_uring::buf::IoBuf for BufMut {
     fn stable_ptr(&self) -> *const u8 {
         unsafe { BUF_POOL.base_ptr(self.index).add(self.off as _) as *const u8 }
     }
@@ -305,7 +302,7 @@ unsafe impl tokio_uring::buf::IoBuf for BufMut {
     }
 }
 
-unsafe impl tokio_uring::buf::IoBufMut for BufMut {
+unsafe impl maybe_uring::buf::IoBufMut for BufMut {
     fn stable_mut_ptr(&mut self) -> *mut u8 {
         unsafe { BUF_POOL.base_ptr(self.index).add(self.off as _) }
     }
@@ -397,7 +394,7 @@ impl Buf {
     }
 }
 
-unsafe impl tokio_uring::buf::IoBuf for Buf {
+unsafe impl maybe_uring::buf::IoBuf for Buf {
     fn stable_ptr(&self) -> *const u8 {
         unsafe { BUF_POOL.base_ptr(self.index).add(self.off as _) as *const u8 }
     }

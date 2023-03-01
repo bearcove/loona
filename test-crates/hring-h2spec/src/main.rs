@@ -3,26 +3,18 @@
 
 use std::{collections::VecDeque, path::PathBuf};
 
+use hring::buffet::RollMut;
 use hring::{
     http::{StatusCode, Version},
     Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, Request, Responder, Response,
     ResponseDone, ServerDriver,
 };
+use maybe_uring::{io::IntoHalves, net::TcpListener};
 use tokio::process::Command;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-#[cfg(feature = "tokio-uring")]
-mod uring;
-
-#[cfg(feature = "tokio-uring")]
-use uring as server_impl;
-
-#[cfg(not(feature = "tokio-uring"))]
-mod non_uring;
-
-#[cfg(not(feature = "tokio-uring"))]
-use non_uring as server_impl;
+use std::{net::SocketAddr, rc::Rc};
 
 fn main() {
     color_eyre::install().unwrap();
@@ -44,24 +36,7 @@ fn main() {
         }
     };
 
-    #[cfg(feature = "tokio-uring")]
-    hring::tokio_uring::start(async move { real_main(h2spec_binary).await.unwrap() });
-
-    #[cfg(not(feature = "tokio-uring"))]
-    {
-        use tokio::task::LocalSet;
-
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async move {
-                let local = LocalSet::new();
-                local
-                    .run_until(async move { real_main(h2spec_binary).await.unwrap() })
-                    .await;
-            })
-    }
+    maybe_uring::start(async move { real_main(h2spec_binary).await.unwrap() });
 }
 
 struct SDriver;
@@ -119,7 +94,7 @@ impl Body for TestBody {
 }
 
 async fn real_main(h2spec_binary: PathBuf) -> color_eyre::Result<()> {
-    let addr = server_impl::spawn_server("[::]:0".parse()?).await?;
+    let addr = spawn_server("[::]:0".parse()?).await?;
 
     let mut args = std::env::args().skip(1).collect::<VecDeque<_>>();
     if matches!(args.get(0).map(|s| s.as_str()), Some("--")) {
@@ -138,4 +113,30 @@ async fn real_main(h2spec_binary: PathBuf) -> color_eyre::Result<()> {
         .await?;
 
     Ok(())
+}
+
+pub(crate) async fn spawn_server(addr: SocketAddr) -> color_eyre::Result<SocketAddr> {
+    let ln = TcpListener::bind(addr).await?;
+    let addr = ln.local_addr()?;
+    tracing::info!("Listening on {}", ln.local_addr()?);
+
+    let _task = tokio::task::spawn_local(async move { run_server(ln).await.unwrap() });
+
+    Ok(addr)
+}
+
+pub(crate) async fn run_server(ln: TcpListener) -> color_eyre::Result<()> {
+    loop {
+        let (stream, addr) = ln.accept().await?;
+        tracing::info!(%addr, "Accepted connection from");
+        let conf = Rc::new(hring::h2::ServerConf::default());
+        let client_buf = RollMut::alloc()?;
+        let driver = Rc::new(SDriver);
+
+        tokio::task::spawn_local(async move {
+            if let Err(e) = hring::h2::serve(stream.into_halves(), conf, client_buf, driver).await {
+                tracing::error!("error serving client {}: {}", addr, e);
+            }
+        });
+    }
 }

@@ -138,7 +138,7 @@ impl Drop for H2Encoder {
 
         if !evs.is_empty() {
             let tx = self.tx.clone();
-            crate::spawn(async move {
+            maybe_uring::spawn(async move {
                 for ev in evs {
                     if tx.send(ev).await.is_err() {
                         warn!("could not send event to h2 connection handler");

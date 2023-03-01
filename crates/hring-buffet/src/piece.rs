@@ -3,7 +3,7 @@
 use std::{fmt, ops::Deref, str::Utf8Error};
 
 use http::header::HeaderName;
-use tokio_uring::buf::IoBuf;
+use maybe_uring::buf::IoBuf;
 
 use crate::{Roll, RollStr};
 

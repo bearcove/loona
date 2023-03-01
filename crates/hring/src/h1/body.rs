@@ -3,7 +3,8 @@ use std::fmt;
 use tracing::debug;
 
 use crate::{util::read_and_parse, Body, BodyChunk, BodyErrorReason};
-use hring_buffet::{Piece, PieceList, ReadOwned, RollMut, WriteOwned};
+use hring_buffet::{Piece, PieceList, RollMut};
+use maybe_uring::io::{ReadOwned, WriteOwned};
 
 /// An HTTP/1.1 body, either chunked or content-length.
 pub(crate) struct H1Body<T> {

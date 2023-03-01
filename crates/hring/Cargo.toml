@@ -14,6 +14,7 @@ An HTTP implementation on top of io_uring
 
 [features]
 default = ["tokio-uring"]
+tokio-uring = ["hring-buffet/tokio-uring"]
 
 [dependencies]
 byteorder = "1.4.3"
@@ -24,16 +25,17 @@ futures-util = "0.3.25"
 hring-buffet = { version = "0.1.0", path = "../hring-buffet" }
 hring-hpack = { path = "../hring-hpack" }
 http = "0.2.8"
+maybe-uring = { version = "0.1.0", path = "../maybe-uring" }
 memchr = "2.5.0"
 nom = { version = "7.1.3", default-features = false }
 pretty-hex = { version = "0.3.0", default-features = false }
 smallvec = { version = "1.10.0", default-features = false, features = ["const_generics", "const_new", "union"] }
 thiserror = { version = "1.0.38", default-features = false }
 tokio = { version = "1.24.2", features = ["macros", "sync"] }
-tokio-uring = { version = "0.4.0", optional = true }
 tracing = { version = "0.1.37", default-features = false }
 
 [dev-dependencies]
+maybe-uring = { version = "0.1.0", path = "../maybe-uring", features = ["net"] }
 bytes = { version = "1.3.0", default-features = false }
 pretty_assertions = { version = "1.3.0", default-features = false, features = ["std"] }
 tokio-stream = { version = "0.1.11", default-features = false }

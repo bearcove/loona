@@ -6,7 +6,6 @@ edition = "2021"
 [dependencies]
 color-eyre = "0.6.2"
 hring = { path = "../hring" }
-ktls = "1.0.1"
 rcgen = "0.10.0"
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
@@ -15,3 +14,7 @@ tokio = { version = "1.24.2", features = ["full"] }
 tokio-rustls = "0.23.4"
 http = "0.2.8"
 pretty-hex = "0.3.0"
+maybe-uring = { version = "0.1.0", path = "../maybe-uring" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ktls = "1.0.1"

@@ -1,16 +1,13 @@
-use tokio_uring::{
+use crate::{
     buf::{IoBuf, IoBufMut},
     BufResult,
 };
 
-mod buf_or_slice;
-use buf_or_slice::*;
-
 mod chan;
 pub use chan::*;
 
-mod uring_tcp;
-pub use uring_tcp::*;
+mod buf_or_slice;
+use buf_or_slice::*;
 
 mod non_uring;
 pub use non_uring::*;
@@ -134,7 +131,7 @@ pub trait WriteOwned {
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
-    use crate::WriteOwned;
+    use crate::{buf::IoBuf, io::WriteOwned, BufResult};
 
     #[test]
     fn test_write_all() {
@@ -149,10 +146,7 @@ mod tests {
         }
 
         impl WriteOwned for Writer {
-            async fn write<B: tokio_uring::buf::IoBuf>(
-                &mut self,
-                buf: B,
-            ) -> tokio_uring::BufResult<usize, B> {
+            async fn write<B: IoBuf>(&mut self, buf: B) -> BufResult<usize, B> {
                 assert!(buf.bytes_init() > 0, "zero-length writes are forbidden");
 
                 match self.mode {
@@ -170,7 +164,7 @@ mod tests {
             }
         }
 
-        tokio_uring::start(async move {
+        crate::start(async move {
             let mut writer = Writer {
                 mode: Mode::WriteZero,
                 bytes: Default::default(),
@@ -206,4 +200,12 @@ mod tests {
             assert_eq!(&writer.bytes.borrow()[..], &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         });
     }
+}
+
+pub trait IntoHalves {
+    type Read: ReadOwned;
+    type Write: WriteOwned;
+
+    /// Split this into an owned read half and an owned write half.
+    fn into_halves(self) -> (Self::Read, Self::Write);
 }

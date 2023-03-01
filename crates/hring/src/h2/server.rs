@@ -25,7 +25,8 @@ use crate::{
     util::read_and_parse,
     ExpectResponseHeaders, Headers, Method, Request, Responder, ServerDriver,
 };
-use hring_buffet::{Piece, PieceList, PieceStr, ReadOwned, Roll, RollMut, WriteOwned};
+use hring_buffet::{Piece, PieceList, PieceStr, Roll, RollMut};
+use maybe_uring::io::{ReadOwned, WriteOwned};
 
 use super::{
     body::{H2BodyItem, H2BodySender},
@@ -1021,7 +1022,7 @@ fn end_headers(
                 rx: piece_rx,
             };
 
-            crate::spawn({
+            maybe_uring::spawn({
                 let driver = driver.clone();
                 async move {
                     let mut req_body = req_body;

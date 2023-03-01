@@ -1,10 +1,10 @@
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_uring::{
+use crate::{
     buf::{IoBuf, IoBufMut},
+    io::{ReadOwned, WriteOwned},
     BufResult,
 };
 
-use crate::{ReadOwned, WriteOwned};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 impl<T> ReadOwned for T
 where

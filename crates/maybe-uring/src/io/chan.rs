@@ -1,14 +1,11 @@
 use std::{cell::RefCell, rc::Rc};
 
-use pretty_hex::PrettyHex;
-use tokio::sync::mpsc;
-use tokio_uring::{
+use crate::{
     buf::{IoBuf, IoBufMut},
+    io::WriteOwned,
     BufResult,
 };
-use tracing::trace;
-
-use crate::WriteOwned;
+use tokio::sync::mpsc;
 
 use super::ReadOwned;
 
@@ -76,7 +73,6 @@ impl ChanReadSend {
     /// is too small).
     pub async fn send(&self, next_buf: impl Into<Vec<u8>>) -> Result<(), std::io::Error> {
         let next_buf = next_buf.into();
-        trace!("Sending {:?}", next_buf.hex_dump());
 
         loop {
             {
@@ -84,7 +80,6 @@ impl ChanReadSend {
                 match guarded.state {
                     ChanReadState::Live => {
                         if guarded.pos == guarded.buf.len() {
-                            trace!("Writing + notifying waiters {:?}", next_buf.hex_dump());
                             guarded.pos = 0;
                             guarded.buf = next_buf;
                             self.inner.notify.notify_waiters();
@@ -118,7 +113,6 @@ impl Drop for ChanReadSend {
 
 impl ReadOwned for ChanRead {
     async fn read<B: IoBufMut>(&mut self, mut buf: B) -> BufResult<usize, B> {
-        trace!("Reading {} bytes", buf.bytes_total());
         let out =
             unsafe { std::slice::from_raw_parts_mut(buf.stable_mut_ptr(), buf.bytes_total()) };
 
@@ -128,15 +122,11 @@ impl ReadOwned for ChanRead {
                 let remain = guarded.buf.len() - guarded.pos;
 
                 if remain > 0 {
-                    trace!("{remain} bytes remain");
-
                     let n = std::cmp::min(remain, out.len());
-                    trace!("reading {n} bytes");
 
                     out[..n].copy_from_slice(&guarded.buf[guarded.pos..guarded.pos + n]);
                     guarded.pos += n;
 
-                    trace!("notifying waiters and returning {}", out[..n].hex_dump());
                     self.inner.notify.notify_waiters();
 
                     unsafe {
@@ -186,18 +176,16 @@ impl WriteOwned for ChanWrite {
 
 #[cfg(all(test, not(feature = "miri")))]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
-
     use super::{ChanRead, ReadOwned};
-    use pretty_assertions::assert_eq;
+    use std::{cell::RefCell, rc::Rc};
 
     #[test]
     fn test_chan_reader() {
-        tokio_uring::start(async move {
+        crate::start(async move {
             let (send, mut cr) = ChanRead::new();
             let wrote_three = Rc::new(RefCell::new(false));
 
-            tokio_uring::spawn({
+            crate::spawn({
                 let wrote_three = wrote_three.clone();
                 async move {
                     send.send("one").await.unwrap();
@@ -255,7 +243,7 @@ mod tests {
 
             let (send, mut cr) = ChanRead::new();
 
-            tokio_uring::spawn({
+            crate::spawn({
                 async move {
                     send.send("two-part").await.unwrap();
                     send.reset();
