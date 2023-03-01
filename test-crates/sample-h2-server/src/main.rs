@@ -79,7 +79,7 @@ async fn main() -> color_eyre::Result<()> {
         .map(|s| s.parse().unwrap())
         .unwrap_or_default();
 
-    let upstream = hyper::Server::bind(&format!("127.0.0.2:{listen_port}").parse()?)
+    let upstream = hyper::Server::bind(&format!("127.0.0.1:{listen_port}").parse()?)
         .http2_only(true)
         .serve(make_service_fn(|_addr| async move {
             Ok::<_, Infallible>(TestService)

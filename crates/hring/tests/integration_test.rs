@@ -10,7 +10,7 @@ use hring::{
     h1, h2, Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, HeadersExt, Method, Request,
     Responder, Response, ResponseDone, ServerDriver,
 };
-use hring_buffet::{ChanRead, ChanWrite, IntoSplit, Piece, RollMut};
+use hring_buffet::{ChanRead, ChanWrite, Piece, RollMut};
 use http::{header, StatusCode};
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
@@ -680,7 +680,7 @@ fn curl_echo_body_noproxy(typ: BodyType) {
     )> {
         let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
 
-        let ln = tokio_uring::net::TcpListener::bind("[::]:0".parse()?)?;
+        let ln = maybe_uring::net::TcpListener::bind("[::]:0".parse()?).await?;
         let ln_addr = ln.local_addr()?;
 
         struct TestDriver;
@@ -724,7 +724,7 @@ fn curl_echo_body_noproxy(typ: BodyType) {
             let conf = Rc::new(h1::ServerConf::default());
 
             enum Event {
-                Accepted((tokio_uring::net::TcpStream, SocketAddr)),
+                Accepted((maybe_uring::net::TcpStream, SocketAddr)),
                 ShuttingDown,
             }
 
@@ -856,7 +856,8 @@ fn h2_basic_post() {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or_default();
-        let ln = tokio_uring::net::TcpListener::bind(format!("127.0.0.2:{listen_port}").parse()?)?;
+        let ln = maybe_uring::net::TcpListener::bind(format!("127.0.0.1:{listen_port}").parse()?)
+            .await?;
         let ln_addr = ln.local_addr()?;
 
         struct TestDriver;
@@ -895,7 +896,7 @@ fn h2_basic_post() {
             let conf = Rc::new(h2::ServerConf::default());
 
             enum Event {
-                Accepted((tokio_uring::net::TcpStream, SocketAddr)),
+                Accepted((maybe_uring::net::TcpStream, SocketAddr)),
                 ShuttingDown,
             }
 
@@ -1043,7 +1044,8 @@ fn h2_basic_get() {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or_default();
-        let ln = tokio_uring::net::TcpListener::bind(format!("127.0.0.2:{listen_port}").parse()?)?;
+        let ln = maybe_uring::net::TcpListener::bind(format!("127.0.0.1:{listen_port}").parse()?)
+            .await?;
         let ln_addr = ln.local_addr()?;
 
         struct TestDriver;
@@ -1082,7 +1084,7 @@ fn h2_basic_get() {
             let conf = Rc::new(h2::ServerConf::default());
 
             enum Event {
-                Accepted((tokio_uring::net::TcpStream, SocketAddr)),
+                Accepted((maybe_uring::net::TcpStream, SocketAddr)),
                 ShuttingDown,
             }
 

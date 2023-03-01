@@ -8,6 +8,9 @@ pub use tokio_uring;
 #[cfg(all(target_os = "linux", feature = "tokio-uring"))]
 mod compat;
 
+#[cfg(feature = "net")]
+pub mod net;
+
 pub type BufResult<T, B> = (std::io::Result<T>, B);
 
 /// Spawns a new asynchronous task, returning a [`JoinHandle`] for it.
@@ -25,13 +28,13 @@ pub fn spawn<T: Future + 'static>(task: T) -> tokio::task::JoinHandle<T::Output>
 
 /// Equivalent to `tokio_uring::start`
 #[cfg(all(target_os = "linux", feature = "tokio-uring"))]
-pub fn start<F: Future + 'static>(task: F) -> F::Output {
+pub fn start<F: Future>(task: F) -> F::Output {
     tokio_uring::start(task)
 }
 
 /// Equivalent to `tokio_uring::start`
 #[cfg(not(all(target_os = "linux", feature = "tokio-uring")))]
-pub fn start<F: Future + 'static>(task: F) -> F::Output {
+pub fn start<F: Future>(task: F) -> F::Output {
     use tokio::task::LocalSet;
 
     tokio::runtime::Builder::new_current_thread()

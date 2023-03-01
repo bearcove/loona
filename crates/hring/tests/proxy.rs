@@ -7,8 +7,9 @@ use hring::{
     h1, Body, BodyChunk, Encoder, ExpectResponseHeaders, HeadersExt, Responder, Response,
     ResponseDone, ServerDriver,
 };
-use hring_buffet::{IntoSplit, RollMut, TcpReadHalf, TcpWriteHalf};
+use hring_buffet::RollMut;
 use http::StatusCode;
+use maybe_uring::net::{TcpReadHalf, TcpWriteHalf};
 use std::{cell::RefCell, future::Future, net::SocketAddr, rc::Rc};
 use tracing::debug;
 
@@ -45,7 +46,7 @@ impl ServerDriver for ProxyDriver {
             transport
         } else {
             debug!("making new connection to upstream!");
-            tokio_uring::net::TcpStream::connect(self.upstream_addr)
+            maybe_uring::net::TcpStream::connect(self.upstream_addr)
                 .await?
                 .into_split()
         };
@@ -119,7 +120,7 @@ pub async fn start(
 )> {
     let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
 
-    let ln = tokio_uring::net::TcpListener::bind("[::]:0".parse()?)?;
+    let ln = maybe_uring::net::TcpListener::bind("[::]:0".parse()?).await?;
     let ln_addr = ln.local_addr()?;
 
     let proxy_fut = async move {
@@ -127,7 +128,7 @@ pub async fn start(
         let pool: TransportPool = Default::default();
 
         enum Event {
-            Accepted((tokio_uring::net::TcpStream, SocketAddr)),
+            Accepted((maybe_uring::net::TcpStream, SocketAddr)),
             ShuttingDown,
         }
 

@@ -14,6 +14,7 @@ Replicates some tokio-uring types to allow building code without it
 
 [features]
 default = ["tokio-uring"]
+net = ["tokio/net"]
 
 [dependencies]
 tokio = { version = "1.25.0", features = ["rt"] }
