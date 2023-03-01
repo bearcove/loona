@@ -1228,7 +1228,7 @@ mod tests {
     #[cfg(not(feature = "miri"))]
     fn test_roll_iobuf() {
         use maybe_uring::{
-            io::{IntoSplit, ReadOwned, WriteOwned},
+            io::{IntoHalves, ReadOwned, WriteOwned},
             net::{TcpListener, TcpStream},
         };
 
@@ -1241,14 +1241,14 @@ mod tests {
 
             let send_fut = async move {
                 let stream = TcpStream::connect(local_addr).await?;
-                let (_stream_r, mut stream_w) = IntoSplit::into_split(stream);
+                let (_stream_r, mut stream_w) = IntoHalves::into_halves(stream);
                 stream_w.write_all(roll).await?;
                 Ok::<_, eyre::Report>(())
             };
 
             let recv_fut = async move {
                 let (stream, addr) = ln.accept().await?;
-                let (mut stream_r, _stream_w) = IntoSplit::into_split(stream);
+                let (mut stream_r, _stream_w) = IntoHalves::into_halves(stream);
                 println!("Accepted connection from {addr}");
 
                 let mut buf = Vec::with_capacity(1024);

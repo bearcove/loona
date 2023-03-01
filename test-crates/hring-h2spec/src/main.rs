@@ -9,7 +9,7 @@ use hring::{
     Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, Request, Responder, Response,
     ResponseDone, ServerDriver,
 };
-use maybe_uring::{io::IntoSplit, net::TcpListener};
+use maybe_uring::{io::IntoHalves, net::TcpListener};
 use tokio::process::Command;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
@@ -134,7 +134,7 @@ pub(crate) async fn run_server(ln: TcpListener) -> color_eyre::Result<()> {
         let driver = Rc::new(SDriver);
 
         tokio::task::spawn_local(async move {
-            if let Err(e) = hring::h2::serve(stream.into_split(), conf, client_buf, driver).await {
+            if let Err(e) = hring::h2::serve(stream.into_halves(), conf, client_buf, driver).await {
                 tracing::error!("error serving client {}: {}", addr, e);
             }
         });

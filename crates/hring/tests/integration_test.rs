@@ -13,7 +13,7 @@ use hring::{
 use hring_buffet::{Piece, RollMut};
 use http::{header, StatusCode};
 use httparse::{Status, EMPTY_HEADER};
-use maybe_uring::io::{ChanRead, ChanWrite, IntoSplit};
+use maybe_uring::io::{ChanRead, ChanWrite, IntoHalves};
 use pretty_assertions::assert_eq;
 use pretty_hex::PrettyHex;
 use std::{future::Future, net::SocketAddr, rc::Rc, time::Duration};
@@ -281,7 +281,7 @@ fn proxy_echo_body_content_len() {
         let body = "Please return to sender.";
         let content_len = body.len();
 
-        let (mut read, mut write) = socket.into_split();
+        let (mut read, mut write) = socket.into_halves();
 
         let send_fut = async move {
             write
@@ -381,7 +381,7 @@ fn proxy_echo_body_chunked() {
 
         let mut buf = BytesMut::with_capacity(256);
 
-        let (mut read, mut write) = socket.into_split();
+        let (mut read, mut write) = socket.into_halves();
 
         let send_fut = async move {
             write
@@ -748,7 +748,7 @@ fn curl_echo_body_noproxy(typ: BodyType) {
                         maybe_uring::spawn(async move {
                             let driver = TestDriver;
                             h1::serve(
-                                transport.into_split(),
+                                transport.into_halves(),
                                 conf,
                                 RollMut::alloc().unwrap(),
                                 driver,
@@ -920,7 +920,7 @@ fn h2_basic_post() {
 
                         maybe_uring::spawn(async move {
                             h2::serve(
-                                transport.into_split(),
+                                transport.into_halves(),
                                 conf,
                                 RollMut::alloc().unwrap(),
                                 driver,
@@ -1108,7 +1108,7 @@ fn h2_basic_get() {
 
                         maybe_uring::spawn(async move {
                             h2::serve(
-                                transport.into_split(),
+                                transport.into_halves(),
                                 conf,
                                 RollMut::alloc().unwrap(),
                                 driver,

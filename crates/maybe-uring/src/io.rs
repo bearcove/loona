@@ -202,9 +202,10 @@ mod tests {
     }
 }
 
-pub trait IntoSplit {
+pub trait IntoHalves {
     type Read: ReadOwned;
     type Write: WriteOwned;
 
-    fn into_split(self) -> (Self::Read, Self::Write);
+    /// Split this into an owned read half and an owned write half.
+    fn into_halves(self) -> (Self::Read, Self::Write);
 }

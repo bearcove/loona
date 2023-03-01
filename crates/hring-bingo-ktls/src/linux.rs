@@ -11,7 +11,7 @@ use hring::{
     ResponseDone, ServerDriver,
 };
 use http::Version;
-use maybe_uring::{io::IntoSplit, tokio_uring::net::TcpStream};
+use maybe_uring::{io::IntoHalves, tokio_uring::net::TcpStream};
 use rustls::ServerConfig;
 use tokio::net::TcpListener;
 use tracing::{debug, info};
@@ -150,11 +150,11 @@ async fn handle_plaintext_conn(
     match proto {
         Proto::H1(h1_conf) => {
             info!("Using HTTP/1.1");
-            hring::h1::serve(stream.into_split(), h1_conf, buf, driver).await?;
+            hring::h1::serve(stream.into_halves(), h1_conf, buf, driver).await?;
         }
         Proto::H2(h2_conf) => {
             info!("Using HTTP/2");
-            hring::h2::serve(stream.into_split(), h2_conf, buf, Rc::new(driver)).await?;
+            hring::h2::serve(stream.into_halves(), h2_conf, buf, Rc::new(driver)).await?;
         }
     }
 
@@ -196,11 +196,11 @@ async fn handle_tls_conn(
     match alpn_proto.as_deref() {
         Some("h2") => {
             info!("Using HTTP/2");
-            hring::h2::serve(stream.into_split(), h2_conf, buf, Rc::new(driver)).await?;
+            hring::h2::serve(stream.into_halves(), h2_conf, buf, Rc::new(driver)).await?;
         }
         Some("http/1.1") | None => {
             info!("Using HTTP/1.1");
-            hring::h1::serve(stream.into_split(), h1_conf, buf, driver).await?;
+            hring::h1::serve(stream.into_halves(), h1_conf, buf, driver).await?;
         }
         Some(other) => return Err(eyre::eyre!("Unsupported ALPN protocol: {}", other)),
     }
@@ -230,7 +230,7 @@ impl ServerDriver for SDriver {
 
         req.version = Version::HTTP_11;
         let (transport, respond) =
-            h1::request(transport.into_split(), req, req_body, driver).await?;
+            h1::request(transport.into_halves(), req, req_body, driver).await?;
 
         // don't re-use transport for now
         drop(transport);
@@ -338,7 +338,7 @@ async fn sample_http_request() -> color_eyre::Result<()> {
         headers: Default::default(),
     };
 
-    let (transport, _) = h1::request(transport.into_split(), req, &mut (), driver).await?;
+    let (transport, _) = h1::request(transport.into_halves(), req, &mut (), driver).await?;
     // don't re-use transport for now
     drop(transport);
 

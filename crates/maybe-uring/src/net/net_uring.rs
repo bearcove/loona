@@ -2,7 +2,7 @@ use std::{net::SocketAddr, rc::Rc};
 
 use crate::{
     buf::{tokio_uring_compat::BufCompat, IoBuf, IoBufMut},
-    io::{IntoSplit, ReadOwned, WriteOwned},
+    io::{IntoHalves, ReadOwned, WriteOwned},
     BufResult,
 };
 pub use tokio_uring::net::{TcpListener as TokListener, TcpStream as TokStream};
@@ -60,11 +60,11 @@ impl WriteOwned for TcpWriteHalf {
     }
 }
 
-impl IntoSplit for TcpStream {
+impl IntoHalves for TcpStream {
     type Read = TcpReadHalf;
     type Write = TcpWriteHalf;
 
-    fn into_split(self) -> (Self::Read, Self::Write) {
+    fn into_halves(self) -> (Self::Read, Self::Write) {
         let self_rc = Rc::new(self);
         (TcpReadHalf(self_rc.clone()), TcpWriteHalf(self_rc))
     }

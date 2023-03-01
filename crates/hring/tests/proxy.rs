@@ -10,7 +10,7 @@ use hring::{
 use hring_buffet::RollMut;
 use http::StatusCode;
 use maybe_uring::{
-    io::IntoSplit,
+    io::IntoHalves,
     net::{TcpReadHalf, TcpWriteHalf},
 };
 use std::{cell::RefCell, future::Future, net::SocketAddr, rc::Rc};
@@ -51,7 +51,7 @@ impl ServerDriver for ProxyDriver {
             debug!("making new connection to upstream!");
             maybe_uring::net::TcpStream::connect(self.upstream_addr)
                 .await?
-                .into_split()
+                .into_halves()
         };
 
         let driver = ProxyClientDriver { respond };
@@ -158,7 +158,7 @@ pub async fn start(
                             pool,
                         };
                         h1::serve(
-                            transport.into_split(),
+                            transport.into_halves(),
                             conf,
                             RollMut::alloc().unwrap(),
                             driver,

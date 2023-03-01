@@ -1,4 +1,4 @@
-use crate::io::IntoSplit;
+use crate::io::IntoHalves;
 use std::net::SocketAddr;
 use tokio::net::{TcpListener as TokListener, TcpStream as TokStream};
 
@@ -26,11 +26,11 @@ impl TcpListener {
     }
 }
 
-impl IntoSplit for TcpStream {
+impl IntoHalves for TcpStream {
     type Read = TcpReadHalf;
     type Write = TcpWriteHalf;
 
-    fn into_split(self) -> (Self::Read, Self::Write) {
+    fn into_halves(self) -> (Self::Read, Self::Write) {
         TcpStream::into_split(self)
     }
 }
