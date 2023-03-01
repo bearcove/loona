@@ -1,5 +1,5 @@
 #[repr(transparent)]
-pub struct BufCompat<T>(T)
+pub struct BufCompat<T>(pub T)
 where
     T: crate::buf::IoBuf;
 

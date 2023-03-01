@@ -8,9 +8,6 @@ pub use roll::*;
 mod piece;
 pub use piece::*;
 
-mod io;
-pub use io::*;
-
 use std::{
     cell::{RefCell, RefMut},
     collections::VecDeque,

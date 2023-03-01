@@ -14,7 +14,7 @@ mod slice;
 pub use slice::Slice;
 
 #[cfg(all(feature = "tokio-uring", target_os = "linux"))]
-mod tokio_uring_compat;
+pub(crate) mod tokio_uring_compat;
 
 pub(crate) fn deref(buf: &impl IoBuf) -> &[u8] {
     // Safety: the `IoBuf` trait is marked as unsafe and is expected to be

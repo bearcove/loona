@@ -8,13 +8,16 @@ use std::{
     str::Utf8Error,
 };
 
-use maybe_uring::buf::{IoBuf, IoBufMut};
+use maybe_uring::{
+    buf::{IoBuf, IoBufMut},
+    io::ReadOwned,
+};
 use nom::{
     Compare, CompareResult, FindSubstring, InputIter, InputLength, InputTake, InputTakeAtPosition,
     Needed, Slice,
 };
 
-use crate::{Buf, BufMut, ReadOwned, BUF_SIZE};
+use crate::{Buf, BufMut, BUF_SIZE};
 
 /// A "rolling buffer". Uses either one [BufMut] or a `Box<[u8]>` for storage.
 /// This buffer never grows, but it can be split, and it can be reallocated so
