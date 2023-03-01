@@ -1,3 +1,6 @@
+#![allow(incomplete_features)]
+#![feature(async_fn_in_trait)]
+
 use std::future::Future;
 
 pub mod buf;
@@ -10,6 +13,8 @@ mod compat;
 
 #[cfg(feature = "net")]
 pub mod net;
+
+pub mod io;
 
 pub type BufResult<T, B> = (std::io::Result<T>, B);
 

@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use tokio_uring::{
+use maybe_uring::{
     buf::{IoBuf, IoBufMut},
     net::TcpStream,
     BufResult,
