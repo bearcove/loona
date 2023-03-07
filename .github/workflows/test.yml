@@ -8,7 +8,21 @@ on:
   merge_group:
 
 jobs:
-  test:
+  test-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
+      - name: Install a Rust toolchain
+        uses: actions-rs/toolchain@v1
+      - name: Run cargo check
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --all-targets
+  test-linux:
     env:
       RUSTC_WRAPPER: sccache
       CARGO_INCREMENTAL: 0
