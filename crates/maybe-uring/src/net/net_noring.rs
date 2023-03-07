@@ -1,4 +1,3 @@
-use crate::io::IntoHalves;
 use std::net::SocketAddr;
 use tokio::net::{TcpListener as TokListener, TcpStream as TokStream};
 
