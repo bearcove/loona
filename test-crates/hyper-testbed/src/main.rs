@@ -77,7 +77,7 @@ impl Service<Request<Body>> for TestService {
 
 #[tokio::main]
 async fn main() {
-    let upstream = hyper::Server::bind(&"[::]:0".parse().unwrap()).serve(make_service_fn(
+    let upstream = hyper::Server::bind(&"127.0.0.1:0".parse().unwrap()).serve(make_service_fn(
         |_addr| async move { Ok::<_, Infallible>(TestService) },
     ));
     let upstream_addr = upstream.local_addr();
