@@ -31,7 +31,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: nextest
-          args: --profile ci
+          args: run --profile ci
   test-windows:
     runs-on: windows-2022
     steps:
@@ -59,7 +59,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: nextest
-          args: --profile ci
+          args: run --profile ci
   test-linux:
     env:
       RUSTC_WRAPPER: sccache
