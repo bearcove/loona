@@ -1236,7 +1236,7 @@ mod tests {
             rm.put(b"hello").unwrap();
             let roll = rm.take_all();
 
-            let ln = TcpListener::bind("[::]:0".parse()?).await?;
+            let ln = TcpListener::bind("127.0.0.1:0".parse()?).await?;
             let local_addr = ln.local_addr()?;
 
             let send_fut = async move {

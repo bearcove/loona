@@ -681,7 +681,7 @@ fn curl_echo_body_noproxy(typ: BodyType) {
     )> {
         let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
 
-        let ln = maybe_uring::net::TcpListener::bind("[::]:0".parse()?).await?;
+        let ln = maybe_uring::net::TcpListener::bind("127.0.0.1:0".parse()?).await?;
         let ln_addr = ln.local_addr()?;
 
         struct TestDriver;

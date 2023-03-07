@@ -123,7 +123,7 @@ pub async fn start(
 )> {
     let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
 
-    let ln = maybe_uring::net::TcpListener::bind("[::]:0".parse()?).await?;
+    let ln = maybe_uring::net::TcpListener::bind("127.0.0.1:0".parse()?).await?;
     let ln_addr = ln.local_addr()?;
 
     let proxy_fut = async move {
