@@ -10,6 +10,8 @@ on:
 jobs:
   test-macos:
     runs-on: macos-12
+    env:
+      CARGO_TERM_COLOR: always
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
@@ -20,8 +22,7 @@ jobs:
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
       - name: Install cargo-nextest
-        run: |
-          curl -LsSf https://get.nexte.st/latest/mac | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
+        uses: taiki-e/install-action@nextest
       - name: Run cargo check
         uses: actions-rs/cargo@v1
         with:
@@ -39,6 +40,8 @@ jobs:
           args: run --profile ci
   test-windows:
     runs-on: windows-2022
+    env:
+      CARGO_TERM_COLOR: always
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
@@ -49,12 +52,7 @@ jobs:
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
       - name: Install cargo-nextest
-        run: |
-          $tmp = New-TemporaryFile | Rename-Item -NewName { $_ -replace 'tmp$', 'zip' } -PassThru
-          Invoke-WebRequest -OutFile $tmp https://get.nexte.st/latest/windows
-          $outputDir = if ($Env:CARGO_HOME) { Join-Path $Env:CARGO_HOME "bin" } else { "~/.cargo/bin" }
-          $tmp | Expand-Archive -DestinationPath $outputDir -Force
-          $tmp | Remove-Item
+        uses: taiki-e/install-action@nextest
       - name: Run cargo check
         uses: actions-rs/cargo@v1
         with:
@@ -72,6 +70,7 @@ jobs:
           args: run --profile ci
   test-linux:
     env:
+      CARGO_TERM_COLOR: always
       RUSTC_WRAPPER: sccache
       CARGO_INCREMENTAL: 0
       CARGO_HOME: /vol/cargo
