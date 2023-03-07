@@ -9,6 +9,12 @@ use tokio::{
 };
 use tracing::debug;
 
+#[cfg(target_os = "windows")]
+const EXE_FILE_EXT: &str = ".exe";
+
+#[cfg(not(target_os = "windows"))]
+const EXE_FILE_EXT: &str = "";
+
 pub async fn start() -> eyre::Result<(SocketAddr, impl Any)> {
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<SocketAddr>();
 
@@ -16,7 +22,9 @@ pub async fn start() -> eyre::Result<(SocketAddr, impl Any)> {
     let manifest_dir = PathBuf::from(manifest_dir);
     let project_dir = manifest_dir.parent().unwrap().parent().unwrap();
     let test_crates_dir = project_dir.join("test-crates");
-    let hyper_testbed_dir = test_crates_dir.join("hyper-testbed");
+
+    let exe_name = format!("hyper-testbed{EXE_FILE_EXT}");
+    let hyper_testbed_dir = test_crates_dir.join(exe_name);
     let binary_path = hyper_testbed_dir
         .join("target")
         .join("release")
