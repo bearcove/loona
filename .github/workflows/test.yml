@@ -24,7 +24,7 @@ jobs:
         with:
           command: check
           args: --all-targets
-  test-macos:
+  test-windows:
     runs-on: windows-2022
     steps:
       - name: Check out repository code
