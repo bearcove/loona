@@ -24,11 +24,11 @@ pub async fn start() -> eyre::Result<(SocketAddr, impl Any)> {
     let test_crates_dir = project_dir.join("test-crates");
 
     let exe_name = format!("hyper-testbed{EXE_FILE_EXT}");
-    let hyper_testbed_dir = test_crates_dir.join(exe_name);
+    let hyper_testbed_dir = test_crates_dir.join("hyper-testbed");
     let binary_path = hyper_testbed_dir
         .join("target")
         .join("release")
-        .join("hyper-testbed");
+        .join(exe_name);
     debug!("Using testbed binary: {}", binary_path.display());
     let mut cmd = Command::new(binary_path);
     cmd.stdout(Stdio::piped());
