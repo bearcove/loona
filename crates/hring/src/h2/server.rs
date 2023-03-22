@@ -1,13 +1,8 @@
-use std::{borrow::Cow, cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use enumflags2::BitFlags;
 use eyre::Context;
 use futures_util::TryFutureExt;
-use http::{
-    header::{self, HeaderName},
-    uri::{Authority, PathAndQuery, Scheme},
-    Version,
-};
 use nom::Finish;
 use smallvec::{smallvec, SmallVec};
 use tokio::sync::mpsc;
@@ -15,23 +10,21 @@ use tracing::{debug, trace, warn};
 
 use crate::{
     h2::{
-        body::{H2Body, PieceOrTrailers},
-        encode::{EncoderState, H2ConnEvent, H2Encoder, H2EventPayload},
+        body::PieceOrTrailers,
+        encode::{H2ConnEvent, H2EventPayload},
+        end_headers::{self, HeadersOrTrailers},
         parse::{
             self, ContinuationFlags, DataFlags, Frame, FrameType, HeadersFlags, KnownErrorCode,
             PingFlags, PrioritySpec, SettingsFlags, StreamId,
         },
     },
     util::read_and_parse,
-    ExpectResponseHeaders, Headers, Method, Request, Responder, ServerDriver,
+    ServerDriver,
 };
-use hring_buffet::{Piece, PieceList, PieceStr, Roll, RollMut};
+use hring_buffet::{Piece, PieceList, Roll, RollMut};
 use maybe_uring::io::{ReadOwned, WriteOwned};
 
-use super::{
-    body::{H2BodyItem, H2BodySender},
-    parse::Settings,
-};
+use super::{body::H2BodySender, parse::Settings};
 
 /// HTTP/2 server configuration
 pub struct ServerConf {
@@ -72,23 +65,23 @@ enum ContinuationState {
     ContinuingHeaders(StreamId),
 }
 
-struct StreamState {
-    rx_stage: StreamRxStage,
+pub(crate) struct StreamState {
+    pub(crate) rx_stage: StreamRxStage,
 }
 
-enum StreamRxStage {
+pub(crate) enum StreamRxStage {
     Headers(HeadersData),
     Body(H2BodySender),
     Trailers(H2BodySender, HeadersData),
     Done,
 }
 
-struct HeadersData {
+pub(crate) struct HeadersData {
     /// If true, no DATA frames follow, cf. https://httpwg.org/specs/rfc9113.html#HttpFraming
-    end_stream: bool,
+    pub(crate) end_stream: bool,
 
     /// The field block fragments
-    fragments: SmallVec<[Roll; 2]>,
+    pub(crate) fragments: SmallVec<[Roll; 2]>,
 }
 
 pub async fn serve(
@@ -395,56 +388,20 @@ async fn h2_read_loop(
                         };
 
                         if flags.contains(HeadersFlags::EndHeaders) {
-                            match end_headers(
+                            let res = end_headers::end_headers(
                                 &ev_tx,
                                 frame.stream_id,
+                                state
+                                    .borrow_mut()
+                                    .streams
+                                    .get_mut(&frame.stream_id)
+                                    .unwrap(),
                                 &headers_data,
                                 &driver,
                                 &mut hpack_dec,
                                 headers_or_trailers,
-                            ) {
-                                Err(e) => {
-                                    // TODO: we should also reset the stream here, right?
-                                    send_goaway(
-                                        &ev_tx,
-                                        &state,
-                                        e,
-                                        KnownErrorCode::CompressionError,
-                                    )
-                                    .await;
-                                }
-                                Ok(ehr) => {
-                                    if let Some(trailers) = ehr.trailers {
-                                        let body_tx = {
-                                            let mut state = state.borrow_mut();
-                                            let stream =
-                                                state.streams.get_mut(&frame.stream_id).unwrap();
-
-                                            let mut stage = StreamRxStage::Done;
-                                            std::mem::swap(&mut stage, &mut stream.rx_stage);
-                                            match stage {
-                                                StreamRxStage::Body(sender) => sender,
-                                                _ => unreachable!(),
-                                            }
-                                        };
-                                        if body_tx
-                                            .send(Ok(PieceOrTrailers::Trailers(trailers)))
-                                            .await
-                                            .is_err()
-                                        {
-                                            warn!("TODO: The body is being ignored, we should reset the stream");
-                                        }
-                                    } else {
-                                        let mut state = state.borrow_mut();
-                                        state.streams.insert(
-                                            frame.stream_id,
-                                            StreamState {
-                                                rx_stage: ehr.next_stage,
-                                            },
-                                        );
-                                    }
-                                }
-                            }
+                            );
+                            res.finalize().await?;
                         } else {
                             debug!(
                                 "expecting more {headers_or_trailers:?} for stream {}",
@@ -590,45 +547,49 @@ async fn h2_read_loop(
                                     todo!("handle connection error: continuation frame for unknown stream");
                                 }
                             };
+                            // TODO: this match could be done within `end_headers` and
+                            // this might obviate the need for `HeadersOrTrailers`
                             match &mut ss.rx_stage {
                                 StreamRxStage::Headers(headers_data) => {
                                     headers_data.fragments.push(payload);
                                     if flags.contains(ContinuationFlags::EndHeaders) {
-                                        end_headers(
+                                        let res = end_headers::end_headers(
                                             &ev_tx,
                                             frame.stream_id,
+                                            ss,
                                             headers_data,
                                             &driver,
                                             &mut hpack_dec,
                                             HeadersOrTrailers::Headers,
-                                        )
-                                        .map(Some)
+                                        );
+                                        Some(res)
                                     } else {
                                         debug!(
                                             "have {} field block fragments so far, will read CONTINUATION frames for headers",
                                             headers_data.fragments.len()
                                         );
-                                        Ok(None)
+                                        None
                                     }
                                 }
                                 StreamRxStage::Trailers(_body_tx, header_data) => {
                                     header_data.fragments.push(payload);
                                     if flags.contains(ContinuationFlags::EndHeaders) {
-                                        end_headers(
+                                        let res = end_headers::end_headers(
                                             &ev_tx,
                                             frame.stream_id,
+                                            ss,
                                             header_data,
                                             &driver,
                                             &mut hpack_dec,
                                             HeadersOrTrailers::Trailers,
-                                        )
-                                        .map(Some)
+                                        );
+                                        Some(res)
                                     } else {
                                         debug!(
                                             "have {} field block fragments so far, will read CONTINUATION frames for trailers",
                                             header_data.fragments.len()
                                         );
-                                        Ok(None)
+                                        None
                                     }
                                 }
                                 _ => {
@@ -637,45 +598,8 @@ async fn h2_read_loop(
                             }
                         };
 
-                        match res {
-                            Err(e) => {
-                                // TODO: we should also reset the stream state here, right?
-                                send_goaway(&ev_tx, &state, e, KnownErrorCode::CompressionError)
-                                    .await;
-                            }
-                            Ok(Some(ehr)) => {
-                                // we're not reading continuation frames anymore
-                                continuation_state = ContinuationState::Idle;
-
-                                if let Some(trailers) = ehr.trailers {
-                                    let body_tx = {
-                                        let mut state = state.borrow_mut();
-                                        let stream =
-                                            state.streams.get_mut(&frame.stream_id).unwrap();
-
-                                        let mut stage = StreamRxStage::Done;
-                                        std::mem::swap(&mut stage, &mut stream.rx_stage);
-                                        match stage {
-                                            StreamRxStage::Trailers(sender, _) => sender,
-                                            _ => unreachable!(),
-                                        }
-                                    };
-                                    if body_tx
-                                        .send(Ok(PieceOrTrailers::Trailers(trailers)))
-                                        .await
-                                        .is_err()
-                                    {
-                                        warn!("TODO: The body is being ignored, we should reset the stream");
-                                    }
-                                } else {
-                                    let mut state = state.borrow_mut();
-                                    let ss = state.streams.get_mut(&frame.stream_id).unwrap();
-                                    ss.rx_stage = ehr.next_stage;
-                                }
-                            }
-                            _ => {
-                                // don't care
-                            }
+                        if let Some(res) = res {
+                            res.finalize().await;
                         }
                     }
                     other => {
@@ -693,7 +617,7 @@ async fn h2_read_loop(
     }
 }
 
-async fn send_goaway(
+pub(crate) async fn send_goaway(
     ev_tx: &mpsc::Sender<H2ConnEvent>,
     state: &Rc<RefCell<ConnState>>,
     e: eyre::Report,
@@ -849,214 +773,4 @@ async fn h2_write_loop(
     }
 
     Ok(())
-}
-
-// FIXME: this function is horrible to use, we can do better.  It should have a
-// `&mut State` and do whatever writes to the state are needed, then return a
-// struct that has an async method that does.. whatever async stuff is needed,
-// such as:
-//   - Sending a GOAWAY
-//   - Sending trailers to [H2Body]
-//
-// This will reduce code duplication between the "immediate EndHeaders" and
-// "continuation frames" codepaths and make everything a lot less confusing
-fn end_headers(
-    ev_tx: &mpsc::Sender<H2ConnEvent>,
-    stream_id: StreamId,
-    data: &HeadersData,
-    driver: &Rc<impl ServerDriver + 'static>,
-    hpack_dec: &mut hring_hpack::Decoder,
-    headers_or_trailers: HeadersOrTrailers,
-) -> eyre::Result<EndHeadersResult> {
-    let mut method: Option<Method> = None;
-    let mut scheme: Option<Scheme> = None;
-    let mut path: Option<PieceStr> = None;
-    let mut authority: Option<Authority> = None;
-
-    let mut headers = Headers::default();
-
-    let on_header_pair = |key: Cow<[u8]>, value: Cow<[u8]>| {
-        debug!(
-            "{headers_or_trailers:?} | {}: {}",
-            std::str::from_utf8(&key).unwrap_or("<non-utf8-key>"), // TODO: does this hurt performance when debug logging is disabled?
-            std::str::from_utf8(&value).unwrap_or("<non-utf8-value>"),
-        );
-
-        if &key[..1] == b":" {
-            if matches!(headers_or_trailers, HeadersOrTrailers::Trailers) {
-                // TODO: proper error handling
-                panic!("trailers cannot contain pseudo-headers");
-            }
-
-            // it's a pseudo-header!
-            // TODO: reject headers that occur after pseudo-headers
-            match &key[1..] {
-                b"method" => {
-                    // TODO: error handling
-                    let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
-                    if method.replace(Method::try_from(value).unwrap()).is_some() {
-                        unreachable!(); // No duplicate allowed.
-                    }
-                }
-                b"scheme" => {
-                    // TODO: error handling
-                    let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
-                    if scheme.replace(value.parse().unwrap()).is_some() {
-                        unreachable!(); // No duplicate allowed.
-                    }
-                }
-                b"path" => {
-                    // TODO: error handling
-                    let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
-                    if value.len() == 0 || path.replace(value).is_some() {
-                        unreachable!(); // No empty path nor duplicate allowed.
-                    }
-                }
-                b"authority" => {
-                    // TODO: error handling
-                    let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
-                    if authority.replace(value.parse().unwrap()).is_some() {
-                        unreachable!(); // No duplicate allowed. (h2spec doesn't seem to test for
-                                        // this case but rejecting for duplicates seems
-                                        // reasonable.)
-                    }
-                }
-                _ => {
-                    debug!("ignoring pseudo-header");
-                }
-            }
-        } else {
-            // TODO: what do we do in case of malformed header names?
-            // ignore it? return a 400?
-            let name = HeaderName::from_bytes(&key[..]).expect("malformed header name");
-            let value: Piece = value.to_vec().into();
-            headers.append(name, value);
-        }
-    };
-
-    match &data.fragments[..] {
-        [] => unreachable!("must have at least one fragment"),
-        [payload] => {
-            hpack_dec
-                .decode_with_cb(&payload[..], on_header_pair)
-                .map_err(|e| eyre::eyre!("hpack error: {e:?}"))?;
-        }
-        _ => {
-            let total_len = data.fragments.iter().map(|f| f.len()).sum();
-            // this is a slow path, let's do a little heap allocation. we could
-            // be using `RollMut` for this, but it would probably need to resize
-            // a bunch
-            let mut payload = Vec::with_capacity(total_len);
-            for frag in &data.fragments {
-                payload.extend_from_slice(&frag[..]);
-            }
-            hpack_dec
-                .decode_with_cb(&payload[..], on_header_pair)
-                .map_err(|e| eyre::eyre!("hpack error: {e:?}"))?;
-        }
-    };
-
-    let mut ehr = EndHeadersResult {
-        stream_id,
-        next_stage: StreamRxStage::Done,
-        trailers: None,
-    };
-
-    match headers_or_trailers {
-        HeadersOrTrailers::Headers => {
-            // TODO: cf. https://httpwg.org/specs/rfc9113.html#HttpRequest
-            // A server SHOULD treat a request as malformed if it contains a Host header
-            // field that identifies an entity that differs from the entity in the
-            // ":authority" pseudo-header field.
-
-            // TODO: proper error handling (return 400)
-            let method = method.unwrap();
-            let scheme = scheme.unwrap();
-
-            let path = path.unwrap();
-            let path_and_query: PathAndQuery = path.parse().unwrap();
-
-            let authority = match authority {
-                Some(authority) => Some(authority),
-                None => headers
-                    .get(header::HOST)
-                    .map(|host| host.as_str().unwrap().parse().unwrap()),
-            };
-
-            let mut uri_parts: http::uri::Parts = Default::default();
-            uri_parts.scheme = Some(scheme);
-            uri_parts.authority = authority;
-            uri_parts.path_and_query = Some(path_and_query);
-
-            let uri = http::uri::Uri::from_parts(uri_parts).unwrap();
-
-            let req = Request {
-                method,
-                uri,
-                version: Version::HTTP_2,
-                headers,
-            };
-
-            let responder = Responder {
-                encoder: H2Encoder {
-                    stream_id,
-                    tx: ev_tx.clone(),
-                    state: EncoderState::ExpectResponseHeaders,
-                },
-                state: ExpectResponseHeaders,
-            };
-
-            let (piece_tx, piece_rx) = mpsc::channel::<H2BodyItem>(1); // TODO: is 1 a sensible value here?
-
-            ehr.next_stage = if data.end_stream {
-                StreamRxStage::Done
-            } else {
-                StreamRxStage::Body(piece_tx)
-            };
-
-            let req_body = H2Body {
-                // FIXME: that's not right. h2 requests can still specify
-                // a content-length
-                content_length: if data.end_stream { Some(0) } else { None },
-                eof: data.end_stream,
-                rx: piece_rx,
-            };
-
-            maybe_uring::spawn({
-                let driver = driver.clone();
-                async move {
-                    let mut req_body = req_body;
-                    let responder = responder;
-
-                    match driver.handle(req, &mut req_body, responder).await {
-                        Ok(_responder) => {
-                            debug!("Handler completed successfully, gave us a responder");
-                        }
-                        Err(e) => {
-                            // TODO: actually handle that error.
-                            debug!("Handler returned an error: {e}")
-                        }
-                    }
-                }
-            });
-        }
-        HeadersOrTrailers::Trailers => {
-            ehr.trailers = Some(Box::new(headers));
-        }
-    }
-
-    Ok(ehr)
-}
-
-struct EndHeadersResult {
-    #[allow(dead_code)]
-    stream_id: StreamId,
-    next_stage: StreamRxStage,
-    trailers: Option<Box<Headers>>,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum HeadersOrTrailers {
-    Headers,
-    Trailers,
 }
