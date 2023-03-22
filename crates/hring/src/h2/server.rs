@@ -38,10 +38,10 @@ impl Default for ServerConf {
 }
 
 #[derive(Default)]
-struct ConnState {
-    streams: HashMap<StreamId, StreamState>,
-    self_settings: Settings,
-    peer_settings: Settings,
+pub(crate) struct ConnState {
+    pub(crate) streams: HashMap<StreamId, StreamState>,
+    pub(crate) self_settings: Settings,
+    pub(crate) peer_settings: Settings,
 }
 
 impl ConnState {
@@ -49,7 +49,7 @@ impl ConnState {
     ///
     /// FIXME: this is bad for multiple reasons: it goes through
     /// all streams, and it doesn't care about the direction of the streams.
-    fn last_stream_id(&self) -> StreamId {
+    pub(crate) fn last_stream_id(&self) -> StreamId {
         self.streams
             .keys()
             .copied()
@@ -323,24 +323,6 @@ async fn h2_read_loop(
                             continue;
                         }
 
-                        let headers_or_trailers;
-                        {
-                            let state = state.borrow();
-                            // TODO: validate state a little better than that?
-                            if state.streams.contains_key(&frame.stream_id) {
-                                if !flags.contains(HeadersFlags::EndStream) {
-                                    todo!(
-                                        "handle connection error: trailers must have EndStream, this just looks like duplicate headers for stream {}",
-                                        frame.stream_id
-                                    );
-                                }
-
-                                headers_or_trailers = HeadersOrTrailers::Trailers;
-                            } else {
-                                headers_or_trailers = HeadersOrTrailers::Headers;
-                            }
-                        };
-
                         let padding_length = if flags.contains(HeadersFlags::Padded) {
                             if payload.is_empty() {
                                 todo!("handle connection error: padded headers frame, but no padding length");
@@ -378,28 +360,53 @@ async fn h2_read_loop(
                             (payload, _) = payload.split_at(at);
                         }
 
-                        debug!(
-                            "Receiving {headers_or_trailers:?} for stream {}",
-                            frame.stream_id
-                        );
                         let headers_data = HeadersData {
                             end_stream: flags.contains(HeadersFlags::EndStream),
                             fragments: smallvec![payload],
+                        };
+
+                        let headers_or_trailers;
+                        let state = state.borrow_mut();
+                        {
+                            match state.streams.get_mut(&frame.stream_id) {
+                                Some(ss) => {
+                                    debug!("Receiving trailers for stream {}", frame.stream_id);
+
+                                    if !flags.contains(HeadersFlags::EndStream) {
+                                        todo!(
+                                            "handle connection error: trailers must have EndStream, this just looks like duplicate headers for stream {}",
+                                            frame.stream_id
+                                        );
+                                    }
+
+                                    match ss.rx_stage {
+                                        StreamRxStage::Body(body_tx) => {
+                                            ss.rx_stage =
+                                                StreamRxStage::Trailers(body_tx, headers_data);
+                                        }
+                                        // FIXME: that's a connection error
+                                        _ => unreachable!(),
+                                    }
+                                }
+                                None => {
+                                    debug!("Receiving headers for stream {}", frame.stream_id);
+                                    state.streams.insert(
+                                        frame.stream_id,
+                                        StreamState {
+                                            rx_stage: StreamRxStage::Headers(headers_data),
+                                        },
+                                    );
+                                }
+                            }
                         };
 
                         if flags.contains(HeadersFlags::EndHeaders) {
                             let res = end_headers::end_headers(
                                 &ev_tx,
                                 frame.stream_id,
-                                state
-                                    .borrow_mut()
-                                    .streams
-                                    .get_mut(&frame.stream_id)
-                                    .unwrap(),
-                                &headers_data,
+                                &mut *state,
                                 &driver,
                                 &mut hpack_dec,
-                                headers_or_trailers,
                             );
                             res.finalize().await?;
                         } else {
@@ -409,35 +416,6 @@ async fn h2_read_loop(
                             );
                             continuation_state =
                                 ContinuationState::ContinuingHeaders(frame.stream_id);
-
-                            {
-                                let mut state = state.borrow_mut();
-                                match headers_or_trailers {
-                                    HeadersOrTrailers::Headers => {
-                                        state.streams.insert(
-                                            frame.stream_id,
-                                            StreamState {
-                                                rx_stage: StreamRxStage::Headers(headers_data),
-                                            },
-                                        );
-                                    }
-                                    HeadersOrTrailers::Trailers => {
-                                        let ss = state
-                                            .streams
-                                            .get_mut(&frame.stream_id)
-                                            .expect("stream should exist when receiving trailers");
-                                        let mut rx_stage = StreamRxStage::Done;
-                                        std::mem::swap(&mut rx_stage, &mut ss.rx_stage);
-
-                                        let body_tx = match rx_stage {
-                                            StreamRxStage::Body(tx) => tx,
-                                            _ => todo!("handle connection error: trailers must follow headers"),
-                                        };
-                                        ss.rx_stage =
-                                            StreamRxStage::Trailers(body_tx, headers_data);
-                                    }
-                                }
-                            }
                         }
                     }
                     FrameType::Priority => {
@@ -623,11 +601,19 @@ pub(crate) async fn send_goaway(
     e: eyre::Report,
     error_code: KnownErrorCode,
 ) {
+    let last_stream_id = state.borrow().last_stream_id();
+    send_goaway_inner(ev_tx, last_stream_id, e, error_code).await;
+}
+
+pub(crate) async fn send_goaway_inner(
+    ev_tx: &mpsc::Sender<H2ConnEvent>,
+    last_stream_id: StreamId,
+    e: eyre::Report,
+    error_code: KnownErrorCode,
+) {
     warn!("connection error: {e:?}");
     debug!("error_code = {error_code:?}");
 
-    let last_stream_id = state.borrow().last_stream_id();
-    debug!("last_stream_id = {last_stream_id}");
     // TODO: is this a good idea?
     let additional_debug_data = format!("{e:?}").into_bytes();
 
