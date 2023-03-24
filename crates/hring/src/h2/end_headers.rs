@@ -15,7 +15,7 @@ use super::{
     body::{H2Body, H2BodyItem, PieceOrTrailers},
     encode::{EncoderState, H2ConnEvent, H2Encoder},
     parse::{KnownErrorCode, StreamId},
-    send_goaway, ConnState, HeadersData, StreamRxStage, StreamState,
+    send_goaway, ConnState, HeadersData, StreamStage,
 };
 
 pub(crate) async fn end_headers(
@@ -25,13 +25,13 @@ pub(crate) async fn end_headers(
     driver: &Rc<impl ServerDriver + 'static>,
     hpack_dec: &mut hring_hpack::Decoder<'_>,
 ) {
-    let stream_state = state
+    let stage = state
         .streams
         .get_mut(&stream_id)
         // FIXME: don't panic
-        .expect("stream state must exist");
+        .expect("stream stage must exist");
 
-    if let Err(err) = end_headers_inner(ev_tx, stream_id, stream_state, driver, hpack_dec).await {
+    if let Err(err) = end_headers_inner(ev_tx, stream_id, stage, driver, hpack_dec).await {
         send_goaway(
             ev_tx,
             state,
@@ -47,7 +47,7 @@ pub(crate) async fn end_headers(
 async fn end_headers_inner(
     ev_tx: &mpsc::Sender<H2ConnEvent>,
     stream_id: StreamId,
-    stream_state: &mut StreamState,
+    stage: &mut StreamStage,
     driver: &Rc<impl ServerDriver + 'static>,
     hpack_dec: &mut hring_hpack::Decoder<'_>,
 ) -> eyre::Result<()> {
@@ -149,11 +149,11 @@ async fn end_headers_inner(
         };
 
     // FIXME: don't panic on unexpected states here
-    let mut rx_stage = StreamRxStage::Done;
-    std::mem::swap(&mut rx_stage, &mut stream_state.rx_stage);
+    let mut prev_stage = StreamStage::Done;
+    std::mem::swap(&mut prev_stage, stage);
 
-    match rx_stage {
-        StreamRxStage::Headers(data) => {
+    match prev_stage {
+        StreamStage::Headers(data) => {
             decode_data(HeadersOrTrailers::Headers, &data)?;
 
             // TODO: cf. https://httpwg.org/specs/rfc9113.html#HttpRequest
@@ -226,14 +226,14 @@ async fn end_headers_inner(
                 }
             });
 
-            stream_state.rx_stage = if data.end_stream {
-                StreamRxStage::Done
+            *stage = if data.end_stream {
+                StreamStage::Done
             } else {
-                StreamRxStage::Body(piece_tx)
+                StreamStage::Body(piece_tx)
             };
         }
-        StreamRxStage::Body(_) => unreachable!(),
-        StreamRxStage::Trailers(body_tx, data) => {
+        StreamStage::Body(_) => unreachable!(),
+        StreamStage::Trailers(body_tx, data) => {
             decode_data(HeadersOrTrailers::Trailers, &data)?;
 
             if body_tx
@@ -244,7 +244,7 @@ async fn end_headers_inner(
                 warn!("TODO: The body is being ignored, we should reset the stream");
             }
         }
-        StreamRxStage::Done => unreachable!(),
+        StreamStage::Done => unreachable!(),
     }
 
     Ok(())

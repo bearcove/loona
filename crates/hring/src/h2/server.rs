@@ -38,7 +38,7 @@ impl Default for ServerConf {
 }
 
 pub(crate) struct ConnState {
-    pub(crate) streams: HashMap<StreamId, StreamState>,
+    pub(crate) streams: HashMap<StreamId, StreamStage>,
     pub(crate) last_stream_id: StreamId,
     pub(crate) self_settings: Settings,
     pub(crate) peer_settings: Settings,
@@ -62,11 +62,7 @@ enum ContinuationState {
     ContinuingHeaders(StreamId),
 }
 
-pub(crate) struct StreamState {
-    pub(crate) rx_stage: StreamRxStage,
-}
-
-pub(crate) enum StreamRxStage {
+pub(crate) enum StreamStage {
     Headers(HeadersData),
     Body(H2BodySender),
     Trailers(H2BodySender, HeadersData),
@@ -263,29 +259,29 @@ async fn h2_read_loop(
                         }
 
                         let body_tx = {
-                            let stream = state
+                            let stage = state
                                 .streams
                                 .get_mut(&frame.stream_id)
                                 // TODO: proper error handling (connection error)
                                 .expect("received data for unknown stream");
-                            match &mut stream.rx_stage {
-                                StreamRxStage::Headers(_) => {
+                            match stage {
+                                StreamStage::Headers(_) => {
                                     // TODO: proper error handling (stream error)
                                     panic!("expected headers, received data")
                                 }
-                                StreamRxStage::Trailers(..) => {
+                                StreamStage::Trailers(..) => {
                                     // TODO: proper error handling (stream error)
                                     panic!("expected trailers, received data")
                                 }
-                                StreamRxStage::Body(tx) => {
+                                StreamStage::Body(tx) => {
                                     // TODO: we can get rid of that clone sometimes
                                     let tx = tx.clone();
                                     if flags.contains(DataFlags::EndStream) {
-                                        stream.rx_stage = StreamRxStage::Done;
+                                        *stage = StreamStage::Done;
                                     }
                                     tx
                                 }
-                                StreamRxStage::Done => {
+                                StreamStage::Done => {
                                     // TODO: proper error handling (stream error)
                                     panic!("received data for stream after completion");
                                 }
@@ -359,7 +355,7 @@ async fn h2_read_loop(
                         };
 
                         match state.streams.get_mut(&frame.stream_id) {
-                            Some(ss) => {
+                            Some(stage) => {
                                 debug!("Receiving trailers for stream {}", frame.stream_id);
 
                                 if !flags.contains(HeadersFlags::EndStream) {
@@ -369,12 +365,10 @@ async fn h2_read_loop(
                                         );
                                 }
 
-                                let stage =
-                                    std::mem::replace(&mut ss.rx_stage, StreamRxStage::Done);
-                                match stage {
-                                    StreamRxStage::Body(body_tx) => {
-                                        ss.rx_stage =
-                                            StreamRxStage::Trailers(body_tx, headers_data);
+                                let prev_stage = std::mem::replace(stage, StreamStage::Done);
+                                match prev_stage {
+                                    StreamStage::Body(body_tx) => {
+                                        *stage = StreamStage::Trailers(body_tx, headers_data);
                                     }
                                     // FIXME: that's a connection error
                                     _ => unreachable!(),
@@ -382,12 +376,9 @@ async fn h2_read_loop(
                             }
                             None => {
                                 debug!("Receiving headers for stream {}", frame.stream_id);
-                                state.streams.insert(
-                                    frame.stream_id,
-                                    StreamState {
-                                        rx_stage: StreamRxStage::Headers(headers_data),
-                                    },
-                                );
+                                state
+                                    .streams
+                                    .insert(frame.stream_id, StreamStage::Headers(headers_data));
                             }
                         }
 
@@ -512,8 +503,8 @@ async fn h2_read_loop(
                     // unwrap rationale: we just checked that this is a
                     // continuation of a stream we've already learned about.
                     let ss = state.streams.get_mut(&frame.stream_id).unwrap();
-                    match &mut ss.rx_stage {
-                        StreamRxStage::Headers(data) | StreamRxStage::Trailers(_, data) => {
+                    match ss {
+                        StreamStage::Headers(data) | StreamStage::Trailers(_, data) => {
                             data.fragments.push(payload);
                         }
                         _ => {
