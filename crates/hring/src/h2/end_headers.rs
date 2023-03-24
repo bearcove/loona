@@ -15,7 +15,7 @@ use super::{
     body::{H2Body, H2BodyItem, PieceOrTrailers},
     encode::{EncoderState, H2ConnEvent, H2Encoder},
     parse::{KnownErrorCode, StreamId},
-    send_goaway_inner, ConnState, HeadersData, StreamRxStage, StreamState,
+    send_goaway, ConnState, HeadersData, StreamRxStage, StreamState,
 };
 
 pub(crate) async fn end_headers(
@@ -25,7 +25,6 @@ pub(crate) async fn end_headers(
     driver: &Rc<impl ServerDriver + 'static>,
     hpack_dec: &mut hring_hpack::Decoder<'_>,
 ) {
-    let last_stream_id = state.last_stream_id();
     let stream_state = state
         .streams
         .get_mut(&stream_id)
@@ -33,9 +32,9 @@ pub(crate) async fn end_headers(
         .expect("stream state must exist");
 
     if let Err(err) = end_headers_inner(ev_tx, stream_id, stream_state, driver, hpack_dec).await {
-        send_goaway_inner(
+        send_goaway(
             ev_tx,
-            last_stream_id,
+            state,
             err,
             // FIXME: this isn't _always_ CompressionError. also
             // not all errors are GOAWAY material, some are just RST

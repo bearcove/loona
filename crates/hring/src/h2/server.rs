@@ -37,24 +37,21 @@ impl Default for ServerConf {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct ConnState {
     pub(crate) streams: HashMap<StreamId, StreamState>,
+    pub(crate) last_stream_id: StreamId,
     pub(crate) self_settings: Settings,
     pub(crate) peer_settings: Settings,
 }
 
-impl ConnState {
-    /// Returns the last stream ID.
-    ///
-    /// FIXME: this is bad for multiple reasons: it goes through
-    /// all streams, and it doesn't care about the direction of the streams.
-    pub(crate) fn last_stream_id(&self) -> StreamId {
-        self.streams
-            .keys()
-            .copied()
-            .max()
-            .unwrap_or(StreamId::CONNECTION)
+impl Default for ConnState {
+    fn default() -> Self {
+        Self {
+            streams: Default::default(),
+            last_stream_id: StreamId(0),
+            self_settings: Default::default(),
+            peer_settings: Default::default(),
+        }
     }
 }
 
@@ -311,12 +308,13 @@ async fn h2_read_loop(
                             continue;
                         }
 
-                        if frame.stream_id.0 < state.last_stream_id().0 {
+                        if frame.stream_id.0 < state.last_stream_id.0 {
                             let e =
                                 eyre::eyre!("client is trying to initiate stream with id lower than the last one it initiated");
                             send_goaway(&ev_tx, &state, e, KnownErrorCode::ProtocolError).await;
                             continue;
                         }
+                        state.last_stream_id = frame.stream_id;
 
                         let padding_length = if flags.contains(HeadersFlags::Padded) {
                             if payload.is_empty() {
@@ -566,16 +564,6 @@ pub(crate) async fn send_goaway(
     e: eyre::Report,
     error_code: KnownErrorCode,
 ) {
-    let last_stream_id = state.last_stream_id();
-    send_goaway_inner(ev_tx, last_stream_id, e, error_code).await
-}
-
-pub(crate) async fn send_goaway_inner(
-    ev_tx: &mpsc::Sender<H2ConnEvent>,
-    last_stream_id: StreamId,
-    e: eyre::Report,
-    error_code: KnownErrorCode,
-) {
     warn!("connection error: {e:?}");
     debug!("error_code = {error_code:?}");
 
@@ -585,7 +573,7 @@ pub(crate) async fn send_goaway_inner(
     if ev_tx
         .send(H2ConnEvent::GoAway {
             error_code,
-            last_stream_id,
+            last_stream_id: state.last_stream_id,
             additional_debug_data: Piece::Vec(additional_debug_data),
         })
         .await
