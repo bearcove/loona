@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, future::Future, rc::Rc};
 
 use enumflags2::BitFlags;
 use eyre::Context;
@@ -136,7 +136,7 @@ pub async fn serve(
         ev_tx.clone(),
         transport_r,
         client_buf,
-        state.clone(),
+        state,
     );
 
     let write_task = h2_write_loop(ev_rx, transport_w, out_scratch);
@@ -210,7 +210,9 @@ async fn h2_read_loop(
                         state.borrow().self_settings.max_frame_size
                     );
 
-                    send_goaway(&ev_tx, &state, e, KnownErrorCode::FrameSizeError).await;
+                    let goaway =
+                        send_goaway(&ev_tx, &state.borrow(), e, KnownErrorCode::FrameSizeError);
+                    goaway.await;
                 }
             }
             _ => {
@@ -310,14 +312,26 @@ async fn h2_read_loop(
                         if frame.stream_id.is_server_initiated() {
                             let e =
                                 eyre::eyre!("client is trying to initiate even-numbered stream");
-                            send_goaway(&ev_tx, &state, e, KnownErrorCode::ProtocolError).await;
+                            let goaway = send_goaway(
+                                &ev_tx,
+                                &state.borrow(),
+                                e,
+                                KnownErrorCode::ProtocolError,
+                            );
+                            goaway.await;
                             continue;
                         }
 
                         if frame.stream_id.0 < state.borrow().last_stream_id().0 {
                             let e =
                                 eyre::eyre!("client is trying to initiate stream with id lower than the last one it initiated");
-                            send_goaway(&ev_tx, &state, e, KnownErrorCode::ProtocolError).await;
+                            let goaway = send_goaway(
+                                &ev_tx,
+                                &state.borrow(),
+                                e,
+                                KnownErrorCode::ProtocolError,
+                            );
+                            goaway.await;
                             continue;
                         }
 
@@ -342,7 +356,13 @@ async fn h2_read_loop(
 
                             if pri_spec.stream_dependency == frame.stream_id {
                                 let e = eyre::eyre!("invalid priority: stream depends on itself");
-                                send_goaway(&ev_tx, &state, e, KnownErrorCode::ProtocolError).await;
+                                let goaway = send_goaway(
+                                    &ev_tx,
+                                    &state.borrow(),
+                                    e,
+                                    KnownErrorCode::ProtocolError,
+                                );
+                                goaway.await;
                                 continue;
                             }
                         }
@@ -363,7 +383,9 @@ async fn h2_read_loop(
                             fragments: smallvec![payload],
                         };
 
-                        let res = {
+                        let mut res = None;
+
+                        {
                             let mut state = state.borrow_mut();
                             match state.streams.get_mut(&frame.stream_id) {
                                 Some(ss) => {
@@ -399,14 +421,13 @@ async fn h2_read_loop(
                             }
 
                             if flags.contains(HeadersFlags::EndHeaders) {
-                                let res = end_headers::end_headers(
+                                res = Some(end_headers::end_headers(
                                     &ev_tx,
                                     frame.stream_id,
                                     &mut state,
                                     &driver,
                                     &mut hpack_dec,
-                                );
-                                Some(res)
+                                ));
                             } else {
                                 debug!(
                                     "expecting more headers/trailers for stream {}",
@@ -414,7 +435,6 @@ async fn h2_read_loop(
                                 );
                                 continuation_state =
                                     ContinuationState::ContinuingHeaders(frame.stream_id);
-                                None
                             }
                         };
 
@@ -431,7 +451,13 @@ async fn h2_read_loop(
 
                         if pri_spec.stream_dependency == frame.stream_id {
                             let e = eyre::eyre!("invalid priority: stream depends on itself");
-                            send_goaway(&ev_tx, &state, e, KnownErrorCode::ProtocolError).await;
+                            let goaway = send_goaway(
+                                &ev_tx,
+                                &state.borrow(),
+                                e,
+                                KnownErrorCode::ProtocolError,
+                            );
+                            goaway.await;
                             continue;
                         }
                     }
@@ -487,16 +513,16 @@ async fn h2_read_loop(
                         debug!("ignoring window update");
                     }
                     FrameType::Continuation(_flags) => {
-                        send_goaway(
+                        let goaway = send_goaway(
                             &ev_tx,
-                            &state,
+                            &state.borrow(),
                             eyre::eyre!(
                                 "received unexpected continuation frame for stream {}",
                                 frame.stream_id
                             ),
                             KnownErrorCode::ProtocolError,
-                        )
-                        .await
+                        );
+                        goaway.await
                     }
                     FrameType::Unknown(ft) => {
                         trace!(
@@ -510,57 +536,85 @@ async fn h2_read_loop(
             ContinuationState::ContinuingHeaders(expected_stream_id) => match frame.frame_type {
                 FrameType::Continuation(flags) => {
                     if frame.stream_id != expected_stream_id {
-                        send_goaway(
+                        let goaway = send_goaway(
                             &ev_tx,
-                            &state,
+                            &state.borrow(),
                             eyre::eyre!("continuation frame for wrong stream"),
                             KnownErrorCode::ProtocolError,
-                        )
-                        .await;
+                        );
+                        goaway.await;
                         continue;
                     }
 
-                    if flags.contains(ContinuationFlags::EndHeaders) {
-                        let res = {
-                            let mut state = state.borrow_mut();
-                            end_headers::end_headers(
+                    let mut goaway = None;
+                    let mut res = None;
+
+                    {
+                        let mut state = state.borrow_mut();
+                        // unwrap rationale: we just checked that this is a
+                        // continuation of a stream we've already learned about.
+                        let ss = state.streams.get_mut(&frame.stream_id).unwrap();
+                        match &mut ss.rx_stage {
+                            StreamRxStage::Headers(data) | StreamRxStage::Trailers(_, data) => {
+                                data.fragments.push(payload);
+                            }
+                            _ => {
+                                goaway = Some(send_goaway(
+                                    &ev_tx,
+                                    &state,
+                                    eyre::eyre!("continuation frame for wrong stream"),
+                                    KnownErrorCode::ProtocolError,
+                                ));
+                            }
+                        }
+
+                        if flags.contains(ContinuationFlags::EndHeaders) {
+                            res = Some(end_headers::end_headers(
                                 &ev_tx,
                                 frame.stream_id,
                                 &mut state,
                                 &driver,
                                 &mut hpack_dec,
-                            )
-                        };
+                            ));
+                        } else {
+                            debug!(
+                                "expecting more headers/trailers for stream {}",
+                                frame.stream_id
+                            );
+                        }
+                    }
+
+                    if let Some(goaway) = goaway {
+                        goaway.await;
+                        continue;
+                    }
+
+                    if let Some(res) = res {
                         res.finalize().await?;
-                    } else {
-                        debug!(
-                            "expecting more headers/trailers for stream {}",
-                            frame.stream_id
-                        );
                     }
                 }
                 other => {
-                    send_goaway(
+                    let goaway = send_goaway(
                         &ev_tx,
-                        &state,
+                        &state.borrow(),
                         eyre::eyre!("expected continuation frame, got {:?}", other),
                         KnownErrorCode::ProtocolError,
-                    )
-                    .await
+                    );
+                    goaway.await
                 }
             },
         }
     }
 }
 
-pub(crate) async fn send_goaway(
-    ev_tx: &mpsc::Sender<H2ConnEvent>,
-    state: &Rc<RefCell<ConnState>>,
+pub(crate) fn send_goaway<'ev_tx>(
+    ev_tx: &'ev_tx mpsc::Sender<H2ConnEvent>,
+    state: &ConnState,
     e: eyre::Report,
     error_code: KnownErrorCode,
-) {
-    let last_stream_id = state.borrow().last_stream_id();
-    send_goaway_inner(ev_tx, last_stream_id, e, error_code).await;
+) -> impl Future<Output = ()> + 'ev_tx {
+    let last_stream_id = state.last_stream_id();
+    send_goaway_inner(ev_tx, last_stream_id, e, error_code)
 }
 
 pub(crate) async fn send_goaway_inner(
