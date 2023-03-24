@@ -7,5 +7,6 @@ pub use server::*;
 pub(crate) mod parse;
 
 mod encode;
+mod end_headers;
 
 mod body;
