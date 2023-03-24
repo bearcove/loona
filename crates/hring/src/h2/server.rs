@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, future::Future, rc::Rc};
+use std::{collections::HashMap, rc::Rc};
 
 use enumflags2::BitFlags;
 use eyre::Context;
@@ -93,8 +93,6 @@ pub async fn serve(
     let mut state = ConnState::default();
     state.self_settings.max_concurrent_streams = conf.max_streams;
 
-    let state = Rc::new(RefCell::new(state));
-
     (client_buf, _) = match read_and_parse(
         parse::preface,
         &mut transport_r,
@@ -115,7 +113,7 @@ pub async fn serve(
 
     // we have to send a settings frame
     {
-        let payload_roll = state.borrow().self_settings.into_roll(&mut out_scratch)?;
+        let payload_roll = state.self_settings.into_roll(&mut out_scratch)?;
         let frame_roll = Frame::new(
             FrameType::Settings(Default::default()),
             StreamId::CONNECTION,
@@ -176,7 +174,7 @@ async fn h2_read_loop(
     ev_tx: mpsc::Sender<H2ConnEvent>,
     mut transport_r: impl ReadOwned,
     mut client_buf: RollMut,
-    state: Rc<RefCell<ConnState>>,
+    mut state: ConnState,
 ) -> eyre::Result<()> {
     let mut hpack_dec = hring_hpack::Decoder::new();
     hpack_dec.set_max_allowed_table_size(Settings::default().header_table_size.try_into().unwrap());
@@ -198,7 +196,7 @@ async fn h2_read_loop(
 
         match &frame.frame_type {
             FrameType::Headers(..) | FrameType::Data(..) => {
-                let max_frame_size = state.borrow().self_settings.max_frame_size;
+                let max_frame_size = state.self_settings.max_frame_size;
                 debug!(
                     "frame len = {}, max_frame_size = {max_frame_size}",
                     frame.len
@@ -207,12 +205,10 @@ async fn h2_read_loop(
                     let e = eyre::eyre!(
                         "frame too large: {} > {}",
                         frame.len,
-                        state.borrow().self_settings.max_frame_size
+                        state.self_settings.max_frame_size
                     );
 
-                    let goaway =
-                        send_goaway(&ev_tx, &state.borrow(), e, KnownErrorCode::FrameSizeError);
-                    goaway.await;
+                    send_goaway(&ev_tx, &state, e, KnownErrorCode::FrameSizeError).await;
                 }
             }
             _ => {
@@ -270,7 +266,6 @@ async fn h2_read_loop(
                         }
 
                         let body_tx = {
-                            let mut state = state.borrow_mut();
                             let stream = state
                                 .streams
                                 .get_mut(&frame.stream_id)
@@ -312,26 +307,14 @@ async fn h2_read_loop(
                         if frame.stream_id.is_server_initiated() {
                             let e =
                                 eyre::eyre!("client is trying to initiate even-numbered stream");
-                            let goaway = send_goaway(
-                                &ev_tx,
-                                &state.borrow(),
-                                e,
-                                KnownErrorCode::ProtocolError,
-                            );
-                            goaway.await;
+                            send_goaway(&ev_tx, &state, e, KnownErrorCode::ProtocolError).await;
                             continue;
                         }
 
-                        if frame.stream_id.0 < state.borrow().last_stream_id().0 {
+                        if frame.stream_id.0 < state.last_stream_id().0 {
                             let e =
                                 eyre::eyre!("client is trying to initiate stream with id lower than the last one it initiated");
-                            let goaway = send_goaway(
-                                &ev_tx,
-                                &state.borrow(),
-                                e,
-                                KnownErrorCode::ProtocolError,
-                            );
-                            goaway.await;
+                            send_goaway(&ev_tx, &state, e, KnownErrorCode::ProtocolError).await;
                             continue;
                         }
 
@@ -356,13 +339,7 @@ async fn h2_read_loop(
 
                             if pri_spec.stream_dependency == frame.stream_id {
                                 let e = eyre::eyre!("invalid priority: stream depends on itself");
-                                let goaway = send_goaway(
-                                    &ev_tx,
-                                    &state.borrow(),
-                                    e,
-                                    KnownErrorCode::ProtocolError,
-                                );
-                                goaway.await;
+                                send_goaway(&ev_tx, &state, e, KnownErrorCode::ProtocolError).await;
                                 continue;
                             }
                         }
@@ -386,7 +363,6 @@ async fn h2_read_loop(
                         let mut res = None;
 
                         {
-                            let mut state = state.borrow_mut();
                             match state.streams.get_mut(&frame.stream_id) {
                                 Some(ss) => {
                                     debug!("Receiving trailers for stream {}", frame.stream_id);
@@ -451,12 +427,8 @@ async fn h2_read_loop(
 
                         if pri_spec.stream_dependency == frame.stream_id {
                             let e = eyre::eyre!("invalid priority: stream depends on itself");
-                            let goaway = send_goaway(
-                                &ev_tx,
-                                &state.borrow(),
-                                e,
-                                KnownErrorCode::ProtocolError,
-                            );
+                            let goaway =
+                                send_goaway(&ev_tx, &state, e, KnownErrorCode::ProtocolError);
                             goaway.await;
                             continue;
                         }
@@ -472,7 +444,7 @@ async fn h2_read_loop(
                                 .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
                             let new_max_header_table_size = settings.header_table_size;
                             debug!(?settings, "Received settings");
-                            state.borrow_mut().peer_settings = settings;
+                            state.peer_settings = settings;
 
                             if ev_tx
                                 .send(H2ConnEvent::AcknowledgeSettings {
@@ -515,7 +487,7 @@ async fn h2_read_loop(
                     FrameType::Continuation(_flags) => {
                         let goaway = send_goaway(
                             &ev_tx,
-                            &state.borrow(),
+                            &state,
                             eyre::eyre!(
                                 "received unexpected continuation frame for stream {}",
                                 frame.stream_id
@@ -536,21 +508,19 @@ async fn h2_read_loop(
             ContinuationState::ContinuingHeaders(expected_stream_id) => match frame.frame_type {
                 FrameType::Continuation(flags) => {
                     if frame.stream_id != expected_stream_id {
-                        let goaway = send_goaway(
+                        send_goaway(
                             &ev_tx,
-                            &state.borrow(),
+                            &state,
                             eyre::eyre!("continuation frame for wrong stream"),
                             KnownErrorCode::ProtocolError,
-                        );
-                        goaway.await;
+                        )
+                        .await;
                         continue;
                     }
 
-                    let mut goaway = None;
                     let mut res = None;
 
                     {
-                        let mut state = state.borrow_mut();
                         // unwrap rationale: we just checked that this is a
                         // continuation of a stream we've already learned about.
                         let ss = state.streams.get_mut(&frame.stream_id).unwrap();
@@ -559,12 +529,14 @@ async fn h2_read_loop(
                                 data.fragments.push(payload);
                             }
                             _ => {
-                                goaway = Some(send_goaway(
+                                send_goaway(
                                     &ev_tx,
                                     &state,
                                     eyre::eyre!("continuation frame for wrong stream"),
                                     KnownErrorCode::ProtocolError,
-                                ));
+                                )
+                                .await;
+                                continue;
                             }
                         }
 
@@ -584,11 +556,6 @@ async fn h2_read_loop(
                         }
                     }
 
-                    if let Some(goaway) = goaway {
-                        goaway.await;
-                        continue;
-                    }
-
                     if let Some(res) = res {
                         res.finalize().await?;
                     }
@@ -596,7 +563,7 @@ async fn h2_read_loop(
                 other => {
                     let goaway = send_goaway(
                         &ev_tx,
-                        &state.borrow(),
+                        &state,
                         eyre::eyre!("expected continuation frame, got {:?}", other),
                         KnownErrorCode::ProtocolError,
                     );
@@ -607,14 +574,14 @@ async fn h2_read_loop(
     }
 }
 
-pub(crate) fn send_goaway<'ev_tx>(
-    ev_tx: &'ev_tx mpsc::Sender<H2ConnEvent>,
+pub(crate) async fn send_goaway(
+    ev_tx: &mpsc::Sender<H2ConnEvent>,
     state: &ConnState,
     e: eyre::Report,
     error_code: KnownErrorCode,
-) -> impl Future<Output = ()> + 'ev_tx {
+) {
     let last_stream_id = state.last_stream_id();
-    send_goaway_inner(ev_tx, last_stream_id, e, error_code)
+    send_goaway_inner(ev_tx, last_stream_id, e, error_code).await
 }
 
 pub(crate) async fn send_goaway_inner(
