@@ -360,62 +360,55 @@ async fn h2_read_loop(
                             fragments: smallvec![payload],
                         };
 
-                        let mut res = None;
+                        match state.streams.get_mut(&frame.stream_id) {
+                            Some(ss) => {
+                                debug!("Receiving trailers for stream {}", frame.stream_id);
 
-                        {
-                            match state.streams.get_mut(&frame.stream_id) {
-                                Some(ss) => {
-                                    debug!("Receiving trailers for stream {}", frame.stream_id);
-
-                                    if !flags.contains(HeadersFlags::EndStream) {
-                                        todo!(
+                                if !flags.contains(HeadersFlags::EndStream) {
+                                    todo!(
                                             "handle connection error: trailers must have EndStream, this just looks like duplicate headers for stream {}",
                                             frame.stream_id
                                         );
-                                    }
-
-                                    let stage =
-                                        std::mem::replace(&mut ss.rx_stage, StreamRxStage::Done);
-                                    match stage {
-                                        StreamRxStage::Body(body_tx) => {
-                                            ss.rx_stage =
-                                                StreamRxStage::Trailers(body_tx, headers_data);
-                                        }
-                                        // FIXME: that's a connection error
-                                        _ => unreachable!(),
-                                    }
                                 }
-                                None => {
-                                    debug!("Receiving headers for stream {}", frame.stream_id);
-                                    state.streams.insert(
-                                        frame.stream_id,
-                                        StreamState {
-                                            rx_stage: StreamRxStage::Headers(headers_data),
-                                        },
-                                    );
+
+                                let stage =
+                                    std::mem::replace(&mut ss.rx_stage, StreamRxStage::Done);
+                                match stage {
+                                    StreamRxStage::Body(body_tx) => {
+                                        ss.rx_stage =
+                                            StreamRxStage::Trailers(body_tx, headers_data);
+                                    }
+                                    // FIXME: that's a connection error
+                                    _ => unreachable!(),
                                 }
                             }
-
-                            if flags.contains(HeadersFlags::EndHeaders) {
-                                res = Some(end_headers::end_headers(
-                                    &ev_tx,
+                            None => {
+                                debug!("Receiving headers for stream {}", frame.stream_id);
+                                state.streams.insert(
                                     frame.stream_id,
-                                    &mut state,
-                                    &driver,
-                                    &mut hpack_dec,
-                                ));
-                            } else {
-                                debug!(
-                                    "expecting more headers/trailers for stream {}",
-                                    frame.stream_id
+                                    StreamState {
+                                        rx_stage: StreamRxStage::Headers(headers_data),
+                                    },
                                 );
-                                continuation_state =
-                                    ContinuationState::ContinuingHeaders(frame.stream_id);
                             }
-                        };
+                        }
 
-                        if let Some(res) = res {
-                            res.finalize().await?;
+                        if flags.contains(HeadersFlags::EndHeaders) {
+                            end_headers::end_headers(
+                                &ev_tx,
+                                frame.stream_id,
+                                &mut state,
+                                &driver,
+                                &mut hpack_dec,
+                            )
+                            .await;
+                        } else {
+                            debug!(
+                                "expecting more headers/trailers for stream {}",
+                                frame.stream_id
+                            );
+                            continuation_state =
+                                ContinuationState::ContinuingHeaders(frame.stream_id);
                         }
                     }
                     FrameType::Priority => {
@@ -518,46 +511,39 @@ async fn h2_read_loop(
                         continue;
                     }
 
-                    let mut res = None;
-
-                    {
-                        // unwrap rationale: we just checked that this is a
-                        // continuation of a stream we've already learned about.
-                        let ss = state.streams.get_mut(&frame.stream_id).unwrap();
-                        match &mut ss.rx_stage {
-                            StreamRxStage::Headers(data) | StreamRxStage::Trailers(_, data) => {
-                                data.fragments.push(payload);
-                            }
-                            _ => {
-                                send_goaway(
-                                    &ev_tx,
-                                    &state,
-                                    eyre::eyre!("continuation frame for wrong stream"),
-                                    KnownErrorCode::ProtocolError,
-                                )
-                                .await;
-                                continue;
-                            }
+                    // unwrap rationale: we just checked that this is a
+                    // continuation of a stream we've already learned about.
+                    let ss = state.streams.get_mut(&frame.stream_id).unwrap();
+                    match &mut ss.rx_stage {
+                        StreamRxStage::Headers(data) | StreamRxStage::Trailers(_, data) => {
+                            data.fragments.push(payload);
                         }
-
-                        if flags.contains(ContinuationFlags::EndHeaders) {
-                            res = Some(end_headers::end_headers(
+                        _ => {
+                            send_goaway(
                                 &ev_tx,
-                                frame.stream_id,
-                                &mut state,
-                                &driver,
-                                &mut hpack_dec,
-                            ));
-                        } else {
-                            debug!(
-                                "expecting more headers/trailers for stream {}",
-                                frame.stream_id
-                            );
+                                &state,
+                                eyre::eyre!("continuation frame for wrong stream"),
+                                KnownErrorCode::ProtocolError,
+                            )
+                            .await;
+                            continue;
                         }
                     }
 
-                    if let Some(res) = res {
-                        res.finalize().await?;
+                    if flags.contains(ContinuationFlags::EndHeaders) {
+                        end_headers::end_headers(
+                            &ev_tx,
+                            frame.stream_id,
+                            &mut state,
+                            &driver,
+                            &mut hpack_dec,
+                        )
+                        .await;
+                    } else {
+                        debug!(
+                            "expecting more headers/trailers for stream {}",
+                            frame.stream_id
+                        );
                     }
                 }
                 other => {

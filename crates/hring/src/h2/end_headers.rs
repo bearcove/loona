@@ -12,19 +12,19 @@ use tracing::{debug, warn};
 use crate::{ExpectResponseHeaders, Headers, Method, Request, Responder, ServerDriver};
 
 use super::{
-    body::{H2Body, H2BodyItem, H2BodySender, PieceOrTrailers},
+    body::{H2Body, H2BodyItem, PieceOrTrailers},
     encode::{EncoderState, H2ConnEvent, H2Encoder},
     parse::{KnownErrorCode, StreamId},
     send_goaway_inner, ConnState, HeadersData, StreamRxStage, StreamState,
 };
 
-pub(crate) fn end_headers(
+pub(crate) async fn end_headers(
     ev_tx: &mpsc::Sender<H2ConnEvent>,
     stream_id: StreamId,
     state: &mut ConnState,
     driver: &Rc<impl ServerDriver + 'static>,
-    hpack_dec: &mut hring_hpack::Decoder,
-) -> EndHeadersResult {
+    hpack_dec: &mut hring_hpack::Decoder<'_>,
+) {
     let last_stream_id = state.last_stream_id();
     let stream_state = state
         .streams
@@ -32,26 +32,26 @@ pub(crate) fn end_headers(
         // FIXME: don't panic
         .expect("stream state must exist");
 
-    match end_headers_inner(ev_tx, stream_id, stream_state, driver, hpack_dec) {
-        Ok(res) => res,
-        Err(err) => EndHeadersResult {
-            stream_id,
-            payload: EndHeadersResultPayload::Err {
-                ev_tx: ev_tx.clone(),
-                last_stream_id,
-                err,
-            },
-        },
+    if let Err(err) = end_headers_inner(ev_tx, stream_id, stream_state, driver, hpack_dec).await {
+        send_goaway_inner(
+            ev_tx,
+            last_stream_id,
+            err,
+            // FIXME: this isn't _always_ CompressionError. also
+            // not all errors are GOAWAY material, some are just RST
+            KnownErrorCode::CompressionError,
+        )
+        .await;
     }
 }
 
-fn end_headers_inner(
+async fn end_headers_inner(
     ev_tx: &mpsc::Sender<H2ConnEvent>,
     stream_id: StreamId,
     stream_state: &mut StreamState,
     driver: &Rc<impl ServerDriver + 'static>,
-    hpack_dec: &mut hring_hpack::Decoder,
-) -> eyre::Result<EndHeadersResult> {
+    hpack_dec: &mut hring_hpack::Decoder<'_>,
+) -> eyre::Result<()> {
     let mut method: Option<Method> = None;
     let mut scheme: Option<Scheme> = None;
     let mut path: Option<PieceStr> = None;
@@ -232,84 +232,23 @@ fn end_headers_inner(
             } else {
                 StreamRxStage::Body(piece_tx)
             };
-
-            Ok(EndHeadersResult {
-                payload: EndHeadersResultPayload::Ok,
-                stream_id,
-            })
         }
         StreamRxStage::Body(_) => unreachable!(),
         StreamRxStage::Trailers(body_tx, data) => {
             decode_data(HeadersOrTrailers::Trailers, &data)?;
 
-            Ok(EndHeadersResult {
-                stream_id,
-                payload: EndHeadersResultPayload::OkWithTrailers {
-                    body_tx,
-                    trailers: Box::new(headers),
-                },
-            })
+            if body_tx
+                .send(Ok(PieceOrTrailers::Trailers(Box::new(headers))))
+                .await
+                .is_err()
+            {
+                warn!("TODO: The body is being ignored, we should reset the stream");
+            }
         }
         StreamRxStage::Done => unreachable!(),
     }
-}
 
-#[must_use]
-pub(crate) struct EndHeadersResult {
-    #[allow(dead_code)]
-    stream_id: StreamId,
-    payload: EndHeadersResultPayload,
-}
-
-pub(crate) enum EndHeadersResultPayload {
-    Ok,
-    OkWithTrailers {
-        body_tx: H2BodySender,
-        trailers: Box<Headers>,
-    },
-    Err {
-        ev_tx: mpsc::Sender<H2ConnEvent>,
-        last_stream_id: StreamId,
-        err: eyre::Report,
-    },
-}
-
-impl EndHeadersResult {
-    /// Finalizes this result, asynchronously, while not
-    /// holding a lock on State.
-    pub(crate) async fn finalize(self) -> eyre::Result<()> {
-        match self.payload {
-            EndHeadersResultPayload::Ok => {
-                // well, good!
-            }
-            EndHeadersResultPayload::OkWithTrailers { body_tx, trailers } => {
-                if body_tx
-                    .send(Ok(PieceOrTrailers::Trailers(trailers)))
-                    .await
-                    .is_err()
-                {
-                    warn!("TODO: The body is being ignored, we should reset the stream");
-                }
-            }
-            EndHeadersResultPayload::Err {
-                ev_tx,
-                last_stream_id,
-                err,
-            } => {
-                // TODO: we should also reset the stream here, right?
-                send_goaway_inner(
-                    &ev_tx,
-                    last_stream_id,
-                    err,
-                    // FIXME: this isn't _always_ CompressionError. also
-                    // not all errors are GOAWAY material, some are just RST
-                    KnownErrorCode::CompressionError,
-                )
-                .await;
-            }
-        }
-        Ok(())
-    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy)]
