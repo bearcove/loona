@@ -2,9 +2,9 @@ use std::{borrow::Cow, rc::Rc};
 
 use hring_buffet::{Piece, PieceStr};
 use http::{
-    header,
+    header::{self, HeaderName},
     uri::{Authority, PathAndQuery, Scheme},
-    HeaderName, Version,
+    Version,
 };
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
@@ -32,14 +32,7 @@ pub(crate) fn end_headers(
         // FIXME: don't panic
         .expect("stream state must exist");
 
-    match end_headers_inner(
-        ev_tx,
-        last_stream_id,
-        stream_id,
-        stream_state,
-        driver,
-        hpack_dec,
-    ) {
+    match end_headers_inner(ev_tx, stream_id, stream_state, driver, hpack_dec) {
         Ok(res) => res,
         Err(err) => EndHeadersResult {
             stream_id,
@@ -54,7 +47,6 @@ pub(crate) fn end_headers(
 
 fn end_headers_inner(
     ev_tx: &mpsc::Sender<H2ConnEvent>,
-    last_stream_id: StreamId,
     stream_id: StreamId,
     stream_state: &mut StreamState,
     driver: &Rc<impl ServerDriver + 'static>,
@@ -67,7 +59,7 @@ fn end_headers_inner(
 
     let mut headers = Headers::default();
 
-    let decode_data =
+    let mut decode_data =
         |headers_or_trailers: HeadersOrTrailers, data: &HeadersData| -> eyre::Result<()> {
             // TODO: find a way to propagate errors from here - probably will have to change
             // the function signature in hring-hpack.
@@ -250,13 +242,6 @@ fn end_headers_inner(
         StreamRxStage::Trailers(body_tx, data) => {
             decode_data(HeadersOrTrailers::Trailers, &data)?;
 
-            let body_tx = match rx_stage {
-                StreamRxStage::Body(body_tx) => body_tx,
-                _ => unreachable!("trailers must follow a body"),
-            };
-
-            stream_state.rx_stage = StreamRxStage::Done;
-
             Ok(EndHeadersResult {
                 stream_id,
                 payload: EndHeadersResultPayload::OkWithTrailers {
@@ -270,7 +255,7 @@ fn end_headers_inner(
 }
 
 #[must_use]
-struct EndHeadersResult {
+pub(crate) struct EndHeadersResult {
     #[allow(dead_code)]
     stream_id: StreamId,
     payload: EndHeadersResultPayload,

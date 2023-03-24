@@ -12,7 +12,7 @@ use crate::{
     h2::{
         body::PieceOrTrailers,
         encode::{H2ConnEvent, H2EventPayload},
-        end_headers::{self, HeadersOrTrailers},
+        end_headers,
         parse::{
             self, ContinuationFlags, DataFlags, Frame, FrameType, HeadersFlags, KnownErrorCode,
             PingFlags, PrioritySpec, SettingsFlags, StreamId,
@@ -94,8 +94,6 @@ pub async fn serve(
     state.self_settings.max_concurrent_streams = conf.max_streams;
 
     let state = Rc::new(RefCell::new(state));
-
-    const MAX_FRAME_LEN: usize = 64 * 1024;
 
     (client_buf, _) = match read_and_parse(
         parse::preface,
@@ -365,9 +363,8 @@ async fn h2_read_loop(
                             fragments: smallvec![payload],
                         };
 
-                        let headers_or_trailers;
-                        let state = state.borrow_mut();
-                        {
+                        let res = {
+                            let mut state = state.borrow_mut();
                             match state.streams.get_mut(&frame.stream_id) {
                                 Some(ss) => {
                                     debug!("Receiving trailers for stream {}", frame.stream_id);
@@ -379,7 +376,9 @@ async fn h2_read_loop(
                                         );
                                     }
 
-                                    match ss.rx_stage {
+                                    let stage =
+                                        std::mem::replace(&mut ss.rx_stage, StreamRxStage::Done);
+                                    match stage {
                                         StreamRxStage::Body(body_tx) => {
                                             ss.rx_stage =
                                                 StreamRxStage::Trailers(body_tx, headers_data);
@@ -398,24 +397,29 @@ async fn h2_read_loop(
                                     );
                                 }
                             }
+
+                            if flags.contains(HeadersFlags::EndHeaders) {
+                                let res = end_headers::end_headers(
+                                    &ev_tx,
+                                    frame.stream_id,
+                                    &mut state,
+                                    &driver,
+                                    &mut hpack_dec,
+                                );
+                                Some(res)
+                            } else {
+                                debug!(
+                                    "expecting more headers/trailers for stream {}",
+                                    frame.stream_id
+                                );
+                                continuation_state =
+                                    ContinuationState::ContinuingHeaders(frame.stream_id);
+                                None
+                            }
                         };
 
-                        if flags.contains(HeadersFlags::EndHeaders) {
-                            let res = end_headers::end_headers(
-                                &ev_tx,
-                                frame.stream_id,
-                                &mut *state,
-                                &driver,
-                                &mut hpack_dec,
-                            );
+                        if let Some(res) = res {
                             res.finalize().await?;
-                        } else {
-                            debug!(
-                                "expecting more {headers_or_trailers:?} for stream {}",
-                                frame.stream_id
-                            );
-                            continuation_state =
-                                ContinuationState::ContinuingHeaders(frame.stream_id);
                         }
                     }
                     FrameType::Priority => {
@@ -503,94 +507,48 @@ async fn h2_read_loop(
                     }
                 }
             }
-            ContinuationState::ContinuingHeaders(expected_stream_id) => {
-                match frame.frame_type {
-                    FrameType::Continuation(flags) => {
-                        if frame.stream_id != expected_stream_id {
-                            send_goaway(
-                                &ev_tx,
-                                &state,
-                                eyre::eyre!("continuation frame for wrong stream"),
-                                KnownErrorCode::ProtocolError,
-                            )
-                            .await;
-                            continue;
-                        }
-
-                        let res = {
-                            let mut state = state.borrow_mut();
-                            let ss = match state.streams.get_mut(&frame.stream_id) {
-                                Some(stream) => stream,
-                                None => {
-                                    todo!("handle connection error: continuation frame for unknown stream");
-                                }
-                            };
-                            // TODO: this match could be done within `end_headers` and
-                            // this might obviate the need for `HeadersOrTrailers`
-                            match &mut ss.rx_stage {
-                                StreamRxStage::Headers(headers_data) => {
-                                    headers_data.fragments.push(payload);
-                                    if flags.contains(ContinuationFlags::EndHeaders) {
-                                        let res = end_headers::end_headers(
-                                            &ev_tx,
-                                            frame.stream_id,
-                                            ss,
-                                            headers_data,
-                                            &driver,
-                                            &mut hpack_dec,
-                                            HeadersOrTrailers::Headers,
-                                        );
-                                        Some(res)
-                                    } else {
-                                        debug!(
-                                            "have {} field block fragments so far, will read CONTINUATION frames for headers",
-                                            headers_data.fragments.len()
-                                        );
-                                        None
-                                    }
-                                }
-                                StreamRxStage::Trailers(_body_tx, header_data) => {
-                                    header_data.fragments.push(payload);
-                                    if flags.contains(ContinuationFlags::EndHeaders) {
-                                        let res = end_headers::end_headers(
-                                            &ev_tx,
-                                            frame.stream_id,
-                                            ss,
-                                            header_data,
-                                            &driver,
-                                            &mut hpack_dec,
-                                            HeadersOrTrailers::Trailers,
-                                        );
-                                        Some(res)
-                                    } else {
-                                        debug!(
-                                            "have {} field block fragments so far, will read CONTINUATION frames for trailers",
-                                            header_data.fragments.len()
-                                        );
-                                        None
-                                    }
-                                }
-                                _ => {
-                                    todo!("handle connection error: continuation frame for non-headers stream");
-                                }
-                            }
-                        };
-
-                        if let Some(res) = res {
-                            res.finalize().await;
-                        }
-                    }
-                    other => {
+            ContinuationState::ContinuingHeaders(expected_stream_id) => match frame.frame_type {
+                FrameType::Continuation(flags) => {
+                    if frame.stream_id != expected_stream_id {
                         send_goaway(
                             &ev_tx,
                             &state,
-                            eyre::eyre!("expected continuation frame, got {:?}", other),
+                            eyre::eyre!("continuation frame for wrong stream"),
                             KnownErrorCode::ProtocolError,
                         )
-                        .await
+                        .await;
+                        continue;
+                    }
+
+                    if flags.contains(ContinuationFlags::EndHeaders) {
+                        let res = {
+                            let mut state = state.borrow_mut();
+                            end_headers::end_headers(
+                                &ev_tx,
+                                frame.stream_id,
+                                &mut state,
+                                &driver,
+                                &mut hpack_dec,
+                            )
+                        };
+                        res.finalize().await?;
+                    } else {
+                        debug!(
+                            "expecting more headers/trailers for stream {}",
+                            frame.stream_id
+                        );
                     }
                 }
-            }
+                other => {
+                    send_goaway(
+                        &ev_tx,
+                        &state,
+                        eyre::eyre!("expected continuation frame, got {:?}", other),
+                        KnownErrorCode::ProtocolError,
+                    )
+                    .await
+                }
+            },
         }
     }
 }
