@@ -20,6 +20,10 @@ pub(crate) enum H2ConnEvent {
         last_stream_id: StreamId,
         additional_debug_data: Piece,
     },
+    RstStream {
+        stream_id: StreamId,
+        error_code: KnownErrorCode,
+    },
 }
 
 #[derive(Debug)]

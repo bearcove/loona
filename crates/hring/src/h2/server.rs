@@ -290,6 +290,29 @@ async fn h2_write_loop(
                     .await
                     .wrap_err("writing goaway")?;
             }
+            H2ConnEvent::RstStream {
+                stream_id,
+                error_code,
+            } => {
+                debug!(%stream_id, ?error_code, "Sending RstStream");
+                let header = out_scratch.put_to_roll(4, |mut slice| {
+                    use byteorder::{BigEndian, WriteBytesExt};
+                    slice.write_u32::<BigEndian>(error_code.repr())?;
+                    Ok(())
+                })?;
+
+                let frame = Frame::new(FrameType::RstStream, stream_id)
+                    .with_len((header.len()).try_into().unwrap());
+
+                transport_w
+                    .writev_all(
+                        PieceList::default()
+                            .with(frame.into_roll(&mut out_scratch)?)
+                            .with(header),
+                    )
+                    .await
+                    .wrap_err("writing rststream")?;
+            }
         }
     }
 
@@ -326,20 +349,14 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
     ) -> eyre::Result<()> {
         loop {
             let frame;
-            (client_buf, frame) = match read_and_parse(
-                Frame::parse,
-                &mut transport_r,
-                client_buf,
-                32 * 1024,
-            )
-            .await?
-            {
-                Some((client_buf, frame)) => (client_buf, frame),
-                None => {
-                    debug!("h2 client closed connection");
-                    return Err(eyre::Report::from(ConnectionClosed));
-                }
-            };
+            (client_buf, frame) =
+                match read_and_parse(Frame::parse, &mut transport_r, client_buf, 128).await? {
+                    Some((client_buf, frame)) => (client_buf, frame),
+                    None => {
+                        debug!("h2 client closed connection");
+                        return Err(eyre::Report::from(ConnectionClosed));
+                    }
+                };
 
             debug!(?frame, "Received");
 
@@ -351,12 +368,13 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                         frame.len
                     );
                     if frame.len > max_frame_size {
-                        let e = eyre::eyre!(
-                            "frame too large: {} > {}",
-                            frame.len,
-                            self.state.self_settings.max_frame_size
-                        );
-                        self.send_goaway(e, KnownErrorCode::FrameSizeError).await;
+                        self.send_goaway(H2ConnectionError::FrameTooLarge {
+                            frame_type: frame.frame_type,
+                            frame_size: frame.len,
+                            max_frame_size,
+                        })
+                        .await;
+                        return Err(eyre::Report::from(ConnectionClosed));
                     }
                 }
                 _ => {
@@ -404,9 +422,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                                 (padding_length_roll, payload) = payload.split_at(1);
                                 let padding_length = padding_length_roll[0] as usize;
                                 if payload.len() < padding_length {
-                                    todo!(
-                            "handle connection error: padded headers frame, but not enough padding"
-                        );
+                                    todo!("handle connection error: padded headers frame, but not enough padding");
                                 }
 
                                 let at = payload.len() - padding_length;
@@ -459,24 +475,21 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                             // than the last one we accepted.
 
                             if frame.stream_id.is_server_initiated() {
-                                let e = eyre::eyre!(
-                                    "client is trying to initiate even-numbered stream"
-                                );
-                                self.send_goaway(e, KnownErrorCode::ProtocolError).await;
+                                self.send_goaway(H2ConnectionError::ClientSidShouldBeOdd)
+                                    .await;
                                 continue;
                             }
 
                             if frame.stream_id < self.state.last_stream_id {
-                                let e =
-                                eyre::eyre!("client is trying to initiate stream with id lower than the last one it initiated");
-                                self.send_goaway(e, KnownErrorCode::ProtocolError).await;
-                                continue;
+                                self.send_goaway(H2ConnectionError::ClientSidShouldBeIncreasing)
+                                    .await;
                             }
                             self.state.last_stream_id = frame.stream_id;
 
                             let padding_length = if flags.contains(HeadersFlags::Padded) {
                                 if payload.is_empty() {
-                                    todo!("handle connection error: padded headers frame, but no padding length");
+                                    self.send_goaway(H2ConnectionError::PaddedFrameEmpty).await;
+                                    continue;
                                 }
 
                                 let padding_length_roll;
@@ -494,10 +507,9 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                                 debug!(exclusive = %pri_spec.exclusive, stream_dependency = ?pri_spec.stream_dependency, weight = %pri_spec.weight, "received priority, exclusive");
 
                                 if pri_spec.stream_dependency == frame.stream_id {
-                                    self.send_goaway(
-                                        eyre::eyre!("invalid priority: stream depends on itself"),
-                                        KnownErrorCode::ProtocolError,
-                                    )
+                                    self.send_goaway(H2ConnectionError::HeadersInvalidPriority {
+                                        stream_id: frame.stream_id,
+                                    })
                                     .await;
                                     continue;
                                 }
@@ -505,9 +517,8 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
 
                             if padding_length > 0 {
                                 if payload.len() < padding_length {
-                                    todo!(
-                            "handle connection error: padded headers frame, but not enough padding"
-                        );
+                                    self.send_goaway(H2ConnectionError::PaddedFrameTooShort)
+                                        .await;
                                 }
 
                                 let at = payload.len() - padding_length;
@@ -569,13 +580,14 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                             debug!(?pri_spec, "received priority frame");
 
                             if pri_spec.stream_dependency == frame.stream_id {
-                                let e = eyre::eyre!("invalid priority: stream depends on itself");
-                                let goaway = self.send_goaway(e, KnownErrorCode::ProtocolError);
-                                goaway.await;
+                                self.send_goaway(H2ConnectionError::HeadersInvalidPriority {
+                                    stream_id: frame.stream_id,
+                                })
+                                .await;
                                 continue;
                             }
                         }
-                        FrameType::RstStream => todo!(),
+                        FrameType::RstStream => todo!("implement RstStream"),
                         FrameType::Settings(s) => {
                             if s.contains(SettingsFlags::Ack) {
                                 debug!("Peer has acknowledged our settings, cool");
@@ -630,13 +642,9 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                             debug!("ignoring window update");
                         }
                         FrameType::Continuation(_flags) => {
-                            self.send_goaway(
-                                eyre::eyre!(
-                                    "received unexpected continuation frame for stream {}",
-                                    frame.stream_id
-                                ),
-                                KnownErrorCode::ProtocolError,
-                            )
+                            self.send_goaway(H2ConnectionError::UnexpectedContinuationFrame {
+                                stream_id: frame.stream_id,
+                            })
                             .await;
                         }
                         FrameType::Unknown(ft) => {
@@ -653,8 +661,10 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                         FrameType::Continuation(flags) => {
                             if frame.stream_id != expected_stream_id {
                                 self.send_goaway(
-                                    eyre::eyre!("continuation frame for wrong stream"),
-                                    KnownErrorCode::ProtocolError,
+                                    H2ConnectionError::ExpectedContinuationForStream {
+                                        stream_id: expected_stream_id,
+                                        continuation_stream_id: frame.stream_id,
+                                    },
                                 )
                                 .await;
                                 continue;
@@ -668,12 +678,10 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                                     data.fragments.push(payload);
                                 }
                                 _ => {
-                                    self.send_goaway(
-                                        eyre::eyre!("continuation frame for wrong stream"),
-                                        KnownErrorCode::ProtocolError,
-                                    )
-                                    .await;
-                                    continue;
+                                    // FIXME: store `HeadersData` in
+                                    // `ContinuationState` directly so this
+                                    // branch doesn't even exist.
+                                    unreachable!()
                                 }
                             }
 
@@ -687,11 +695,12 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                             }
                         }
                         other => {
-                            let goaway = self.send_goaway(
-                                eyre::eyre!("expected continuation frame, got {:?}", other),
-                                KnownErrorCode::ProtocolError,
-                            );
-                            goaway.await
+                            self.send_goaway(H2ConnectionError::ExpectedContinuationFrame {
+                                stream_id: expected_stream_id,
+                                frame_type: other,
+                            })
+                            .await;
+                            continue;
                         }
                     }
                 }
@@ -699,8 +708,9 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         }
     }
 
-    async fn send_goaway(&self, e: eyre::Report, error_code: KnownErrorCode) {
+    async fn send_goaway(&self, e: H2ConnectionError) {
         warn!("connection error: {e:?}");
+        let error_code = e.as_known_error_code();
         debug!("error_code = {error_code:?}");
 
         // TODO: is this a good idea?
@@ -720,19 +730,38 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         }
     }
 
-    async fn end_headers(&mut self, stream_id: StreamId) {
-        if let Err(err) = self.end_headers_inner(stream_id).await {
-            self.send_goaway(
-                err,
-                // FIXME: this isn't _always_ CompressionError. also
-                // not all errors are GOAWAY material, some are just RST
-                KnownErrorCode::CompressionError,
-            )
-            .await;
+    async fn send_rst(&mut self, stream_id: StreamId, e: H2StreamError) {
+        warn!("stream error: {e:?}");
+        let error_code = e.as_known_error_code();
+        debug!("error_code = {error_code:?}");
+
+        if self
+            .ev_tx
+            .send(H2ConnEvent::RstStream {
+                stream_id,
+                error_code,
+            })
+            .await
+            .is_err()
+        {
+            debug!("error sending rst");
         }
     }
 
-    async fn end_headers_inner(&mut self, stream_id: StreamId) -> eyre::Result<()> {
+    async fn end_headers(&mut self, stream_id: StreamId) {
+        if let Err(err) = self.end_headers_inner(stream_id).await {
+            match err {
+                H2Error::Connection(e) => {
+                    self.send_goaway(e).await;
+                }
+                H2Error::Stream(e) => {
+                    self.send_rst(stream_id, e).await;
+                }
+            }
+        }
+    }
+
+    async fn end_headers_inner(&mut self, stream_id: StreamId) -> H2Result {
         let stage = self
             .state
             .streams
@@ -748,7 +777,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         let mut headers = Headers::default();
 
         let mut decode_data =
-            |headers_or_trailers: HeadersOrTrailers, data: &HeadersData| -> eyre::Result<()> {
+            |headers_or_trailers: HeadersOrTrailers, data: &HeadersData| -> H2Result {
                 // TODO: find a way to propagate errors from here - probably will have to change
                 // the function signature in hring-hpack.
                 let on_header_pair = |key: Cow<[u8]>, value: Cow<[u8]>| {
@@ -813,10 +842,9 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                 match &data.fragments[..] {
                     [] => unreachable!("must have at least one fragment"),
                     [payload] => {
-                        // TODO: propagate errors here instead of panicking
                         self.hpack_dec
                             .decode_with_cb(&payload[..], on_header_pair)
-                            .map_err(|e| eyre::eyre!("hpack error: {e:?}"))?;
+                            .map_err(|e| H2ConnectionError::CompressionError(format!("{e:?}")))?;
                     }
                     _ => {
                         let total_len = data.fragments.iter().map(|f| f.len()).sum();
@@ -827,10 +855,9 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                         for frag in &data.fragments {
                             payload.extend_from_slice(&frag[..]);
                         }
-                        // TODO: propagate errors here instead of panicking
                         self.hpack_dec
                             .decode_with_cb(&payload[..], on_header_pair)
-                            .map_err(|e| eyre::eyre!("hpack error: {e:?}"))?;
+                            .map_err(|e| H2ConnectionError::CompressionError(format!("{e:?}")))?;
                     }
                 };
 
@@ -937,6 +964,107 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         }
 
         Ok(())
+    }
+}
+
+type H2Result<T = ()> = Result<T, H2Error>;
+
+#[derive(Debug, thiserror::Error)]
+enum H2Error {
+    #[error("connection error: {0:?}")]
+    Connection(#[from] H2ConnectionError),
+
+    #[error("stream error: {0:?}")]
+    Stream(#[from] H2StreamError),
+}
+
+#[derive(Debug, thiserror::Error)]
+enum H2ConnectionError {
+    #[error("frame too large: {frame_type:?} frame of size {frame_size} exceeds max frame size of {max_frame_size}")]
+    FrameTooLarge {
+        frame_type: FrameType,
+        frame_size: u32,
+        max_frame_size: u32,
+    },
+
+    #[error("headers frame had invalid priority: stream {stream_id} depends on itself")]
+    HeadersInvalidPriority { stream_id: StreamId },
+
+    #[error("client tried to initiate an even-numbered stream")]
+    ClientSidShouldBeOdd,
+
+    #[error("client is trying to initiate stream with ID lower than the last one it initiated")]
+    ClientSidShouldBeIncreasing,
+
+    #[error("received frame with Padded flag but empty payload")]
+    PaddedFrameEmpty,
+
+    #[error("received frame with Padded flag but payload too short to contain padding length")]
+    PaddedFrameTooShort,
+
+    #[error("on stream {stream_id}, expected continuation frame, but got {frame_type:?}")]
+    ExpectedContinuationFrame {
+        stream_id: StreamId,
+        frame_type: FrameType,
+    },
+
+    #[error("expected continuation from for stream {stream_id}, but got continuation for stream {continuation_stream_id}")]
+    ExpectedContinuationForStream {
+        stream_id: StreamId,
+        continuation_stream_id: StreamId,
+    },
+
+    #[error("on stream {stream_id}, received unexpected continuation frame")]
+    UnexpectedContinuationFrame { stream_id: StreamId },
+
+    #[error("compression error: {0:?}")]
+    // FIXME: let's not use String, let's just replicate the enum from `hpack_hring` or fix it?
+    CompressionError(String),
+
+    #[error("other error: {0:?}")]
+    Other(#[from] eyre::Report),
+}
+
+impl H2ConnectionError {
+    fn as_known_error_code(&self) -> KnownErrorCode {
+        use H2ConnectionError::*;
+        use KnownErrorCode as Code;
+
+        match self {
+            FrameTooLarge { .. } => Code::FrameSizeError,
+            HeadersInvalidPriority { .. } => Code::ProtocolError,
+            ClientSidShouldBeOdd => Code::ProtocolError,
+            ClientSidShouldBeIncreasing => Code::ProtocolError,
+            PaddedFrameEmpty => Code::FrameSizeError,
+            PaddedFrameTooShort => Code::FrameSizeError,
+            ExpectedContinuationFrame { .. } => Code::ProtocolError,
+            ExpectedContinuationForStream { .. } => Code::ProtocolError,
+            UnexpectedContinuationFrame { .. } => Code::ProtocolError,
+            CompressionError(_) => Code::CompressionError,
+            Other(_) => Code::InternalError,
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum H2StreamError {
+    #[allow(dead_code)]
+    #[error("for stream {stream_id}, received {data_length} bytes in data frames but content-length announced {content_length} bytes")]
+    DataLengthDoesNotMatchContentLength {
+        stream_id: StreamId,
+        data_length: u64,
+        content_length: u64,
+    },
+}
+
+impl H2StreamError {
+    fn as_known_error_code(&self) -> KnownErrorCode {
+        use H2StreamError::*;
+        use KnownErrorCode as Code;
+
+        match self {
+            DataLengthDoesNotMatchContentLength { .. } => Code::ProtocolError,
+        }
     }
 }
 
