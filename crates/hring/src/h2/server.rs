@@ -614,7 +614,11 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                                 }
                             }
                         }
-                        FrameType::PushPromise => todo!("push promise not implemented"),
+                        FrameType::PushPromise => {
+                            self.send_goaway(H2ConnectionError::ClientSentPushPromise)
+                                .await;
+                            continue;
+                        }
                         FrameType::Ping(flags) => {
                             if frame.stream_id != StreamId::CONNECTION {
                                 todo!(
@@ -709,12 +713,15 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
     }
 
     async fn send_goaway(&self, e: H2ConnectionError) {
-        warn!("connection error: {e:?}");
-        let error_code = e.as_known_error_code();
-        debug!("error_code = {error_code:?}");
+        // TODO: this should change the global server state: we should ignore
+        // any streams higher than the last stream id we've seen after
+        // we've done that.
 
-        // TODO: is this a good idea?
-        let additional_debug_data = format!("{e:?}").into_bytes();
+        let error_code = e.as_known_error_code();
+        warn!("connection error: {e:?} (code {error_code:?})");
+
+        // let's put something hu
+        let additional_debug_data = format!("{e}").into_bytes();
 
         if self
             .ev_tx
@@ -1021,6 +1028,9 @@ enum H2ConnectionError {
     // FIXME: let's not use String, let's just replicate the enum from `hpack_hring` or fix it?
     CompressionError(String),
 
+    #[error("client sent a push promise frame, clients aren't allowed to do that, cf. RFC9113 section 8.4")]
+    ClientSentPushPromise,
+
     #[error("other error: {0:?}")]
     Other(#[from] eyre::Report),
 }
@@ -1040,6 +1050,7 @@ impl H2ConnectionError {
             ExpectedContinuationFrame { .. } => Code::ProtocolError,
             ExpectedContinuationForStream { .. } => Code::ProtocolError,
             UnexpectedContinuationFrame { .. } => Code::ProtocolError,
+            ClientSentPushPromise => Code::ProtocolError,
             CompressionError(_) => Code::CompressionError,
             Other(_) => Code::InternalError,
         }
