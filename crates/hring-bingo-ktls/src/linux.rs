@@ -11,6 +11,7 @@ use hring::{
     ResponseDone, ServerDriver,
 };
 use http::Version;
+use ktls::CorkStream;
 use maybe_uring::{io::IntoHalves, tokio_uring::net::TcpStream};
 use rustls::ServerConfig;
 use tokio::net::TcpListener;
@@ -169,6 +170,7 @@ async fn handle_tls_conn(
     h2_conf: Rc<h2::ServerConf>,
 ) -> Result<(), color_eyre::Report> {
     info!("Accepted connection from {remote_addr}");
+    let stream = CorkStream::new(stream);
     let stream = acceptor.accept(stream).await?;
 
     let sc = stream.get_ref().1;
@@ -177,7 +179,7 @@ async fn handle_tls_conn(
         .and_then(|p| std::str::from_utf8(p).ok().map(|s| s.to_string()));
     debug!(?alpn_proto, "Performed TLS handshake");
 
-    let stream = ktls::config_ktls_server(stream)?;
+    let stream = ktls::config_ktls_server(stream).await?;
 
     debug!("Set up kTLS");
     let (drained, stream) = stream.into_raw();

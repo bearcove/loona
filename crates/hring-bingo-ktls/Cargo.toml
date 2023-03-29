@@ -17,4 +17,4 @@ pretty-hex = "0.3.0"
 maybe-uring = { version = "0.1.0", path = "../maybe-uring" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-ktls = "1.0.1"
+ktls = "2.0.0"
