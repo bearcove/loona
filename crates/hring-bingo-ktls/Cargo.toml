@@ -15,6 +15,7 @@ tokio-rustls = "0.23.4"
 http = "0.2.8"
 pretty-hex = "0.3.0"
 maybe-uring = { version = "0.1.0", path = "../maybe-uring" }
+socket2 = "0.5.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ktls = "2.0.0"

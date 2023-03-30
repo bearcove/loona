@@ -38,7 +38,7 @@ where
                         );
                     }
 
-                    let mut res;
+                    let res;
                     let read_limit = max_len - buf.len();
                     if buf.len() >= max_len {
                         return Err(SemanticError::BufferLimitReachedWhileParsing.into());
@@ -55,20 +55,6 @@ where
                     );
                     (res, buf) = buf.read_into(read_limit, stream).await;
 
-                    loop {
-                        if let Err(e) = res.as_ref() {
-                            if e.kind() == std::io::ErrorKind::WouldBlock {
-                                // FIXME: this probably indicates that we should read
-                                // a control message? unsure.
-                                // see https://docs.kernel.org/networking/tls-offload.html
-                                debug!("read_into returned WouldBlock, retrying");
-                                (res, buf) = buf.read_into(read_limit, stream).await;
-                                continue;
-                            }
-                        }
-                        break;
-                    }
-                    tracing::debug!("read_into returned, finally");
                     let n = res.wrap_err_with(|| {
                         format!(
                             "read_into for read_and_parse::<{}>",

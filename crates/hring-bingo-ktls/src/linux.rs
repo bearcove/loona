@@ -1,4 +1,5 @@
 use std::{
+    mem::ManuallyDrop,
     net::ToSocketAddrs,
     os::unix::prelude::{AsRawFd, FromRawFd},
     rc::Rc,
@@ -142,10 +143,7 @@ async fn handle_plaintext_conn(
     info!("Accepted connection from {remote_addr}");
     let buf = RollMut::alloc()?;
 
-    let fd = stream.as_raw_fd();
-    std::mem::forget(stream);
-    let stream = unsafe { TcpStream::from_raw_fd(fd) };
-
+    let stream = stream.to_uring_tcp_stream()?;
     let driver = SDriver {};
 
     match proto {
@@ -186,9 +184,7 @@ async fn handle_tls_conn(
     let drained = drained.unwrap_or_default();
     debug!("{} bytes already decoded by rustls", drained.len());
 
-    let fd = stream.as_raw_fd();
-    std::mem::forget(stream);
-    let stream = unsafe { TcpStream::from_raw_fd(fd) };
+    let stream = stream.to_uring_tcp_stream()?;
 
     let mut buf = RollMut::alloc()?;
     buf.put(&drained[..])?;
@@ -345,4 +341,22 @@ async fn sample_http_request() -> color_eyre::Result<()> {
     drop(transport);
 
     Ok(())
+}
+
+pub trait ToUringTcpStream {
+    fn to_uring_tcp_stream(self) -> std::io::Result<TcpStream>;
+}
+
+impl ToUringTcpStream for tokio::net::TcpStream {
+    fn to_uring_tcp_stream(self) -> std::io::Result<TcpStream> {
+        {
+            let sock = ManuallyDrop::new(unsafe { socket2::Socket::from_raw_fd(self.as_raw_fd()) });
+            // tokio needs the socket to be non-blocking but tokio-uring
+            // needs it to be "blocking" (but it won't be, because io_uring)
+            sock.set_nonblocking(false)?;
+        }
+        let stream = unsafe { TcpStream::from_raw_fd(self.as_raw_fd()) };
+        std::mem::forget(self);
+        Ok(stream)
+    }
 }
