@@ -8,14 +8,14 @@ color-eyre = "0.6.2"
 hring = { path = "../hring" }
 rcgen = "0.10.0"
 tracing = "0.1.37"
-tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
-rustls = { version = "0.20.8", features = ["secret_extraction"] }
-tokio = { version = "1.24.2", features = ["full"] }
-tokio-rustls = "0.23.4"
-http = "0.2.8"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+rustls = { version = "0.21.1", features = ["secret_extraction"] }
+tokio = { version = "1.28.2", features = ["full"] }
+tokio-rustls = "0.24.1"
+http = "0.2.9"
 pretty-hex = "0.3.0"
 maybe-uring = { version = "0.1.0", path = "../maybe-uring" }
-socket2 = "0.5.1"
+socket2 = "0.5.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-ktls = "2.0.0"
+ktls = "3.0.0"
