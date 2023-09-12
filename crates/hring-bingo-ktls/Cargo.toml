@@ -18,4 +18,4 @@ maybe-uring = { version = "0.1.0", path = "../maybe-uring" }
 socket2 = "0.5.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-ktls = "3.0.0"
+ktls = "2.0.0"
