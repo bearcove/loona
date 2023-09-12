@@ -71,7 +71,7 @@ struct TestBody {
 }
 
 impl TestBody {
-    const CONTENTS: &str = "I am a test body";
+    const CONTENTS: &'static str = "I am a test body";
 }
 
 impl Body for TestBody {
