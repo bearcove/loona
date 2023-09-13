@@ -63,7 +63,7 @@ impl HuffmanDecoder {
         for (symbol, &(code, code_len)) in table.iter().enumerate() {
             decoder_table
                 .entry(code_len)
-                .or_insert_with(Default::default);
+                .or_default();
             let subtable = decoder_table.get_mut(&code_len).unwrap();
             let huff_symbol = HuffmanCodeSymbol::new(symbol);
             if let HuffmanCodeSymbol::EndOfString = huff_symbol {
