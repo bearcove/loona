@@ -90,7 +90,7 @@ jobs:
           # (pushd tools && curl -L https://github.com/summerwind/h2spec/releases/download/v2.6.0/h2spec_linux_amd64.tar.gz | tar -xz && popd)
           # Uses https://github.com/summerwind/h2spec/pull/123, more precisely
           # https://github.com/fasterthanlime/h2spec/commit/72a6b9b2b01133d292bd74e019fde86c3638094a
-          (pushd tools && curl -L http://misc.fasterthanli.me.s3.amazonaws.com/h2spec -o h2spec && chmod +x h2spec && popd)
+          (pushd tools && curl -fL http://misc.fasterthanli.me.s3.amazonaws.com/h2spec -o h2spec && chmod +x h2spec && popd)
           just ci-test
           sccache --show-stats
       - name: Upload h2spec Report
