@@ -1,0 +1,29 @@
+[package]
+name = "fluke-hpack"
+version = "0.3.0"
+authors = ["Marko Lalic <marko.lalic@gmail.com>", "Amos Wenger <amos@bearcove.net>"]
+edition = "2021"
+
+exclude = [
+    "fixtures/*",
+]
+
+description = "A library implementing HPACK coding, for the fluke project"
+repository = "https://github.com/hapsoc/fluke"
+readme = "README.md"
+license = "MIT"
+keywords = ["hpack", "http2", "encoding", "decoding"]
+documentation = "https://docs.rs/fluke-hpack"
+
+[features]
+# these are really slow unless `cargo test --release` is used, so they're optional
+interop-tests = []
+
+[dev-dependencies]
+serde = { version = "1.0.164", features = ["derive"] }
+serde_json = "1.0.96"
+hex = "0.4.3"
+thiserror = "1.0.40"
+
+[dependencies]
+tracing = "0.1"

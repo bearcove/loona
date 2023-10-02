@@ -9,11 +9,11 @@ ci-test:
 	just build-testbed
 	source <(cargo llvm-cov show-env --export-prefix)
 	cargo llvm-cov clean --workspace
-	cargo nextest run --manifest-path crates/hring-hpack/Cargo.toml --features interop-tests --release
+	cargo nextest run --manifest-path crates/fluke-hpack/Cargo.toml --features interop-tests --release
 	cargo nextest run --profile ci
-	cargo run --bin hring-h2spec -- generic -j 'target/h2spec-generic.xml'
-	cargo run --bin hring-h2spec -- hpack -j 'target/h2spec-hpack.xml'
-	cargo run --bin hring-h2spec -- http2 -j 'target/h2spec-http2.xml'
+	cargo run --bin fluke-h2spec -- generic -j 'target/h2spec-generic.xml'
+	cargo run --bin fluke-h2spec -- hpack -j 'target/h2spec-hpack.xml'
+	cargo run --bin fluke-h2spec -- http2 -j 'target/h2spec-http2.xml'
 	cargo llvm-cov report --lcov --output-path coverage.lcov
 	codecov
 
@@ -37,9 +37,9 @@ bench *args:
 
 h2spec *args:
 	#!/bin/bash -eux
-	export RUST_LOG="${RUST_LOG:-hring=debug,hring_hpack=info}"
+	export RUST_LOG="${RUST_LOG:-fluke=debug,fluke_hpack=info}"
 	export RUST_BACKTRACE=1
-	cargo run --bin hring-h2spec -- {{args}}
+	cargo run --bin fluke-h2spec -- {{args}}
 
 check:
 	cargo clippy --all-targets --all-features
