@@ -1,6 +1,6 @@
-## Contributing to hring
+## Contributing to fluke
 
-hring is still experimental, but you can help by trying to build
+fluke is still experimental, but you can help by trying to build
 stuff with it.
 
 The highest-impact work right now is probably picking up an h2spec

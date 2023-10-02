@@ -1,6 +1,6 @@
 ignore:
-  # note: maybe `maybe-uring` should be excluded too, we don't
+  # note: maybe `fluke-maybe-uring` should be excluded too, we don't
   # test the non-uring codepath on linux, where coverage is measured.
   - "test-crates/**"
-  - "crates/hring-h2spec/**"
-  - "crates/hring-bingo-ktls/**"
+  - "crates/fluke-h2spec/**"
+  - "crates/fluke-bingo-ktls/**"
