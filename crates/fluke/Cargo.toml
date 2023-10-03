@@ -25,7 +25,7 @@ futures-util = "0.3.28"
 fluke-buffet = { version = "0.1.0", path = "../fluke-buffet" }
 fluke-hpack = { version = "0.3.0", path = "../fluke-hpack" }
 http = "0.2.9"
-fluke-maybe-uring = { version = "0.1.0", path = "../fluke-maybe-uring" }
+fluke-maybe-uring = { version = "0.1.1", path = "../fluke-maybe-uring" }
 memchr = "2.5.0"
 nom = { version = "7.1.3", default-features = false }
 pretty-hex = { version = "0.3.0", default-features = false }
@@ -35,7 +35,7 @@ tokio = { version = "1.28.2", features = ["macros", "sync"] }
 tracing = { version = "0.1.37", default-features = false }
 
 [dev-dependencies]
-fluke-maybe-uring = { version = "0.1.0", path = "../fluke-maybe-uring", features = ["net"] }
+fluke-maybe-uring = { version = "0.1.1", path = "../fluke-maybe-uring", features = ["net"] }
 bytes = { version = "1.4.0", default-features = false }
 pretty_assertions = { version = "1.3.0", default-features = false, features = ["std"] }
 tokio-stream = { version = "0.1.14", default-features = false }
