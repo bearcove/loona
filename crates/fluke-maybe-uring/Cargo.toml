@@ -5,6 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/hapsoc/fluke"
 documentation = "https://docs.rs/fluke-maybe-uring"
+readme = "README.md"
 description = """
 Replicates some tokio-uring types to allow building code without it
 """
