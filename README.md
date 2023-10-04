@@ -1,14 +1,13 @@
 # fluke
 
-An experimental, HTTP/1.1 implementation in Rust on top of
+[![Crates.io](https://img.shields.io/crates/v/fluke)](https://crates.io/crates/fluke)
+[![test pipeline](https://github.com/hapsoc/fluke/actions/workflows/test.yml/badge.svg)](https://github.com/hapsoc/fluke/actions/workflows/test.yml?query=branch%3Amain)
+[![Coverage Status (codecov.io)](https://codecov.io/gh/hapsoc/fluke/branch/main/graph/badge.svg)](https://codecov.io/gh/hapsoc/fluke/)
+
+An experimental, HTTP/1.1 and HTTP/2 implementation in Rust on top of
 [tokio-uring](https://github.com/tokio-rs/tokio-uring).
 
 Nothing in this repo is final yet, look around, but do not use.
-
-## Status
-
-[![test pipeline](https://github.com/hapsoc/fluke/actions/workflows/test.yml/badge.svg)](https://github.com/hapsoc/fluke/actions/workflows/test.yml?query=branch%3Amain)
-[![Coverage Status (codecov.io)](https://codecov.io/gh/hapsoc/fluke/branch/main/graph/badge.svg)](https://codecov.io/gh/hapsoc/fluke/)
 
 ## License
 
