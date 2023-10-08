@@ -660,7 +660,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                 }
                 _ => match self.state.streams.get_mut(&frame.stream_id) {
                     Some(_ss) => {
-                        todo!("handle window update for stream {}", frame.stream_id)
+                        debug!("TODO: handle window update for stream {}", frame.stream_id)
                     }
                     None => {
                         self.send_goaway(H2ConnectionError::WindowUpdateForUnknownStream {
