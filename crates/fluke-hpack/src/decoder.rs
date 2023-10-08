@@ -746,7 +746,7 @@ mod tests {
         {
             let full_string: Vec<u8> = (0u8..200).collect();
             let mut encoded = encode_integer(full_string.len(), 7);
-            encoded.extend(full_string.clone().into_iter());
+            encoded.extend(full_string.clone());
 
             assert_eq!(
                 (Cow::Owned(full_string), encoded.len()),
@@ -756,7 +756,7 @@ mod tests {
         {
             let full_string: Vec<u8> = (0u8..127).collect();
             let mut encoded = encode_integer(full_string.len(), 7);
-            encoded.extend(full_string.clone().into_iter());
+            encoded.extend(full_string.clone());
 
             assert_eq!(
                 (Cow::Owned(full_string), encoded.len()),
