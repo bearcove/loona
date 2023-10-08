@@ -433,7 +433,7 @@ mod tests {
         {
             let mut encoder: Encoder = Encoder::new();
             // `:method` is in the static table, but only for GET and POST
-            let headers = vec![(b":method", b"PUT")];
+            let headers = [(b":method", b"PUT")];
 
             let result = encoder.encode(headers.iter().map(|h| (&h.0[..], &h.1[..])));
 

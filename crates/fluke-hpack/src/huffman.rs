@@ -61,9 +61,7 @@ impl HuffmanDecoder {
         let mut eos_codepoint: Option<(u32, u8)> = None;
 
         for (symbol, &(code, code_len)) in table.iter().enumerate() {
-            decoder_table
-                .entry(code_len)
-                .or_default();
+            decoder_table.entry(code_len).or_default();
             let subtable = decoder_table.get_mut(&code_len).unwrap();
             let huff_symbol = HuffmanCodeSymbol::new(symbol);
             if let HuffmanCodeSymbol::EndOfString = huff_symbol {
@@ -495,7 +493,7 @@ mod tests {
         let expected_result = to_expected_bit_result(&[0, 0, 0, 0, 1, 0, 1, 0]);
 
         let mut res: Vec<bool> = Vec::new();
-        for b in BitIterator::new(vec![10u8].iter()) {
+        for b in BitIterator::new([10u8].iter()) {
             res.push(b);
         }
 
@@ -510,7 +508,7 @@ mod tests {
         ]);
 
         let mut res: Vec<bool> = Vec::new();
-        for b in BitIterator::new(vec![10u8, 255, 128, 1, 0, 170].iter()) {
+        for b in BitIterator::new([10u8, 255, 128, 1, 0, 170].iter()) {
             res.push(b);
         }
 
