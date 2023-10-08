@@ -7,7 +7,7 @@ use tracing::warn;
 use crate::{h1::body::BodyWriteMode, Encoder, Response};
 use fluke_buffet::{Piece, Roll};
 
-use super::parse::{KnownErrorCode, StreamId};
+use super::{parse::{KnownErrorCode, StreamId}, H2ConnectionError};
 
 pub(crate) enum H2ConnEvent {
     Ping(Roll),
@@ -16,9 +16,8 @@ pub(crate) enum H2ConnEvent {
         new_max_header_table_size: u32,
     },
     GoAway {
-        error_code: KnownErrorCode,
+        err: H2ConnectionError,
         last_stream_id: StreamId,
-        additional_debug_data: Piece,
     },
     RstStream {
         stream_id: StreamId,

@@ -260,10 +260,15 @@ async fn h2_write_loop(
                     .wrap_err("writing pong")?;
             }
             H2ConnEvent::GoAway {
-                error_code,
+                err,
                 last_stream_id,
-                additional_debug_data,
             } => {
+                let error_code = err.as_known_error_code();
+                warn!("connection error: {err} ({err:?}) (code {error_code:?})");
+
+                // let's put something useful in debug data
+                let additional_debug_data = format!("{err}").into_bytes();
+
                 debug!(%last_stream_id, ?error_code, "Sending GoAway");
                 let header = out_scratch.put_to_roll(8, |mut slice| {
                     use byteorder::{BigEndian, WriteBytesExt};
@@ -649,16 +654,21 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                 }
             }
             FrameType::GoAway => todo!(),
-            FrameType::WindowUpdate => match self.state.streams.get_mut(&frame.stream_id) {
-                Some(_ss) => {
-                    todo!("handle window update for stream {}", frame.stream_id)
+            FrameType::WindowUpdate => match frame.stream_id.0 {
+                0 => {
+                    debug!("TODO: ignoring connection-wide window update");
                 }
-                None => {
-                    self.send_goaway(H2ConnectionError::WindowUpdateForUnknownStream {
-                        stream_id: frame.stream_id,
-                    })
-                    .await;
-                }
+                _ => match self.state.streams.get_mut(&frame.stream_id) {
+                    Some(_ss) => {
+                        todo!("handle window update for stream {}", frame.stream_id)
+                    }
+                    None => {
+                        self.send_goaway(H2ConnectionError::WindowUpdateForUnknownStream {
+                            stream_id: frame.stream_id,
+                        })
+                        .await;
+                    }
+                },
             },
             FrameType::Continuation(_flags) => {
                 self.send_goaway(H2ConnectionError::UnexpectedContinuationFrame {
@@ -731,23 +741,16 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         Ok(())
     }
 
-    async fn send_goaway(&self, e: H2ConnectionError) {
+    async fn send_goaway(&self, err: H2ConnectionError) {
         // TODO: this should change the global server state: we should ignore
         // any streams higher than the last stream id we've seen after
         // we've done that.
 
-        let error_code = e.as_known_error_code();
-        warn!("connection error: {e:?} (code {error_code:?})");
-
-        // let's put something hu
-        let additional_debug_data = format!("{e}").into_bytes();
-
         if self
             .ev_tx
             .send(H2ConnEvent::GoAway {
-                error_code,
+                err,
                 last_stream_id: self.state.last_stream_id,
-                additional_debug_data: Piece::Vec(additional_debug_data),
             })
             .await
             .is_err()
@@ -1005,7 +1008,7 @@ enum H2Error {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum H2ConnectionError {
+pub(crate) enum H2ConnectionError {
     #[error("frame too large: {frame_type:?} frame of size {frame_size} exceeds max frame size of {max_frame_size}")]
     FrameTooLarge {
         frame_type: FrameType,
