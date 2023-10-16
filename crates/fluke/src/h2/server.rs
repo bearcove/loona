@@ -569,7 +569,25 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                         }
                     }
                     None => {
-                        debug!("Receiving headers for stream {}", frame.stream_id);
+                        debug!(
+                            "Receiving headers for stream {} (if we accept this stream we'll have {} total)",
+                            frame.stream_id,
+                            self.state.streams.len() + 1
+                        );
+
+                        let num_streams_if_accept = self.state.streams.len() + 1;
+                        if num_streams_if_accept
+                            > self.state.self_settings.max_concurrent_streams as _
+                        {
+                            self.send_goaway(H2ConnectionError::MaxConcurrentStreamsExceeded {
+                                max_concurrent_streams: self
+                                    .state
+                                    .self_settings
+                                    .max_concurrent_streams,
+                            })
+                            .await;
+                            return Ok(());
+                        }
                         self.state
                             .streams
                             .insert(frame.stream_id, StreamStage::Headers(headers_data));
@@ -1056,6 +1074,9 @@ pub(crate) enum H2ConnectionError {
     #[error("received window update for unknown stream {stream_id}")]
     WindowUpdateForUnknownStream { stream_id: StreamId },
 
+    #[error("max concurrent streams exceeded (more than {max_concurrent_streams})")]
+    MaxConcurrentStreamsExceeded { max_concurrent_streams: u32 },
+
     #[error("other error: {0:?}")]
     Other(#[from] eyre::Report),
 }
@@ -1078,6 +1099,7 @@ impl H2ConnectionError {
             ClientSentPushPromise => Code::ProtocolError,
             CompressionError(_) => Code::CompressionError,
             WindowUpdateForUnknownStream { .. } => Code::ProtocolError,
+            MaxConcurrentStreamsExceeded { .. } => Code::ProtocolError,
             Other(_) => Code::InternalError,
         }
     }

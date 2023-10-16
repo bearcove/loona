@@ -517,6 +517,7 @@ impl Settings {
                     }
                     SettingIdentifier::MaxConcurrentStreams => {
                         settings.max_concurrent_streams = value;
+                        tracing::warn!("parsed max concurrent streams {value}");
                     }
                     SettingIdentifier::InitialWindowSize => {
                         if value > Self::MAX_INITIAL_WINDOW_SIZE {
