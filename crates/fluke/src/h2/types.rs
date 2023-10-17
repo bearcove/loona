@@ -152,6 +152,18 @@ pub(crate) enum H2ConnectionError {
     Internal(#[from] eyre::Report),
 }
 
+impl<T> From<H2ConnectionError> for H2Result<T> {
+    fn from(e: H2ConnectionError) -> Self {
+        Err(e.into())
+    }
+}
+
+impl<T> From<H2Error> for H2Result<T> {
+    fn from(e: H2Error) -> Self {
+        Err(e)
+    }
+}
+
 impl H2ConnectionError {
     pub(crate) fn as_known_error_code(&self) -> KnownErrorCode {
         match self {

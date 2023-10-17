@@ -47,7 +47,7 @@ jobs:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
       SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
+      RUSTC_WRAPPER: "sccache.exe"
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3

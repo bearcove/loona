@@ -203,8 +203,9 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                             tx
                         }
                         StreamStage::HalfClosedRemote | StreamStage::Closed => {
-                            return Err(H2StreamError::ReceivedDataForClosedStream
-                                .for_stream(frame.stream_id));
+                            return H2StreamError::ReceivedDataForClosedStream
+                                .for_stream(frame.stream_id)
+                                .into();
                         }
                     }
                 };
@@ -222,21 +223,17 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                 // than the last one we accepted.
 
                 if frame.stream_id.is_server_initiated() {
-                    self.send_goaway(H2ConnectionError::ClientSidShouldBeOdd)
-                        .await;
-                    return Ok(());
+                    return H2ConnectionError::ClientSidShouldBeOdd.into();
                 }
 
                 if frame.stream_id < self.state.last_stream_id {
-                    self.send_goaway(H2ConnectionError::ClientSidShouldBeIncreasing)
-                        .await;
+                    return H2ConnectionError::ClientSidShouldBeIncreasing.into();
                 }
                 self.state.last_stream_id = frame.stream_id;
 
                 let padding_length = if flags.contains(HeadersFlags::Padded) {
                     if payload.is_empty() {
-                        self.send_goaway(H2ConnectionError::PaddedFrameEmpty).await;
-                        return Ok(());
+                        return H2ConnectionError::PaddedFrameEmpty.into();
                     }
 
                     let padding_length_roll;
@@ -446,20 +443,20 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         let flags = match frame.frame_type {
             FrameType::Continuation(flags) => flags,
             other => {
-                return Err(H2ConnectionError::ExpectedContinuationFrame {
+                return H2ConnectionError::ExpectedContinuationFrame {
                     stream_id: expected_stream_id,
                     frame_type: other,
                 }
-                .into())
+                .into()
             }
         };
 
         if frame.stream_id != expected_stream_id {
-            return Err(H2ConnectionError::ExpectedContinuationForStream {
+            return H2ConnectionError::ExpectedContinuationForStream {
                 stream_id: expected_stream_id,
                 continuation_stream_id: frame.stream_id,
             }
-            .into());
+            .into();
         }
 
         // unwrap rationale: we just checked that this is a
