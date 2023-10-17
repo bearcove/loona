@@ -89,6 +89,7 @@ jobs:
           cd ${{ github.workspace }}
           sccache --zero-stats
           cargo clippy
+          cargo clippy --manifest-path test-crates/fluke-tls-sample/Cargo/toml
           mkdir tools
           export PATH=$PATH:${PWD}/tools
           # (pushd tools && curl -L https://github.com/summerwind/h2spec/releases/download/v2.6.0/h2spec_linux_amd64.tar.gz | tar -xz && popd)
