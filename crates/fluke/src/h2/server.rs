@@ -70,11 +70,54 @@ enum ContinuationState {
     ContinuingHeaders(StreamId),
 }
 
+// cf. RFC 9113, 5.1 Stream States:
+//
+//                               +--------+
+//                       send PP |        | recv PP
+//                      ,--------+  idle  +--------.
+//                     /         |        |         \
+//                    v          +--------+          v
+//             +----------+          |           +----------+
+//             |          |          | send H /  |          |
+//      ,------+ reserved |          | recv H    | reserved +------.
+//      |      | (local)  |          |           | (remote) |      |
+//      |      +---+------+          v           +------+---+      |
+//      |          |             +--------+             |          |
+//      |          |     recv ES |        | send ES     |          |
+//      |   send H |     ,-------+  open  +-------.     | recv H   |
+//      |          |    /        |        |        \    |          |
+//      |          v   v         +---+----+         v   v          |
+//      |      +----------+          |           +----------+      |
+//      |      |   half-  |          |           |   half-  |      |
+//      |      |  closed  |          | send R /  |  closed  |      |
+//      |      | (remote) |          | recv R    | (local)  |      |
+//      |      +----+-----+          |           +-----+----+      |
+//      |           |                |                 |           |
+//      |           | send ES /      |       recv ES / |           |
+//      |           |  send R /      v        send R / |           |
+//      |           |  recv R    +--------+   recv R   |           |
+//      | send R /  `----------->|        |<-----------'  send R / |
+//      | recv R                 | closed |               recv R   |
+//      `----------------------->|        |<-----------------------'
+//                               +--------+
+//
+//                         Figure 2: Stream States
+//
+//  send:  endpoint sends this frame
+//  recv:  endpoint receives this frame
+//  H:  HEADERS frame (with implied CONTINUATION frames)
+//  ES:  END_STREAM flag
+//  R:  RST_STREAM frame
+//  PP:  PUSH_PROMISE frame (with implied CONTINUATION frames); state
+//     transitions are for the promised stream
 pub(crate) enum StreamStage {
+    // TODO: kill this variant: we should be going from Idle to Open directly,
+    // cf. https://github.com/hapsoc/fluke/issues/121
     Headers(HeadersData),
-    Body(H2BodySender),
+    Open(H2BodySender),
     Trailers(H2BodySender, HeadersData),
-    Done,
+    HalfClosedRemote,
+    Closed,
 }
 
 pub(crate) struct HeadersData {
@@ -418,6 +461,9 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         }
     }
 
+    // TODO: return `H2Error` from this, which can accommodate both connection-level
+    // and stream-level errors.
+    // cf.
     async fn process_frame(&mut self, frame: Frame, payload: Roll) -> eyre::Result<()> {
         match self.continuation_state {
             ContinuationState::Idle => self.process_idle_frame(frame, payload).await,
@@ -465,17 +511,20 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                             // TODO: proper error handling (stream error)
                             panic!("expected trailers, received data")
                         }
-                        StreamStage::Body(tx) => {
+                        StreamStage::Open(tx) => {
                             // TODO: we can get rid of that clone sometimes
                             let tx = tx.clone();
                             if flags.contains(DataFlags::EndStream) {
-                                *stage = StreamStage::Done;
+                                *stage = StreamStage::HalfClosedRemote;
                             }
                             tx
                         }
-                        StreamStage::Done => {
-                            // TODO: proper error handling (stream error)
-                            panic!("received data for stream after completion");
+                        StreamStage::HalfClosedRemote | StreamStage::Closed => {
+                            let err = H2ConnectionError::ReceivedDataForHalfClosedStream {
+                                stream_id: frame.stream_id,
+                            };
+                            self.send_goaway(err).await;
+                            return Ok(());
                         }
                     }
                 };
@@ -559,9 +608,9 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                                         );
                         }
 
-                        let prev_stage = std::mem::replace(stage, StreamStage::Done);
+                        let prev_stage = std::mem::replace(stage, StreamStage::HalfClosedRemote);
                         match prev_stage {
-                            StreamStage::Body(body_tx) => {
+                            StreamStage::Open(body_tx) => {
                                 *stage = StreamStage::Trailers(body_tx, headers_data);
                             }
                             // FIXME: that's a connection error
@@ -912,7 +961,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
             };
 
         // FIXME: don't panic on unexpected states here
-        let mut prev_stage = StreamStage::Done;
+        let mut prev_stage = StreamStage::Closed;
         std::mem::swap(&mut prev_stage, stage);
 
         match prev_stage {
@@ -990,12 +1039,12 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                 });
 
                 *stage = if data.end_stream {
-                    StreamStage::Done
+                    StreamStage::HalfClosedRemote
                 } else {
-                    StreamStage::Body(piece_tx)
+                    StreamStage::Open(piece_tx)
                 };
             }
-            StreamStage::Body(_) => unreachable!(),
+            StreamStage::Open(_) => unreachable!(),
             StreamStage::Trailers(body_tx, data) => {
                 decode_data(HeadersOrTrailers::Trailers, &data)?;
 
@@ -1007,7 +1056,8 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                     warn!("TODO: The body is being ignored, we should reset the stream");
                 }
             }
-            StreamStage::Done => unreachable!(),
+            StreamStage::HalfClosedRemote => unreachable!(),
+            StreamStage::Closed => unreachable!(),
         }
 
         Ok(())
@@ -1077,6 +1127,9 @@ pub(crate) enum H2ConnectionError {
     #[error("max concurrent streams exceeded (more than {max_concurrent_streams})")]
     MaxConcurrentStreamsExceeded { max_concurrent_streams: u32 },
 
+    #[error("received data for half-closed stream {stream_id}")]
+    ReceivedDataForHalfClosedStream { stream_id: StreamId },
+
     #[error("other error: {0:?}")]
     Other(#[from] eyre::Report),
 }
@@ -1100,6 +1153,7 @@ impl H2ConnectionError {
             CompressionError(_) => Code::CompressionError,
             WindowUpdateForUnknownStream { .. } => Code::ProtocolError,
             MaxConcurrentStreamsExceeded { .. } => Code::ProtocolError,
+            ReceivedDataForHalfClosedStream { .. } => Code::ProtocolError,
             Other(_) => Code::InternalError,
         }
     }
