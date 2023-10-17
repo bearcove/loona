@@ -15,6 +15,7 @@ An HTTP implementation on top of io_uring
 [features]
 default = ["tokio-uring"]
 tokio-uring = ["fluke-buffet/tokio-uring"]
+maybe-uring-net = ["fluke-maybe-uring/net"]
 
 [dependencies]
 byteorder = "1.4.3"
@@ -43,5 +44,4 @@ tracing-subscriber = { version = "0.3.17", default-features = false, features = 
 httparse = { version = "1.8.0", default-features = false, features = ["std"] }
 tokio = { version = "1.28.2", default-features = false, features = ["io-util", "process", "time"] }
 futures-util = { version = "0.3.28", default-features = false, features = ["std"] }
-curl = { version = "0.4.44", default-features = false, features = ["http2"] }
 libc = "0.2.146"

@@ -10,7 +10,8 @@ ci-test:
 	source <(cargo llvm-cov show-env --export-prefix)
 	cargo llvm-cov clean --workspace
 	cargo nextest run --manifest-path crates/fluke-hpack/Cargo.toml --features interop-tests --release
-	cargo nextest run --profile ci
+	cargo nextest run --manifest-path crates/fluke/Cargo.toml --profile ci
+	cargo nextest run --manifest-path test-crates/fluke-curl-tests/Cargo.toml --profile ci
 	cargo run --bin fluke-h2spec -- generic -j 'target/h2spec-generic.xml'
 	cargo run --bin fluke-h2spec -- hpack -j 'target/h2spec-hpack.xml'
 	cargo run --bin fluke-h2spec -- http2 -j 'target/h2spec-http2.xml'

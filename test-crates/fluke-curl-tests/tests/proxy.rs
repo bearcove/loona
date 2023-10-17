@@ -4,15 +4,16 @@
 #![feature(async_fn_in_trait)]
 
 use fluke::{
-    h1, Body, BodyChunk, Encoder, ExpectResponseHeaders, HeadersExt, Responder, Response,
-    ResponseDone, ServerDriver,
+    buffet::RollMut,
+    h1,
+    maybe_uring::{
+        io::IntoHalves,
+        net::{TcpReadHalf, TcpWriteHalf},
+    },
+    Body, BodyChunk, Encoder, ExpectResponseHeaders, HeadersExt, Responder, Response, ResponseDone,
+    ServerDriver,
 };
-use fluke_buffet::RollMut;
 use http::StatusCode;
-use fluke_maybe_uring::{
-    io::IntoHalves,
-    net::{TcpReadHalf, TcpWriteHalf},
-};
 use std::{cell::RefCell, future::Future, net::SocketAddr, rc::Rc};
 use tracing::debug;
 
@@ -49,7 +50,7 @@ impl ServerDriver for ProxyDriver {
             transport
         } else {
             debug!("making new connection to upstream!");
-            fluke_maybe_uring::net::TcpStream::connect(self.upstream_addr)
+            fluke::maybe_uring::net::TcpStream::connect(self.upstream_addr)
                 .await?
                 .into_halves()
         };
@@ -123,7 +124,7 @@ pub async fn start(
 )> {
     let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
 
-    let ln = fluke_maybe_uring::net::TcpListener::bind("127.0.0.1:0".parse()?).await?;
+    let ln = fluke::maybe_uring::net::TcpListener::bind("127.0.0.1:0".parse()?).await?;
     let ln_addr = ln.local_addr()?;
 
     let proxy_fut = async move {
@@ -131,7 +132,7 @@ pub async fn start(
         let pool: TransportPool = Default::default();
 
         enum Event {
-            Accepted((fluke_maybe_uring::net::TcpStream, SocketAddr)),
+            Accepted((fluke::maybe_uring::net::TcpStream, SocketAddr)),
             ShuttingDown,
         }
 
@@ -152,7 +153,7 @@ pub async fn start(
                     let pool = pool.clone();
                     let conf = conf.clone();
 
-                    fluke_maybe_uring::spawn(async move {
+                    fluke::maybe_uring::spawn(async move {
                         let driver = ProxyDriver {
                             upstream_addr,
                             pool,

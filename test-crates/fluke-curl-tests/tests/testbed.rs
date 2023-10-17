@@ -48,7 +48,7 @@ pub async fn start() -> eyre::Result<(SocketAddr, impl Any)> {
     let stdout = child.stdout.take().unwrap();
     let mut addr_tx = Some(addr_tx);
 
-    fluke_maybe_uring::spawn(async move {
+    fluke::maybe_uring::spawn(async move {
         let stdout = BufReader::new(stdout);
         let mut lines = stdout.lines();
         while let Some(line) = lines.next_line().await.unwrap() {
