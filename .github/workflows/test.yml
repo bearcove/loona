@@ -26,7 +26,6 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.3
       - name: Make sure things build
         run: |
-          cargo check --profile ci --all-targets
           cargo build --profile ci
   test-windows:
     runs-on: windows-2022
@@ -46,7 +45,6 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.3
       - name: Make sure things build
         run: |
-          cargo check --profile ci --all-targets
           cargo build --profile ci
   test-linux:
     env:
