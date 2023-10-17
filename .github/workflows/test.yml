@@ -12,6 +12,9 @@ jobs:
     runs-on: macos-12
     env:
       CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
@@ -19,8 +22,8 @@ jobs:
           fetch-depth: 2
       - name: Install Rust specified toolchain
         run: rustup show
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.3
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
       - name: Run cargo check
@@ -42,6 +45,9 @@ jobs:
     runs-on: windows-2022
     env:
       CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
@@ -49,8 +55,8 @@ jobs:
           fetch-depth: 2
       - name: Install Rust specified toolchain
         run: rustup show
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.3
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
       - name: Run cargo check
@@ -71,8 +77,8 @@ jobs:
   test-linux:
     env:
       CARGO_TERM_COLOR: always
-      RUSTC_WRAPPER: sccache
       CARGO_INCREMENTAL: 0
+      RUSTC_WRAPPER: sccache
       CARGO_HOME: /vol/cargo
     runs-on: self-hosted
     steps:
