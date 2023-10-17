@@ -25,6 +25,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false # sccache does that
+          cache-all-crates: true
           cache-on-failure: true
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
@@ -56,6 +57,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false # sccache does that
+          cache-all-crates: true
           cache-on-failure: true
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
