@@ -148,11 +148,8 @@ pub(crate) enum H2ConnectionError {
     #[error("max concurrent streams exceeded (more than {max_concurrent_streams})")]
     MaxConcurrentStreamsExceeded { max_concurrent_streams: u32 },
 
-    #[error("received data for closed stream {stream_id}")]
-    ReceivedDataForClosedStream { stream_id: StreamId },
-
     #[error("other error: {0:?}")]
-    Other(#[from] eyre::Report),
+    Internal(#[from] eyre::Report),
 }
 
 impl H2ConnectionError {
@@ -164,10 +161,8 @@ impl H2ConnectionError {
             H2ConnectionError::PaddedFrameTooShort => KnownErrorCode::FrameSizeError,
             // compression errors
             H2ConnectionError::CompressionError(_) => KnownErrorCode::CompressionError,
-            // stream closed errors
-            H2ConnectionError::ReceivedDataForClosedStream { .. } => KnownErrorCode::StreamClosed,
             // internal errors
-            H2ConnectionError::Other(_) => KnownErrorCode::InternalError,
+            H2ConnectionError::Internal(_) => KnownErrorCode::InternalError,
             // protocol errors
             _ => KnownErrorCode::ProtocolError,
         }
@@ -181,19 +176,27 @@ pub(crate) enum H2Error {
     #[error("connection error: {0:?}")]
     Connection(#[from] H2ConnectionError),
 
-    #[error("stream error: {0:?}")]
-    Stream(#[from] H2StreamError),
+    #[error("stream error: for stream {0}: {1:?}")]
+    Stream(StreamId, H2StreamError),
+}
+
+impl From<eyre::Report> for H2Error {
+    fn from(e: eyre::Report) -> Self {
+        Self::Connection(H2ConnectionError::Internal(e))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum H2StreamError {
     #[allow(dead_code)]
-    #[error("for stream {stream_id}, received {data_length} bytes in data frames but content-length announced {content_length} bytes")]
+    #[error("received {data_length} bytes in data frames but content-length announced {content_length} bytes")]
     DataLengthDoesNotMatchContentLength {
-        stream_id: StreamId,
         data_length: u64,
         content_length: u64,
     },
+
+    #[error("received data for closed stream")]
+    ReceivedDataForClosedStream,
 }
 
 impl H2StreamError {
@@ -203,7 +206,12 @@ impl H2StreamError {
 
         match self {
             DataLengthDoesNotMatchContentLength { .. } => Code::ProtocolError,
+            ReceivedDataForClosedStream => Code::StreamClosed,
         }
+    }
+
+    pub(crate) fn for_stream(self, stream_id: StreamId) -> H2Error {
+        H2Error::Stream(stream_id, self)
     }
 }
 

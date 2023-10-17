@@ -126,14 +126,27 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                 payload_roll
             };
 
-            self.process_frame(frame, payload).await?;
+            if let Err(e) = self.process_frame(frame, payload).await {
+                match e {
+                    H2Error::Connection(e) => {
+                        self.send_goaway(e).await;
+                        // TODO: keep track that we sent a goaway.
+                        // TODO: don't let the inner functions send a goaway themselves,
+                        // so all goaways have to go through here?
+                        // keep looping
+                    }
+                    H2Error::Stream(id, e) => {
+                        self.send_rst(id, e).await;
+                    }
+                }
+            }
         }
     }
 
     // TODO: return `H2Error` from this, which can accommodate both connection-level
     // and stream-level errors.
     // cf.
-    async fn process_frame(&mut self, frame: Frame, payload: Roll) -> eyre::Result<()> {
+    async fn process_frame(&mut self, frame: Frame, payload: Roll) -> H2Result {
         match self.continuation_state {
             ContinuationState::Idle => self.process_idle_frame(frame, payload).await,
             ContinuationState::ContinuingHeaders(expected_stream_id) => {
@@ -144,7 +157,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         }
     }
 
-    async fn process_idle_frame(&mut self, frame: Frame, mut payload: Roll) -> eyre::Result<()> {
+    async fn process_idle_frame(&mut self, frame: Frame, mut payload: Roll) -> H2Result {
         match frame.frame_type {
             FrameType::Data(flags) => {
                 if flags.contains(DataFlags::Padded) {
@@ -190,11 +203,8 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                             tx
                         }
                         StreamStage::HalfClosedRemote | StreamStage::Closed => {
-                            let err = H2ConnectionError::ReceivedDataForClosedStream {
-                                stream_id: frame.stream_id,
-                            };
-                            self.send_goaway(err).await;
-                            return Ok(());
+                            return Err(H2StreamError::ReceivedDataForClosedStream
+                                .for_stream(frame.stream_id));
                         }
                     }
                 };
@@ -314,7 +324,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                 }
 
                 if flags.contains(HeadersFlags::EndHeaders) {
-                    self.end_headers(frame.stream_id).await;
+                    self.end_headers(frame.stream_id).await?;
                 } else {
                     debug!(
                         "expecting more headers/trailers for stream {}",
@@ -361,7 +371,9 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                         .await
                         .is_err()
                     {
-                        return Err(eyre::eyre!("could not send H2 acknowledge settings event"));
+                        return Err(
+                            eyre::eyre!("could not send H2 acknowledge settings event").into()
+                        );
                     }
                 }
             }
@@ -387,7 +399,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                 }
 
                 if self.ev_tx.send(H2ConnEvent::Ping(payload)).await.is_err() {
-                    return Err(eyre::eyre!("could not send H2 ping event"));
+                    return Err(eyre::eyre!("could not send H2 ping event").into());
                 }
             }
             FrameType::GoAway => todo!(),
@@ -430,26 +442,24 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         frame: Frame,
         payload: Roll,
         expected_stream_id: StreamId,
-    ) -> eyre::Result<()> {
+    ) -> H2Result {
         let flags = match frame.frame_type {
             FrameType::Continuation(flags) => flags,
             other => {
-                self.send_goaway(H2ConnectionError::ExpectedContinuationFrame {
+                return Err(H2ConnectionError::ExpectedContinuationFrame {
                     stream_id: expected_stream_id,
                     frame_type: other,
-                })
-                .await;
-                return Ok(());
+                }
+                .into())
             }
         };
 
         if frame.stream_id != expected_stream_id {
-            self.send_goaway(H2ConnectionError::ExpectedContinuationForStream {
+            return Err(H2ConnectionError::ExpectedContinuationForStream {
                 stream_id: expected_stream_id,
                 continuation_stream_id: frame.stream_id,
-            })
-            .await;
-            return Ok(());
+            }
+            .into());
         }
 
         // unwrap rationale: we just checked that this is a
@@ -468,14 +478,14 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         }
 
         if flags.contains(ContinuationFlags::EndHeaders) {
-            self.end_headers(frame.stream_id).await;
+            self.end_headers(frame.stream_id).await
         } else {
             debug!(
                 "expecting more headers/trailers for stream {}",
                 frame.stream_id
             );
+            Ok(())
         }
-        Ok(())
     }
 
     async fn send_goaway(&self, err: H2ConnectionError) {
@@ -497,9 +507,8 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
     }
 
     async fn send_rst(&mut self, stream_id: StreamId, e: H2StreamError) {
-        warn!("stream error: {e:?}");
         let error_code = e.as_known_error_code();
-        debug!("error_code = {error_code:?}");
+        warn!("sending rst because: {e} (known error code: {error_code:?})");
 
         if self
             .ev_tx
@@ -512,26 +521,15 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         {
             debug!("error sending rst");
         }
-    }
 
-    async fn end_headers(&mut self, stream_id: StreamId) {
-        if let Err(err) = self.end_headers_inner(stream_id).await {
-            match err {
-                H2Error::Connection(e) => {
-                    self.send_goaway(e).await;
-                }
-                H2Error::Stream(e) => {
-                    self.send_rst(stream_id, e).await;
-                }
-            }
-        }
+        self.state.streams.remove(&stream_id);
     }
 
     // TODO: this can all be, again, greatly simplified because continuation
     // frames are supposed to follow the headers frames directly, so we don't
     // need any of that in the state machine, we can just keep popping more
     // frames.
-    async fn end_headers_inner(&mut self, stream_id: StreamId) -> H2Result {
+    async fn end_headers(&mut self, stream_id: StreamId) -> H2Result {
         let stage = self
             .state
             .streams
