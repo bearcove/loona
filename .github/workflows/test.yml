@@ -17,30 +17,29 @@ jobs:
       RUSTC_WRAPPER: "sccache"
     steps:
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 2
       - name: Install Rust specified toolchain
         run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false # sccache does that
+          cache-all-crates: true
+          cache-on-failure: true
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
+      - name: Run cargo check
+        run: |
+          cargo check --all-targets
+      - name: Build testbed
+        run: |
+          cargo build --release --manifest-path test-crates/hyper-testbed/Cargo.toml
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
-      - name: Run cargo check
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
-          args: --all-targets
-      - name: Build testbed
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --release --manifest-path test-crates/hyper-testbed/Cargo.toml
       - name: Run cargo nextest
-        uses: actions-rs/cargo@v1
-        with:
-          command: nextest
-          args: run --profile ci
+        run: |
+          cargo nextest run --profile ci
   test-windows:
     runs-on: windows-2022
     env:
@@ -50,30 +49,29 @@ jobs:
       RUSTC_WRAPPER: "sccache"
     steps:
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 2
       - name: Install Rust specified toolchain
         run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false # sccache does that
+          cache-all-crates: true
+          cache-on-failure: true
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
+      - name: Run cargo check
+        run: |
+          cargo check --all-targets
+      - name: Build testbed
+        run: |
+          cargo build --release --manifest-path test-crates/hyper-testbed/Cargo.toml
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
-      - name: Run cargo check
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
-          args: --all-targets
-      - name: Build testbed
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --release --manifest-path test-crates/hyper-testbed/Cargo.toml
       - name: Run cargo nextest
-        uses: actions-rs/cargo@v1
-        with:
-          command: nextest
-          args: run --profile ci
+        run: |
+          cargo nextest run --profile ci
   test-linux:
     env:
       CARGO_TERM_COLOR: always
@@ -83,7 +81,7 @@ jobs:
     runs-on: self-hosted
     steps:
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 2
       - name: Run unit tests and h2spec
