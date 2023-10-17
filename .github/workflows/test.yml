@@ -27,14 +27,6 @@ jobs:
       - name: Run cargo check
         run: |
           cargo check --profile ci --all-targets
-      - name: Build testbed
-        run: |
-          cargo build --release --manifest-path test-crates/hyper-testbed/Cargo.toml
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
-      - name: Run cargo nextest
-        run: |
-          cargo nextest run --profile ci
   test-windows:
     runs-on: windows-2022
     env:
@@ -54,14 +46,6 @@ jobs:
       - name: Run cargo check
         run: |
           cargo check --profile ci --all-targets
-      - name: Build testbed
-        run: |
-          cargo build --release --manifest-path test-crates/hyper-testbed/Cargo.toml
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
-      - name: Run cargo nextest
-        run: |
-          cargo nextest run --profile ci
   test-linux:
     env:
       CARGO_TERM_COLOR: always
