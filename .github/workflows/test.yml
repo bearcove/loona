@@ -47,7 +47,8 @@ jobs:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
       SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache.exe"
+      # RUSTC_WRAPPER: "sccache.exe"
+      RUSTC_WRAPPER: "C:\hostedtoolcache\windows\sccache\0.5.4\x64\sccache.exe"
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
