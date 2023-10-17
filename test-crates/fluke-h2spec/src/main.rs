@@ -3,13 +3,13 @@
 
 use std::{collections::VecDeque, path::PathBuf};
 
-use fluke::buffet::RollMut;
 use fluke::{
+    buffet::RollMut,
     http::{StatusCode, Version},
+    maybe_uring::{io::IntoHalves, net::TcpListener},
     Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, Request, Responder, Response,
     ResponseDone, ServerDriver,
 };
-use fluke_maybe_uring::{io::IntoHalves, net::TcpListener};
 use tokio::process::Command;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
@@ -37,7 +37,7 @@ fn main() {
         }
     };
 
-    fluke_maybe_uring::start(async move { real_main(h2spec_binary).await.unwrap() });
+    fluke::maybe_uring::start(async move { real_main(h2spec_binary).await.unwrap() });
 }
 
 struct SDriver;

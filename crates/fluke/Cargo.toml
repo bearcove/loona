@@ -14,7 +14,7 @@ An HTTP implementation on top of io_uring
 
 [features]
 default = ["tokio-uring"]
-tokio-uring = ["fluke-buffet/tokio-uring"]
+tokio-uring = ["fluke-buffet/tokio-uring", "fluke-maybe-uring/tokio-uring"]
 maybe-uring-net = ["fluke-maybe-uring/net"]
 
 [dependencies]

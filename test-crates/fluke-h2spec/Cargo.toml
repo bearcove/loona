@@ -7,14 +7,13 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-fluke = { version = "0.1.0", path = "../../crates/fluke", default-features = false }
+fluke = { version = "0.1.0", path = "../../crates/fluke", default-features = false, features = ["maybe-uring-net"] }
 color-eyre = "0.6.2"
 tokio = { version = "1.28.2", features = ["full"] }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 which = "4.4.0"
-fluke-maybe-uring = { version = "0.1.1", path = "../../crates/fluke-maybe-uring", features = ["net"] }
 
 [features]
 default = ["tokio-uring"]
-tokio-uring = ["fluke/tokio-uring", "fluke-maybe-uring/tokio-uring"]
+tokio-uring = ["fluke/tokio-uring"]
