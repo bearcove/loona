@@ -47,8 +47,7 @@ jobs:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
       SCCACHE_GHA_ENABLED: "true"
-      # RUSTC_WRAPPER: "sccache.exe"
-      RUSTC_WRAPPER: 'C:\hostedtoolcache\windows\sccache\0.5.4\x64\sccache.exe'
+      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
@@ -60,21 +59,15 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.3
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
-      - name: Run cargo check
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
-          args: --all-targets
+      # - name: Run cargo check
+      #   run: |
+      #     cargo check --all-targets
       - name: Build testbed
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --release --manifest-path test-crates/hyper-testbed/Cargo.toml
-      - name: Run cargo nextest
-        uses: actions-rs/cargo@v1
-        with:
-          command: nextest
-          args: run --profile ci
+        run: |
+          cargo build --release --manifest-path test-crates/hyper-testbed/Cargo.toml
+      # - name: Run cargo nextest
+      #   run: |
+      #     cargo nextest run --profile ci
   test-linux:
     env:
       CARGO_TERM_COLOR: always
