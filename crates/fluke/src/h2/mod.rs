@@ -6,6 +6,7 @@ pub use server::*;
 
 pub(crate) mod parse;
 
-mod encode;
-
 mod body;
+mod encode;
+mod read;
+mod types;
