@@ -31,7 +31,7 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.3
       - name: Run cargo check
         run: |
-          cargo check --all-targets
+          cargo check --profile ci --all-targets
       - name: Build testbed
         run: |
           cargo build --release --manifest-path test-crates/hyper-testbed/Cargo.toml
@@ -63,7 +63,7 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.3
       - name: Run cargo check
         run: |
-          cargo check --all-targets
+          cargo check --profile ci --all-targets
       - name: Build testbed
         run: |
           cargo build --release --manifest-path test-crates/hyper-testbed/Cargo.toml
