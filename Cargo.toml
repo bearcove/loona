@@ -9,3 +9,9 @@ exclude = [
 
 [profile.dev.package."*"]
 opt-level = 2
+
+[profile.ci]
+inherits = "dev"
+
+[profile.ci.package."*"]
+opt-level = 0

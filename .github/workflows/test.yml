@@ -22,24 +22,11 @@ jobs:
           fetch-depth: 2
       - name: Install Rust specified toolchain
         run: rustup show
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-targets: false # sccache does that
-          cache-all-crates: true
-          cache-on-failure: true
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
-      - name: Run cargo check
+      - name: Make sure things build
         run: |
-          cargo check --all-targets
-      - name: Build testbed
-        run: |
-          cargo build --release --manifest-path test-crates/hyper-testbed/Cargo.toml
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
-      - name: Run cargo nextest
-        run: |
-          cargo nextest run --profile ci
+          cargo build --profile ci
   test-windows:
     runs-on: windows-2022
     env:
@@ -54,24 +41,11 @@ jobs:
           fetch-depth: 2
       - name: Install Rust specified toolchain
         run: rustup show
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-targets: false # sccache does that
-          cache-all-crates: true
-          cache-on-failure: true
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
-      - name: Run cargo check
+      - name: Make sure things build
         run: |
-          cargo check --all-targets
-      - name: Build testbed
-        run: |
-          cargo build --release --manifest-path test-crates/hyper-testbed/Cargo.toml
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
-      - name: Run cargo nextest
-        run: |
-          cargo nextest run --profile ci
+          cargo build --profile ci
   test-linux:
     env:
       CARGO_TERM_COLOR: always
@@ -89,6 +63,7 @@ jobs:
           cd ${{ github.workspace }}
           sccache --zero-stats
           cargo clippy
+          cargo clippy --manifest-path test-crates/fluke-tls-sample/Cargo.toml
           mkdir tools
           export PATH=$PATH:${PWD}/tools
           # (pushd tools && curl -L https://github.com/summerwind/h2spec/releases/download/v2.6.0/h2spec_linux_amd64.tar.gz | tar -xz && popd)

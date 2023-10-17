@@ -15,6 +15,7 @@ mod responder;
 pub use responder::*;
 
 pub use fluke_buffet as buffet;
+pub use fluke_maybe_uring as maybe_uring;
 
 /// re-exported so consumers can use whatever forked version we use
 pub use http;
