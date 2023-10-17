@@ -22,6 +22,10 @@ jobs:
           fetch-depth: 2
       - name: Install Rust specified toolchain
         run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false # sccache does that
+          cache-on-failure: true
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
       - name: Run cargo check
@@ -49,6 +53,10 @@ jobs:
           fetch-depth: 2
       - name: Install Rust specified toolchain
         run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false # sccache does that
+          cache-on-failure: true
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
       - name: Run cargo check
