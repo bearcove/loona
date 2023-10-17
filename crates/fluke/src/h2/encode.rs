@@ -1,51 +1,12 @@
-use std::fmt;
-
 use http::{StatusCode, Version};
 use tokio::sync::mpsc;
 use tracing::warn;
 
+use super::{
+    parse::StreamId,
+    types::{H2ConnEvent, H2Event, H2EventPayload},
+};
 use crate::{h1::body::BodyWriteMode, Encoder, Response};
-use fluke_buffet::{Piece, Roll};
-
-use super::{parse::{KnownErrorCode, StreamId}, H2ConnectionError};
-
-pub(crate) enum H2ConnEvent {
-    Ping(Roll),
-    ServerEvent(H2Event),
-    AcknowledgeSettings {
-        new_max_header_table_size: u32,
-    },
-    GoAway {
-        err: H2ConnectionError,
-        last_stream_id: StreamId,
-    },
-    RstStream {
-        stream_id: StreamId,
-        error_code: KnownErrorCode,
-    },
-}
-
-#[derive(Debug)]
-pub(crate) struct H2Event {
-    pub(crate) stream_id: StreamId,
-    pub(crate) payload: H2EventPayload,
-}
-
-pub(crate) enum H2EventPayload {
-    Headers(Response),
-    BodyChunk(Piece),
-    BodyEnd,
-}
-
-impl fmt::Debug for H2EventPayload {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Headers(_) => f.debug_tuple("Headers").finish(),
-            Self::BodyChunk(_) => f.debug_tuple("BodyChunk").finish(),
-            Self::BodyEnd => write!(f, "BodyEnd"),
-        }
-    }
-}
 
 pub(crate) enum EncoderState {
     ExpectResponseHeaders,
