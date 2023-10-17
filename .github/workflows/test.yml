@@ -24,9 +24,10 @@ jobs:
         run: rustup show
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
-      - name: Run cargo check
+      - name: Make sure things build
         run: |
           cargo check --profile ci --all-targets
+          cargo build --profile ci
   test-windows:
     runs-on: windows-2022
     env:
@@ -43,9 +44,10 @@ jobs:
         run: rustup show
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
-      - name: Run cargo check
+      - name: Make sure things build
         run: |
           cargo check --profile ci --all-targets
+          cargo build --profile ci
   test-linux:
     env:
       CARGO_TERM_COLOR: always
