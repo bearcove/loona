@@ -190,7 +190,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                             tx
                         }
                         StreamStage::HalfClosedRemote | StreamStage::Closed => {
-                            let err = H2ConnectionError::ReceivedDataForHalfClosedStream {
+                            let err = H2ConnectionError::ReceivedDataForClosedStream {
                                 stream_id: frame.stream_id,
                             };
                             self.send_goaway(err).await;

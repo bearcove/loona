@@ -148,8 +148,8 @@ pub(crate) enum H2ConnectionError {
     #[error("max concurrent streams exceeded (more than {max_concurrent_streams})")]
     MaxConcurrentStreamsExceeded { max_concurrent_streams: u32 },
 
-    #[error("received data for half-closed stream {stream_id}")]
-    ReceivedDataForHalfClosedStream { stream_id: StreamId },
+    #[error("received data for closed stream {stream_id}")]
+    ReceivedDataForClosedStream { stream_id: StreamId },
 
     #[error("other error: {0:?}")]
     Other(#[from] eyre::Report),
@@ -164,6 +164,8 @@ impl H2ConnectionError {
             H2ConnectionError::PaddedFrameTooShort => KnownErrorCode::FrameSizeError,
             // compression errors
             H2ConnectionError::CompressionError(_) => KnownErrorCode::CompressionError,
+            // stream closed errors
+            H2ConnectionError::ReceivedDataForClosedStream { .. } => KnownErrorCode::StreamClosed,
             // internal errors
             H2ConnectionError::Other(_) => KnownErrorCode::InternalError,
             // protocol errors
