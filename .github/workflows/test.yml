@@ -80,7 +80,6 @@ jobs:
           artifact-name: code-coverage-report
           github-token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: .
-          update-comment: true
       - name: Upload h2spec Report
         uses: actions/upload-artifact@v3
         if: always() # always run even if the previous step fails
