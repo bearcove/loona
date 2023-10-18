@@ -72,6 +72,8 @@ jobs:
           (pushd tools && curl -fL https://github.com/hapsoc/h2spec-binaries/releases/download/72a6b9b/h2spec -o h2spec && chmod +x h2spec && popd)
           just ci-test
           sccache --show-stats
+      - name: Setup LCOV
+        uses: hrishikesh-kadam/setup-lcov@v1
       - name: Report coverage
         uses: zgosalvez/github-actions-report-lcov@v3
         with:
