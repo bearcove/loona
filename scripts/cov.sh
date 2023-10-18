@@ -25,9 +25,14 @@ cargo nextest run --verbose --profile ci --manifest-path crates/fluke/Cargo.toml
 cargo nextest run --verbose --profile ci --manifest-path test-crates/fluke-curl-tests/Cargo.toml
 
 cargo build --manifest-path test-crates/fluke-h2spec/Cargo.toml
-for suite in generic hpack http2; do
-	"${CARGO_TARGET_DIR}"/debug/fluke-h2spec "${suite}" -j "target/h2spec-${suite}.xml"
-done
+# skip if SKIP_H2SPEC is set to 1
+if [[ "${SKIP_H2SPEC:-0}" == "1" ]]; then
+  echo "Skipping h2spec suites"
+else
+	for suite in generic hpack http2; do
+		"${CARGO_TARGET_DIR}"/debug/fluke-h2spec "${suite}" -j "target/h2spec-${suite}.xml"
+	done
+fi
 
 # merge all profiles
 "${LLVM_PROFDATA}" merge -sparse "${COVERAGE_DIR}/raw"/*.profraw -o "${COVERAGE_DIR}/fluke.profdata"
@@ -37,7 +42,11 @@ done
 objects=("${CARGO_TARGET_DIR}"/debug/deps/* "${CARGO_TARGET_DIR}"/release/deps/*)
 
 # build a new array where each item of 'objects' is prefixed with the string '-object':
-args=()
+cover_args=()
+cover_args+=(--instr-profile "${COVERAGE_DIR}/fluke.profdata")
+cover_args+=(--ignore-filename-regex "rustc|.cargo|test-crates|non_uring")
+cover_args+=("${CARGO_TARGET_DIR}"/debug/fluke-h2spec)
+
 for object in "${objects[@]}"; do
   # continue if it ends in '.d'
 	[[ $object =~ \.d$ ]] && continue
@@ -45,11 +54,9 @@ for object in "${objects[@]}"; do
 	# continue if it ends in '.rmeta'
 	[[ $object =~ \.rmeta$ ]] && continue
 
-	args+=(-object "$object")
+	cover_args+=(-object "$object")
 done
 
-# report coverage as HTML
-"${LLVM_COV}" report --instr-profile "${COVERAGE_DIR}/fluke.profdata" \
-	--ignore-filename-regex "rustc|.cargo|test-crates|non_uring" \
-	"${CARGO_TARGET_DIR}"/debug/fluke-h2spec \
-	"${args[@]}"
+"${LLVM_COV}" export --format=lcov "${cover_args[@]}" > coverage/all.lcov
+"${LLVM_COV}" show --format=html --output-dir=coverage/html "${cover_args[@]}"
+"${LLVM_COV}" report --format=text "${cover_args[@]}"

@@ -7,16 +7,7 @@ _default:
 ci-test:
 	#!/bin/bash -eux
 	just build-testbed
-	source <(cargo llvm-cov show-env --export-prefix)
-	cargo llvm-cov clean --workspace
-	rm -f target/*.profraw target/*.profdata target/*-profraw-list
-	cargo nextest run --manifest-path crates/fluke-hpack/Cargo.toml --features interop-tests --release
-	cargo nextest run --manifest-path crates/fluke/Cargo.toml --profile ci
-	cargo nextest run --manifest-path test-crates/fluke-curl-tests/Cargo.toml --profile ci
-	cargo run --manifest-path test-crates/fluke-h2spec/Cargo.toml -- generic -j 'target/h2spec-generic.xml'
-	cargo run --manifest-path test-crates/fluke-h2spec/Cargo.toml -- hpack -j 'target/h2spec-hpack.xml'
-	cargo run --manifest-path test-crates/fluke-h2spec/Cargo.toml -- http2 -j 'target/h2spec-http2.xml'
-	cargo llvm-cov report --lcov --output-path coverage.lcov
+	just cov
 
 cov:
 	scripts/cov.sh
