@@ -1,7 +1,4 @@
-#![allow(incomplete_features)]
-#![allow(unused_attributes)]
 #![feature(type_alias_impl_trait)]
-#![feature(async_fn_in_trait)]
 
 use fluke::{
     buffet::RollMut,

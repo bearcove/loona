@@ -1,6 +1,5 @@
 #![allow(incomplete_features)]
 #![feature(thread_local)]
-#![feature(async_fn_in_trait)]
 
 mod roll;
 pub use roll::*;

@@ -13,6 +13,7 @@ use super::{
 
 pub struct ClientConf {}
 
+#[allow(async_fn_in_trait)] // we never require Send
 pub trait ClientDriver {
     type Return;
 
