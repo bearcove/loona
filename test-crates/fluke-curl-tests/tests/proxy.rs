@@ -1,5 +1,3 @@
-#![feature(type_alias_impl_trait)]
-
 use fluke::{
     buffet::RollMut,
     h1,

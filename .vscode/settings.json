@@ -3,5 +3,5 @@
 	"rust-analyzer.inlayHints.lifetimeElisionHints.useParameterNames": true,
 	"coverage-gutters.showLineCoverage": true,
 	"coverage-gutters.showRulerCoverage": true,
-	"coverage-gutters.coverageReportFileName": "target/llvm-cov/html/index.html"
+	"coverage-gutters.coverageReportFileName": "coverage/html/index.html"
 }

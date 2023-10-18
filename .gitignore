@@ -1,4 +1,6 @@
+coverage
 target
+target-cov
 Cargo.lock
 *.lcov
 lcov.info
