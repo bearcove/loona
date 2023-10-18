@@ -81,11 +81,6 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: .
           update-comment: true
-      - name: Report coverage (romeovs/lcov-reporter-action)
-        uses: romeovs/lcov-reporter-action@v0.2.16
-        with:
-          lcov-file: coverage/lcov.info
-          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload h2spec Report
         uses: actions/upload-artifact@v3
         if: always() # always run even if the previous step fails
@@ -95,4 +90,4 @@ jobs:
             target/h2spec-generic.xml
             target/h2spec-hpack.xml
             target/h2spec-http2.xml
-          retention-days: 280
+          retention-days: 90
