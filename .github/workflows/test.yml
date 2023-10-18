@@ -85,6 +85,7 @@ jobs:
         uses: romeovs/lcov-reporter-action@v0.2.16
         with:
           lcov-file: coverage/all.lcov
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload h2spec Report
         uses: actions/upload-artifact@v3
         if: always() # always run even if the previous step fails
