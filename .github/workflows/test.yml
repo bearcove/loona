@@ -72,6 +72,15 @@ jobs:
           (pushd tools && curl -fL https://github.com/hapsoc/h2spec-binaries/releases/download/72a6b9b/h2spec -o h2spec && chmod +x h2spec && popd)
           just ci-test
           sccache --show-stats
+      - name: Report coverage
+        uses: zgosalvez/github-actions-report-lcov@v3
+        with:
+          coverage-files: coverage.lcov
+          minimum-coverage: 70
+          artifact-name: code-coverage-report
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: .
+          update-comment: true
       - name: Upload h2spec Report
         uses: actions/upload-artifact@v3
         if: always() # always run even if the previous step fails
