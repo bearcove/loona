@@ -155,6 +155,7 @@ where
     }
 }
 
+#[allow(async_fn_in_trait)] // we never require Send
 pub trait Encoder {
     async fn write_response(&mut self, res: Response) -> eyre::Result<()>;
     async fn write_body_chunk(&mut self, chunk: Piece, mode: BodyWriteMode) -> eyre::Result<()>;

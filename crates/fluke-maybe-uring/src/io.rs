@@ -12,10 +12,12 @@ use buf_or_slice::*;
 mod non_uring;
 pub use non_uring::*;
 
+#[allow(async_fn_in_trait)] // we never require Send
 pub trait ReadOwned {
     async fn read<B: IoBufMut>(&mut self, buf: B) -> BufResult<usize, B>;
 }
 
+#[allow(async_fn_in_trait)] // we never require Send
 pub trait WriteOwned {
     /// Write a single buffer, taking ownership for the duration of the write.
     /// Might perform a partial write, see [WriteOwned::write_all]

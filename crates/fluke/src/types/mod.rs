@@ -177,6 +177,7 @@ impl BodyErrorReason {
     }
 }
 
+#[allow(async_fn_in_trait)] // we never require Send
 pub trait Body: Debug
 where
     Self: Sized,
