@@ -19,8 +19,7 @@ ci-test:
 	cargo llvm-cov report --lcov --output-path coverage.lcov
 
 cov:
-	cargo llvm-cov nextest --lcov --output-path lcov.info
-	cargo llvm-cov report --html
+	scripts/cov.sh
 
 # Run all tests with cargo nextest
 test *args:
@@ -40,7 +39,7 @@ h2spec *args:
 	#!/bin/bash -eux
 	export RUST_LOG="${RUST_LOG:-fluke=debug,fluke_hpack=info}"
 	export RUST_BACKTRACE=1
-	cargo run --bin fluke-h2spec -- {{args}}
+	cargo run --manifest-path test-crates/fluke-h2spec/Cargo.toml -- {{args}}
 
 check:
 	cargo clippy --all-targets --all-features
