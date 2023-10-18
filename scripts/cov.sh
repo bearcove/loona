@@ -37,21 +37,20 @@ fi
 # merge all profiles
 "${LLVM_PROFDATA}" merge -sparse "${COVERAGE_DIR}/raw"/*.profraw -o "${COVERAGE_DIR}/fluke.profdata"
 
-# this is what the binary for `fluke-curl-tests` ends up being called.
-# yes, that's unfortunate.
-objects=("${CARGO_TARGET_DIR}"/debug/deps/* "${CARGO_TARGET_DIR}"/release/deps/*)
-
-# build a new array where each item of 'objects' is prefixed with the string '-object':
+# build llvm-cov argument list
 cover_args=()
 cover_args+=(--instr-profile "${COVERAGE_DIR}/fluke.profdata")
 cover_args+=(--ignore-filename-regex "rustc|.cargo|test-crates|non_uring")
 cover_args+=("${CARGO_TARGET_DIR}"/debug/fluke-h2spec)
 
+# pass *all* binaries/libraries to llvm-cov, including release ones
+# because the fluke-hpack conformance tests are too slow in debug.
+objects=("${CARGO_TARGET_DIR}"/debug/deps/* "${CARGO_TARGET_DIR}"/release/deps/*)
 for object in "${objects[@]}"; do
-  # continue if it ends in '.d'
+  # skip debug files '.d'
 	[[ $object =~ \.d$ ]] && continue
 
-	# continue if it ends in '.rmeta'
+	# skip rust metadata files '.rmeta'
 	[[ $object =~ \.rmeta$ ]] && continue
 
 	cover_args+=(-object "$object")

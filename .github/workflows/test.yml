@@ -72,7 +72,7 @@ jobs:
           (pushd tools && curl -fL https://github.com/hapsoc/h2spec-binaries/releases/download/72a6b9b/h2spec -o h2spec && chmod +x h2spec && popd)
           just ci-test
           sccache --show-stats
-      - name: Report coverage
+      - name: Report coverage (zgosalvez/github-actions-report-lcov)
         uses: zgosalvez/github-actions-report-lcov@v3
         with:
           coverage-files: coverage/all.lcov
@@ -81,6 +81,10 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: .
           update-comment: true
+      - name: Report coverage (romeovs/lcov-reporter-action)
+        uses: romeovs/lcov-reporter-action@v0.2.16
+        with:
+          lcov-file: coverage/all.lcov
       - name: Upload h2spec Report
         uses: actions/upload-artifact@v3
         if: always() # always run even if the previous step fails
