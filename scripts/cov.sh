@@ -56,6 +56,6 @@ for object in "${objects[@]}"; do
 	cover_args+=(-object "$object")
 done
 
-"${LLVM_COV}" export --format=lcov "${cover_args[@]}" > coverage/all.lcov
+"${LLVM_COV}" export --format=lcov "${cover_args[@]}" > coverage/lcov.info
 "${LLVM_COV}" show --format=html --output-dir=coverage/html "${cover_args[@]}"
 "${LLVM_COV}" report --format=text "${cover_args[@]}"

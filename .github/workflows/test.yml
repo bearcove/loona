@@ -75,7 +75,7 @@ jobs:
       - name: Report coverage (zgosalvez/github-actions-report-lcov)
         uses: zgosalvez/github-actions-report-lcov@v3
         with:
-          coverage-files: coverage/all.lcov
+          coverage-files: coverage/lcov.info
           minimum-coverage: 70
           artifact-name: code-coverage-report
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -84,7 +84,7 @@ jobs:
       - name: Report coverage (romeovs/lcov-reporter-action)
         uses: romeovs/lcov-reporter-action@v0.2.16
         with:
-          lcov-file: coverage/all.lcov
+          lcov-file: coverage/lcov.info
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload h2spec Report
         uses: actions/upload-artifact@v3

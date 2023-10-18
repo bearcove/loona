@@ -12,6 +12,9 @@ ci-test:
 cov:
 	scripts/cov.sh
 
+quick-cov:
+	SKIP_H2SPEC=1 scripts/cov.sh
+
 # Run all tests with cargo nextest
 test *args:
 	just build-testbed
