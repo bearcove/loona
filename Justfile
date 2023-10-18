@@ -9,7 +9,7 @@ ci-test:
 	just build-testbed
 	source <(cargo llvm-cov show-env --export-prefix)
 	cargo llvm-cov clean --workspace
-	rm target/*.profraw target/*.profdata target/*-profraw-list
+	rm -f target/*.profraw target/*.profdata target/*-profraw-list
 	cargo nextest run --manifest-path crates/fluke-hpack/Cargo.toml --features interop-tests --release
 	cargo nextest run --manifest-path crates/fluke/Cargo.toml --profile ci
 	cargo nextest run --manifest-path test-crates/fluke-curl-tests/Cargo.toml --profile ci
