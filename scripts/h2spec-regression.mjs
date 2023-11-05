@@ -107,12 +107,13 @@ let specs = [
 ];
 
 let regressionsDetected = false;
+let outputLines = [];
 
 for (const spec of specs) {
   let current = await getCurrentResults(spec.junitPath);
   let reference = await getReferenceResults(spec.checkName);
   if (current.failed > reference.failed) {
-    console.log(
+    outputLines.push(
       `Regression detected in ${spec.checkName}: ${current.failed} > ${reference.failed}`,
     );
     regressionsDetected = true;
@@ -126,13 +127,35 @@ for (const spec of specs) {
       diff = `+${current.failed - reference.failed}`;
     }
 
-    console.log(
+    outputLines.push(
       `No regression in ${spec.checkName}: failed count ${diff} (${current.passed} passed, ${current.failed} failed)`,
     );
   }
 }
 
 if (regressionsDetected) {
-  console.log(`Regressions detected, failing the build`);
+  outputLines.push(`Regressions detected, failing the build`);
   process.exit(1);
+}
+
+// Leave a comment on the PR with all lines in outputLines
+let comment = outputLines.join("\n");
+
+let github_ref = process.env.GITHUB_REF || "";
+{
+  let m = /refs\/pull\/(\d+)\/merge/g.exec(github_ref);
+  if (m) {
+    let pr_number = m[1];
+    console.log(`Leaving comment on PR #${pr_number}`);
+    await octokit.rest.issues.createComment({
+      owner: "hapsoc",
+      repo: "fluke",
+      issue_number: process.env.PR_NUMBER,
+      body: comment,
+    });
+  } else {
+    console.log(
+      `Not a PR, not leaving a comment. Comment would've been:\n${comment}`,
+    );
+  }
 }

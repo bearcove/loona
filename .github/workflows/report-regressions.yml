@@ -1,0 +1,24 @@
+name: report-regressions
+
+on:
+  workflow_run:
+    workflows: [test]
+    types: [completed]
+    
+permissions:
+  checks: write
+
+jobs:
+  checks:
+    runs-on: self-hosted
+    steps:
+      - name: Download h2spec Report
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          name: h2spec-results
+          workflow: ${{ github.event.workflow.id }}
+          run_id: ${{ github.event.workflow_run.id }}
+      - name: Report regressions
+        run: |
+          (cd scripts && npm ci)
+          node scripts/h2spec-regression.mjs
