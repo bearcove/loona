@@ -8,6 +8,8 @@ ci-test:
 	#!/bin/bash -eux
 	just build-testbed
 	just cov
+	(cd scripts && npm ci)
+	node scripts/h2spec-regression.mjs
 
 cov:
 	scripts/cov.sh
