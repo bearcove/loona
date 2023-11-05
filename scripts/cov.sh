@@ -12,9 +12,10 @@ mkdir -p "${COVERAGE_DIR}/raw"
 # must be set before building
 export LLVM_PROFILE_FILE="${COVERAGE_DIR}/raw/fluke-%p-%12m.profraw"
 
-RUSTC_PATH=$(rustup which rustc)
-# replace `bin/rustc` with `lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-cov`
-LLVM_TOOLS_PATH=${RUSTC_PATH%/*/*}/lib/rustlib/x86_64-unknown-linux-gnu/bin
+RUSTC_SYSROOT=$(rustc --print sysroot)
+# extract target triple. this is wrong in case of cross-compilation but ah-well.
+RUSTC_TARGET_TRIPLE=$(rustc --version --verbose | grep host | cut -d' ' -f2)
+LLVM_TOOLS_PATH=${RUSTC_SYSROOT}/lib/rustlib/${RUSTC_TARGET_TRIPLE}/bin
 LLVM_PROFDATA="${LLVM_TOOLS_PATH}/llvm-profdata"
 "${LLVM_PROFDATA}" --version
 LLVM_COV="${LLVM_TOOLS_PATH}/llvm-cov"

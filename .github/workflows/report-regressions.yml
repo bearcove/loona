@@ -1,0 +1,26 @@
+name: report-regressions
+
+on:
+  workflow_run:
+    workflows: [test]
+    types: [completed]
+    
+permissions:
+  checks: write
+  issues: write
+
+jobs:
+  checks:
+    runs-on: self-hosted
+    steps:
+      - name: Download h2spec Report
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          name: h2spec-results
+          workflow: ${{ github.event.workflow.id }}
+          run_id: ${{ github.event.workflow_run.id }}
+      - name: Report h2spec regressions      
+        uses: hapsoc/report-h2spec-regressions@61fee0f19a82d79427b38dfb094d259f43208fc2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          suites: "h2spec-generic,h2spec-hpack,h2spec-http2"
