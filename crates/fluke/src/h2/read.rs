@@ -222,13 +222,13 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                 // TODO: if we're shutting down, ignore streams higher
                 // than the last one we accepted.
 
-                if frame.stream_id.is_server_initiated() {
-                    return H2ConnectionError::ClientSidShouldBeOdd.into();
-                }
+                // if frame.stream_id.is_server_initiated() {
+                //     return H2ConnectionError::ClientSidShouldBeOdd.into();
+                // }
 
-                if frame.stream_id < self.state.last_stream_id {
-                    return H2ConnectionError::ClientSidShouldBeIncreasing.into();
-                }
+                // if frame.stream_id < self.state.last_stream_id {
+                //     return H2ConnectionError::ClientSidShouldBeIncreasing.into();
+                // }
                 self.state.last_stream_id = frame.stream_id;
 
                 let padding_length = if flags.contains(HeadersFlags::Padded) {
