@@ -1,0 +1,49 @@
+name: h2spec-report
+
+on:
+  workflow_run:
+    workflows: [test]
+    types: [completed]
+    
+permissions:
+  checks: write
+
+jobs:
+  h2spec-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download h2spec Report
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          name: h2spec-results
+          workflow: ${{ github.event.workflow.id }}
+          run_id: ${{ github.event.workflow_run.id }}
+      - name: Stub Git repo for test-reporter
+        run: |
+          git init
+      - name: Publish h2spec-generic report
+        if: success() || failure()
+        uses: dorny/test-reporter@v1
+        with:
+          name: h2spec-generic
+          path: h2spec-generic.xml
+          reporter: java-junit
+      - name: Publish h2spec-hpack report
+        if: success() || failure()
+        uses: dorny/test-reporter@v1
+        with:
+          name: h2spec-hpack
+          path: h2spec-hpack.xml
+          reporter: java-junit
+      - name: Publish h2spec-http2 report
+        uses: dorny/test-reporter@v1
+        if: success() || failure()
+        with:
+          name: h2spec-http2
+          path: h2spec-http2.xml
+          reporter: java-junit
+      - name: Report h2spec regressions      
+        if: success() || failure()
+        uses: hapsoc/report-h2spec-regressions@da0ad5d1fd6caf2b16b46fda70e5cb5638435baa
+        with:
+          suites: "h2spec-generic,h2spec-hpack,h2spec-http2"

@@ -1,13 +1,13 @@
-name: Release-plz
-
-permissions:
-  pull-requests: write
-  contents: write
+name: release-plz
 
 on:
   push:
     branches:
       - main
+
+permissions:
+  pull-requests: write
+  contents: write
 
 jobs:
   release-plz:
