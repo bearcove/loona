@@ -44,6 +44,6 @@ jobs:
           reporter: java-junit
       - name: Report h2spec regressions      
         if: success() || failure()
-        uses: hapsoc/report-h2spec-regressions@38bab688c4008b1a9bfb831a15e3b11be188376b
+        uses: hapsoc/report-h2spec-regressions@22403fe3e79edebe2b39068606b4cb40cf016cf7
         with:
           suites: "h2spec-generic,h2spec-hpack,h2spec-http2"
