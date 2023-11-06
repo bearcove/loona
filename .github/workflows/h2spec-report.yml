@@ -1,4 +1,4 @@
-name: report-http2
+name: h2spec-report
 
 on:
   workflow_run:
@@ -9,7 +9,7 @@ permissions:
   checks: write
 
 jobs:
-  checks:
+  h2spec-report:
     runs-on: ubuntu-latest
     steps:
       - name: Download h2spec Report
@@ -21,10 +21,25 @@ jobs:
       - name: Stub Git repo for test-reporter
         run: |
           git init
+      - name: Publish h2spec-generic report
+        uses: dorny/test-reporter@v1
+        with:
+          name: h2spec-generic
+          path: h2spec-generic.xml
+          reporter: java-junit
+      - name: Publish h2spec-hpack report
+        uses: dorny/test-reporter@v1
+        with:
+          name: h2spec-hpack
+          path: h2spec-hpack.xml
+          reporter: java-junit
       - name: Publish h2spec-http2 report
         uses: dorny/test-reporter@v1
         with:
           name: h2spec-http2
           path: h2spec-http2.xml
           reporter: java-junit
-          fail-on-error: 'false'
+      - name: Report h2spec regressions      
+        uses: hapsoc/report-h2spec-regressions@da0ad5d1fd6caf2b16b46fda70e5cb5638435baa
+        with:
+          suites: "h2spec-generic,h2spec-hpack,h2spec-http2"
