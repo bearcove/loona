@@ -20,7 +20,7 @@ jobs:
           workflow: ${{ github.event.workflow.id }}
           run_id: ${{ github.event.workflow_run.id }}
       - name: Report h2spec regressions      
-        uses: hapsoc/report-h2spec-regressions@75e8e7759796bb744453d647f50cb9b06d34b0b5
+        uses: hapsoc/report-h2spec-regressions@eb1fdf45a990ae841dd76f44571e7f20dd7337cd
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           suites: "h2spec-generic,h2spec-hpack,h2spec-http2"
