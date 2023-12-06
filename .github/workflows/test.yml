@@ -50,18 +50,32 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
+      SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
-      CARGO_HOME: /vol/cargo
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - name: Check out repository code
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
+      - id: cache-rustup
+        name: Cache Rust toolchain
+        uses: actions/cache@v3
+        with:
+          path: ~/.rustup
+          key: toolchain-
+      - name: Install Rust specified toolchain
+        run: rustup show
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.3
+      - name: Set up sccache (part 2)
+        run: sccache --start-server
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-llvm-cov,cargo-nextest
       - name: Run unit tests and h2spec
         run: |
           cd ${{ github.workspace }}
-          sccache --zero-stats
           cargo clippy
           cargo clippy --manifest-path test-crates/fluke-tls-sample/Cargo.toml
           mkdir tools
@@ -72,14 +86,11 @@ jobs:
           (pushd tools && curl -fL https://github.com/hapsoc/h2spec-binaries/releases/download/72a6b9b/h2spec -o h2spec && chmod +x h2spec && popd)
           just ci-test
           sccache --show-stats
-      - name: Report coverage (zgosalvez/github-actions-report-lcov)
-        uses: zgosalvez/github-actions-report-lcov@v3
-        with:
-          coverage-files: coverage/lcov.info
-          minimum-coverage: 70
-          artifact-name: code-coverage-report
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          working-directory: .
+      - name: Upload coverage information
+        run: |
+          curl -Os https://uploader.codecov.io/latest/linux/codecov 
+          chmod +x codecov
+          ./codecov
       - name: Upload h2spec Report
         uses: actions/upload-artifact@v3
         if: always() # always run even if the previous step fails
