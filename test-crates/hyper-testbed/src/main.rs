@@ -1,6 +1,4 @@
-#![feature(impl_trait_in_assoc_type)]
-
-use std::convert::Infallible;
+use std::{convert::Infallible, pin::Pin};
 
 use bytes::Bytes;
 use futures::{Future, StreamExt};
@@ -20,7 +18,8 @@ pub fn big_body() -> String {
 impl Service<Request<Body>> for TestService {
     type Response = Response<Body>;
     type Error = Infallible;
-    type Future = impl Future<Output = Result<Self::Response, Self::Error>>;
+    type Future =
+        Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
 
     fn poll_ready(
         &mut self,
@@ -30,7 +29,7 @@ impl Service<Request<Body>> for TestService {
     }
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
-        async move {
+        Box::pin(async move {
             let (parts, body) = req.into_parts();
             println!("Handling {parts:?}");
 
@@ -71,7 +70,7 @@ impl Service<Request<Body>> for TestService {
                     }
                 }
             }
-        }
+        })
     }
 }
 

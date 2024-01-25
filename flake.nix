@@ -34,6 +34,7 @@
         rustToolchain
         clang
         mold
+        curl
       ]
       ++ lib.optionals pkgs.stdenv.isLinux [ autoPatchelfHook ]
       ++ lib.optionals pkgs.stdenv.isDarwin
@@ -67,7 +68,7 @@
       };
       devShells.default = mkShell {
         inputsFrom = [ bin ];
-        packages = with pkgs; [ just ];
+        packages = with pkgs; [ just nixpkgs-fmt ];
       };
     }
     );
