@@ -10,7 +10,6 @@ mod buf_or_slice;
 use buf_or_slice::*;
 
 mod non_uring;
-pub use non_uring::*;
 
 #[allow(async_fn_in_trait)] // we never require Send
 pub trait ReadOwned {
