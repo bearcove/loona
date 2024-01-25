@@ -1,4 +1,4 @@
-use std::{convert::Infallible, future::Future};
+use std::{convert::Infallible, future::Future, pin::Pin};
 
 use bytes::Bytes;
 use hyper::{
@@ -13,7 +13,8 @@ struct TestService;
 impl Service<Request<Body>> for TestService {
     type Response = Response<Body>;
     type Error = Infallible;
-    type Future = impl Future<Output = Result<Self::Response, Self::Error>>;
+    type Future =
+        Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
 
     fn poll_ready(
         &mut self,
@@ -23,7 +24,7 @@ impl Service<Request<Body>> for TestService {
     }
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
-        async move {
+        Box::pin(async move {
             let (parts, body) = req.into_parts();
             println!("Handling {parts:?}");
 
@@ -64,7 +65,7 @@ impl Service<Request<Body>> for TestService {
                     }
                 }
             }
-        }
+        })
     }
 }
 

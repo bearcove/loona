@@ -564,7 +564,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                             b"method" => {
                                 // TODO: error handling
                                 let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
-                                if method.replace(Method::try_from(value).unwrap()).is_some() {
+                                if method.replace(Method::from(value)).is_some() {
                                     unreachable!(); // No duplicate allowed.
                                 }
                             }

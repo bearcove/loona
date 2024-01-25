@@ -1,4 +1,3 @@
-
 use std::{collections::VecDeque, path::PathBuf};
 
 use fluke::{
@@ -96,7 +95,7 @@ async fn real_main(h2spec_binary: PathBuf) -> color_eyre::Result<()> {
     let addr = spawn_server("127.0.0.1:0".parse()?).await?;
 
     let mut args = std::env::args().skip(1).collect::<VecDeque<_>>();
-    if matches!(args.get(0).map(|s| s.as_str()), Some("--")) {
+    if matches!(args.front().map(|s| s.as_str()), Some("--")) {
         args.pop_front();
     }
     tracing::info!("Custom args: {args:?}");

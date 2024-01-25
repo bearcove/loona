@@ -1,4 +1,3 @@
-#![allow(incomplete_features)]
 #![feature(thread_local)]
 
 mod roll;
@@ -28,7 +27,7 @@ pub const NUM_BUF: u32 = 64;
 static BUF_POOL: BufPool = BufPool::new_empty(BUF_SIZE, NUM_BUF);
 
 thread_local! {
-    static BUF_POOL_DESTRUCTOR: RefCell<Option<MmapMut>> = RefCell::new(None);
+    static BUF_POOL_DESTRUCTOR: RefCell<Option<MmapMut>> = const { RefCell::new(None) };
 }
 
 type Result<T, E = Error> = std::result::Result<T, E>;

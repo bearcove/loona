@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bytes = "1.2.1"
-futures = "0.3.25"
-hyper = { version = "0.14.22", features = ["client", "server", "http1", "tcp", "stream"] }
-tokio = { version = "1.21.2", features = ["full"] }
-tokio-stream = "0.1.11"
-tracing = "0.1.37"
+bytes = "1.5.0"
+futures = "0.3.30"
+hyper = { version = "0.14.28", features = ["client", "server", "http1", "tcp", "stream"] }
+tokio = { version = "1.35.1", features = ["full"] }
+tokio-stream = "0.1.14"
+tracing = "0.1.40"
 
 [profile.dev.package."*"]
 opt-level = 2
