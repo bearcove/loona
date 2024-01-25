@@ -1,6 +1,6 @@
 #!/bin/bash -eux
 
-export RUSTFLAGS='-C instrument-coverage --cfg=coverage --cfg=coverage_nightly --cfg=trybuild_no_target -C instrument-coverage --cfg=coverage --cfg=coverage_nightly --cfg=trybuild_no_target'
+export RUSTFLAGS='-C instrument-coverage --cfg=coverage --cfg=trybuild_no_target'
 
 export CARGO_INCREMENTAL=0
 export CARGO_TARGET_DIR="${PWD}/target-cov"

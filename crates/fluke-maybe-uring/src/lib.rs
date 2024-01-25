@@ -1,5 +1,3 @@
-#![allow(incomplete_features)]
-
 use std::future::Future;
 
 pub mod buf;

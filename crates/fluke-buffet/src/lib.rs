@@ -1,5 +1,3 @@
-#![feature(thread_local)]
-
 mod roll;
 pub use roll::*;
 
@@ -23,10 +21,8 @@ pub const NUM_BUF: u32 = 64 * 1024;
 #[cfg(feature = "miri")]
 pub const NUM_BUF: u32 = 64;
 
-#[thread_local]
-static BUF_POOL: BufPool = BufPool::new_empty(BUF_SIZE, NUM_BUF);
-
 thread_local! {
+    static BUF_POOL: BufPool = const { BufPool::new_empty(BUF_SIZE, NUM_BUF) };
     static BUF_POOL_DESTRUCTOR: RefCell<Option<MmapMut>> = const { RefCell::new(None) };
 }
 
@@ -172,7 +168,7 @@ pub struct BufMut {
 impl BufMut {
     #[inline(always)]
     pub fn alloc() -> Result<BufMut, Error> {
-        BUF_POOL.alloc()
+        BUF_POOL.with(|bp| bp.alloc())
     }
 
     #[inline(always)]
@@ -239,7 +235,7 @@ impl BufMut {
         };
 
         std::mem::forget(self); // don't decrease ref count
-        BUF_POOL.inc(left.index); // in fact, increase it by 1
+        BUF_POOL.with(|bp| bp.inc(left.index)); // in fact, increase it by 1
 
         (left, right)
     }
@@ -261,7 +257,7 @@ impl ops::Deref for BufMut {
     fn deref(&self) -> &[u8] {
         unsafe {
             std::slice::from_raw_parts(
-                BUF_POOL.base_ptr(self.index).add(self.off as _),
+                BUF_POOL.with(|bp| bp.base_ptr(self.index).add(self.off as _)),
                 self.len as _,
             )
         }
@@ -273,7 +269,7 @@ impl ops::DerefMut for BufMut {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe {
             std::slice::from_raw_parts_mut(
-                BUF_POOL.base_ptr(self.index).add(self.off as _),
+                BUF_POOL.with(|bp| bp.base_ptr(self.index).add(self.off as _)),
                 self.len as _,
             )
         }
@@ -282,7 +278,7 @@ impl ops::DerefMut for BufMut {
 
 unsafe impl fluke_maybe_uring::buf::IoBuf for BufMut {
     fn stable_ptr(&self) -> *const u8 {
-        unsafe { BUF_POOL.base_ptr(self.index).add(self.off as _) as *const u8 }
+        unsafe { BUF_POOL.with(|bp| bp.base_ptr(self.index).add(self.off as _)) as *const u8 }
     }
 
     fn bytes_init(&self) -> usize {
@@ -302,7 +298,7 @@ unsafe impl fluke_maybe_uring::buf::IoBuf for BufMut {
 
 unsafe impl fluke_maybe_uring::buf::IoBufMut for BufMut {
     fn stable_mut_ptr(&mut self) -> *mut u8 {
-        unsafe { BUF_POOL.base_ptr(self.index).add(self.off as _) }
+        unsafe { BUF_POOL.with(|bp| bp.base_ptr(self.index).add(self.off as _)) }
     }
 
     unsafe fn set_init(&mut self, _pos: usize) {
@@ -313,7 +309,7 @@ unsafe impl fluke_maybe_uring::buf::IoBufMut for BufMut {
 
 impl Drop for BufMut {
     fn drop(&mut self) {
-        BUF_POOL.dec(self.index);
+        BUF_POOL.with(|bp| bp.dec(self.index));
     }
 }
 
@@ -386,7 +382,7 @@ impl Buf {
         };
 
         std::mem::forget(self); // don't decrease ref count
-        BUF_POOL.inc(left.index); // in fact, increase it by 1
+        BUF_POOL.with(|bp| bp.inc(left.index)); // in fact, increase it by 1
 
         (left, right)
     }
@@ -394,7 +390,7 @@ impl Buf {
 
 unsafe impl fluke_maybe_uring::buf::IoBuf for Buf {
     fn stable_ptr(&self) -> *const u8 {
-        unsafe { BUF_POOL.base_ptr(self.index).add(self.off as _) as *const u8 }
+        unsafe { BUF_POOL.with(|bp| bp.base_ptr(self.index).add(self.off as _)) as *const u8 }
     }
 
     fn bytes_init(&self) -> usize {
@@ -413,7 +409,7 @@ impl ops::Deref for Buf {
     fn deref(&self) -> &[u8] {
         unsafe {
             std::slice::from_raw_parts(
-                BUF_POOL.base_ptr(self.index).add(self.off as _),
+                BUF_POOL.with(|bp| bp.base_ptr(self.index).add(self.off as _)),
                 self.len as _,
             )
         }
@@ -422,7 +418,7 @@ impl ops::Deref for Buf {
 
 impl Clone for Buf {
     fn clone(&self) -> Self {
-        BUF_POOL.inc(self.index);
+        BUF_POOL.with(|bp| bp.inc(self.index));
         Self {
             index: self.index,
             off: self.off,
@@ -434,7 +430,7 @@ impl Clone for Buf {
 
 impl Drop for Buf {
     fn drop(&mut self) {
-        BUF_POOL.dec(self.index);
+        BUF_POOL.with(|bp| bp.dec(self.index));
     }
 }
 
@@ -469,10 +465,10 @@ mod tests {
 
     #[test]
     fn freeze_test() -> eyre::Result<()> {
-        let total_bufs = BUF_POOL.num_free()?;
+        let total_bufs = BUF_POOL.with(|bp| bp.num_free())?;
         let mut bm = BufMut::alloc().unwrap();
 
-        assert_eq!(total_bufs - 1, BUF_POOL.num_free()?);
+        assert_eq!(total_bufs - 1, BUF_POOL.with(|bp| bp.num_free())?);
         assert_eq!(bm.len(), 4096);
 
         bm[..11].copy_from_slice(b"hello world");
@@ -480,30 +476,30 @@ mod tests {
 
         let b = bm.freeze();
         assert_eq!(&b[..11], b"hello world");
-        assert_eq!(total_bufs - 1, BUF_POOL.num_free()?);
+        assert_eq!(total_bufs - 1, BUF_POOL.with(|bp| bp.num_free())?);
 
         let b2 = b.clone();
         assert_eq!(&b[..11], b"hello world");
-        assert_eq!(total_bufs - 1, BUF_POOL.num_free()?);
+        assert_eq!(total_bufs - 1, BUF_POOL.with(|bp| bp.num_free())?);
 
         drop(b);
-        assert_eq!(total_bufs - 1, BUF_POOL.num_free()?);
+        assert_eq!(total_bufs - 1, BUF_POOL.with(|bp| bp.num_free())?);
 
         drop(b2);
-        assert_eq!(total_bufs, BUF_POOL.num_free()?);
+        assert_eq!(total_bufs, BUF_POOL.with(|bp| bp.num_free())?);
 
         Ok(())
     }
 
     #[test]
     fn split_test() -> eyre::Result<()> {
-        let total_bufs = BUF_POOL.num_free()?;
+        let total_bufs = BUF_POOL.with(|bp| bp.num_free())?;
         let mut bm = BufMut::alloc().unwrap();
 
         bm[..12].copy_from_slice(b"yellowjacket");
         let (a, b) = bm.split_at(6);
 
-        assert_eq!(total_bufs - 1, BUF_POOL.num_free()?);
+        assert_eq!(total_bufs - 1, BUF_POOL.with(|bp| bp.num_free())?);
         assert_eq!(&a[..], b"yellow");
         assert_eq!(&b[..6], b"jacket");
 
