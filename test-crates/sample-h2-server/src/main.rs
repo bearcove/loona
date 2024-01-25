@@ -1,5 +1,3 @@
-#![feature(type_alias_impl_trait)]
-
 use std::{convert::Infallible, future::Future};
 
 use bytes::Bytes;
