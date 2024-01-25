@@ -1,6 +1,3 @@
-#![allow(incomplete_features)]
-#![feature(type_alias_impl_trait)]
-
 mod util;
 
 mod types;
