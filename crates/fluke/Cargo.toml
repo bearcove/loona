@@ -9,6 +9,7 @@ readme = "README.md"
 description = """
 An HTTP implementation on top of io_uring
 """
+rust-version = "1.75"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
