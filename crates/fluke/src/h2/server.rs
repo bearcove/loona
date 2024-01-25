@@ -1,13 +1,12 @@
 use std::rc::Rc;
 
-use futures_util::TryFutureExt;
 use tracing::debug;
 
 use crate::{
     h2::{
         parse::{self, Frame, FrameType, StreamId},
         read::H2ReadContext,
-        types::{ConnState, ConnectionClosed, H2ConnEvent},
+        types::{ConnState, H2ConnEvent},
     },
     util::read_and_parse,
     ServerDriver,
@@ -72,32 +71,85 @@ pub async fn serve(
     let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<H2ConnEvent>(32);
 
     let mut h2_read_cx = H2ReadContext::new(driver.clone(), ev_tx.clone(), state);
-    let read_task = h2_read_cx.read_loop(client_buf, transport_r);
 
-    let write_task = super::write::h2_write_loop(ev_rx, transport_w, out_scratch);
+    enum Outcome {
+        PeerGone,
+        Ok,
+    }
 
-    let res = tokio::try_join!(
-        read_task.map_err(LoopError::Read),
-        write_task.map_err(LoopError::Write),
-    );
-    if let Err(e) = &res {
-        if let LoopError::Read(r) = e {
-            if r.downcast_ref::<ConnectionClosed>().is_some() {
-                return Ok(());
+    let mut outcome = Outcome::Ok;
+
+    {
+        let mut read_task = std::pin::pin!(h2_read_cx.read_loop(client_buf, transport_r));
+        let mut write_task =
+            std::pin::pin!(super::write::h2_write_loop(ev_rx, transport_w, out_scratch));
+
+        tokio::select! {
+            res = &mut read_task => {
+                match res {
+                    Err(e) => {
+                        return Err(e.wrap_err("h2 read (finished first)"));
+                    }
+                    Ok(()) => {
+                        debug!("read task finished, waiting on write task now");
+                        let res = write_task.await;
+                        match res {
+                            Err(e) => {
+                                if is_peer_gone(&e) {
+                                    outcome = Outcome::PeerGone;
+                                } else {
+                                    return Err(e.wrap_err("h2 write (finished second)"));
+                                }
+                            }
+                            Ok(()) => {
+                                debug!("write task finished okay");
+                            }
+                        }
+                    }
+                }
+            },
+            res = write_task.as_mut() => {
+                match res {
+                    Err(e) => {
+                        if is_peer_gone(&e) {
+                            outcome = Outcome::PeerGone;
+                        } else {
+                            return Err(e.wrap_err("h2 write (finished first)"));
+                        }
+                    }
+                    Ok(()) => {
+                        debug!("write task finished, giving up read task");
+                    }
+                }
+            },
+        };
+    };
+
+    match outcome {
+        Outcome::PeerGone => {
+            if h2_read_cx.goaway_sent {
+                debug!("write task failed with broken pipe, but we already sent a goaway, so we're good");
+            } else {
+                return Err(eyre::eyre!(
+                    "peer closed connection without sending a goaway"
+                ));
             }
         }
-        debug!("caught error from one of the tasks: {e} / {e:#?}");
+        Outcome::Ok => {
+            // all goodt hen!
+        }
     }
-    res?;
 
     Ok(())
 }
 
-#[derive(thiserror::Error, Debug)]
-enum LoopError {
-    #[error("read error: {0}")]
-    Read(eyre::Report),
-
-    #[error("write error: {0}")]
-    Write(eyre::Report),
+fn is_peer_gone(e: &eyre::Report) -> bool {
+    if let Some(io_error) = e.root_cause().downcast_ref::<std::io::Error>() {
+        matches!(
+            io_error.kind(),
+            std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+        )
+    } else {
+        false
+    }
 }

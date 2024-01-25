@@ -272,5 +272,5 @@ impl fmt::Debug for H2EventPayload {
 }
 
 #[derive(thiserror::Error, Debug)]
-#[error("connection closed")]
+#[error("the peer closed the connection unexpectedly")]
 pub(crate) struct ConnectionClosed;
