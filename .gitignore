@@ -1,7 +1,8 @@
 coverage
 target
 target-cov
-Cargo.lock
 *.lcov
 lcov.info
 junit.xml
+.direnv
+.DS_Store
