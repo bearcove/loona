@@ -41,6 +41,12 @@ pub(crate) struct H2ReadContext<D: ServerDriver + 'static> {
     hpack_dec: fluke_hpack::Decoder<'static>,
     // TODO: kill, cf. https://github.com/hapsoc/fluke/issues/121
     continuation_state: ContinuationState,
+
+    /// Whether we've sent a GOAWAY frame.
+    pub goaway_sent: bool,
+
+    /// Whether we've received a GOAWAY frame.
+    pub goaway_recv: bool,
 }
 
 impl<D: ServerDriver + 'static> H2ReadContext<D> {
@@ -55,6 +61,8 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
             state,
             hpack_dec,
             continuation_state: ContinuationState::Idle,
+            goaway_sent: false,
+            goaway_recv: false,
         }
     }
 
@@ -65,15 +73,38 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
     ) -> eyre::Result<()> {
         loop {
             let frame;
-            (client_buf, frame) =
-                match read_and_parse(Frame::parse, &mut transport_r, client_buf, 128).await? {
-                    Some((client_buf, frame)) => (client_buf, frame),
-                    None => {
-                        // TODO: this can be fine, if we've sent a GO_AWAY
-                        debug!("h2 client closed connection");
-                        return Err(eyre::Report::from(ConnectionClosed));
+            let frame_res = read_and_parse(Frame::parse, &mut transport_r, client_buf, 128).await;
+            let maybe_frame = match frame_res {
+                Ok(inner) => inner,
+                Err(e) => {
+                    // if this is a connection reset and we've sent a goaway, ignore it
+                    if self.goaway_sent {
+                        if let Some(io_error) = e.root_cause().downcast_ref::<std::io::Error>() {
+                            if io_error.kind() == std::io::ErrorKind::ConnectionReset {
+                                debug!("ignoring connection reset after goaway");
+                                return Ok(());
+                            }
+                        }
                     }
-                };
+                    return Err(e.wrap_err("h2 read"));
+                }
+            };
+            (client_buf, frame) = match maybe_frame {
+                Some((client_buf, frame)) => (client_buf, frame),
+                None => {
+                    if self.goaway_sent {
+                        debug!("peer connection reset after we sent a GOAWAY");
+                        return Ok(());
+                    }
+                    if self.goaway_recv {
+                        debug!("peer connection reset after we received a GOAWAY");
+                        return Ok(());
+                    }
+
+                    debug!("peer connection reset, without a GOAWAY");
+                    return Err(eyre::Report::from(ConnectionClosed));
+                }
+            };
 
             debug!(?frame, "Received");
 
@@ -399,7 +430,12 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                     return Err(eyre::eyre!("could not send H2 ping event").into());
                 }
             }
-            FrameType::GoAway => todo!(),
+            FrameType::GoAway => {
+                self.goaway_recv = true;
+
+                // TODO: this should probably have other effects than setting
+                // this flag.
+            }
             FrameType::WindowUpdate => match frame.stream_id.0 {
                 0 => {
                     debug!("TODO: ignoring connection-wide window update");
@@ -485,11 +521,17 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         }
     }
 
-    async fn send_goaway(&self, err: H2ConnectionError) {
+    async fn send_goaway(&mut self, err: H2ConnectionError) {
         // TODO: this should change the global server state: we should ignore
         // any streams higher than the last stream id we've seen after
         // we've done that.
 
+        if self.goaway_sent {
+            debug!("goaway already sent, ignoring");
+            return;
+        }
+
+        self.goaway_sent = true;
         if self
             .ev_tx
             .send(H2ConnEvent::GoAway {
