@@ -63,7 +63,7 @@
     with pkgs;
     {
       packages = {
-        inherit bin containerImage;
+        inherit bin;
         default = bin;
       };
       devShells.default = mkShell {
