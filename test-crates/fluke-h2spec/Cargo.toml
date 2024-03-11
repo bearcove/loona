@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 fluke = { version = "0.1.0", path = "../../crates/fluke", default-features = false, features = ["maybe-uring-net"] }
 color-eyre = "0.6.2"
-tokio = { version = "1.35.1", features = ["full"] }
+tokio = { version = "1.36.0", features = ["full"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 which = "4.4.2"
