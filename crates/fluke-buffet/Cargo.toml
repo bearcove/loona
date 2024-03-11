@@ -22,7 +22,7 @@ eyre = "0.6.12"
 http = "0.2.12"
 fluke-maybe-uring = { version = "0.1.1", path = "../fluke-maybe-uring" }
 memchr = "2.7.1"
-memmap2 = { version = "0.7.1", default-features = false }
+memmap2 = { version = "0.9.4", default-features = false }
 nom = "7.1.3"
 pretty-hex = "0.4.1"
 thiserror = { version = "1.0.57", default-features = false }
