@@ -30,10 +30,24 @@ bench *args:
 	RUST_BACKTRACE=1 cargo bench {{args}} -- --plotting-backend plotters
 
 h2spec *args:
-	#!/bin/bash -eux
+	#!/bin/bash -eux	
 	export RUST_LOG="${RUST_LOG:-fluke=debug,fluke_hpack=info}"
 	export RUST_BACKTRACE=1
 	cargo run --manifest-path test-crates/fluke-h2spec/Cargo.toml -- {{args}}
 
 check:
 	cargo clippy --all-targets --all-features
+
+check-all:
+	#!/bin/bash -eux
+	cargo clippy --all-targets --all-features
+	# also for all subfolders of `test-crates/`
+	for d in test-crates/*; do
+		# if the Cargo.toml exists
+		if [ -f "$d/Cargo.toml" ]; then
+		 pushd "$d" > /dev/null
+		 cargo clippy --all-targets --all-features
+		 popd > /dev/null
+		fi
+	done
+

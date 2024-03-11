@@ -15,7 +15,10 @@ use fluke::{
 };
 use http::Version;
 use ktls::CorkStream;
-use rustls::ServerConfig;
+use rustls::{
+    pki_types::{CertificateDer, PrivatePkcs8KeyDer},
+    ServerConfig,
+};
 use tokio::net::TcpListener;
 use tracing::{debug, info};
 use tracing_subscriber::EnvFilter;
@@ -42,9 +45,11 @@ async fn async_main() -> eyre::Result<()> {
     let key = pair.serialize_private_key_der();
 
     let mut server_config = ServerConfig::builder()
-        .with_safe_defaults()
         .with_no_client_auth()
-        .with_single_cert(vec![rustls::Certificate(crt)], rustls::PrivateKey(key))
+        .with_single_cert(
+            vec![CertificateDer::from(crt)],
+            PrivatePkcs8KeyDer::from(key).into(),
+        )
         .unwrap();
 
     server_config.key_log = Arc::new(rustls::KeyLogFile::new());
