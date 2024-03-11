@@ -30,7 +30,7 @@ http = "0.2.12"
 fluke-maybe-uring = { version = "0.1.1", path = "../fluke-maybe-uring" }
 memchr = "2.7.1"
 nom = { version = "7.1.3", default-features = false }
-pretty-hex = { version = "0.3.0", default-features = false }
+pretty-hex = { version = "0.4.1", default-features = false }
 smallvec = { version = "1.13.1", default-features = false, features = ["const_generics", "const_new", "union"] }
 thiserror = { version = "1.0.57", default-features = false }
 tokio = { version = "1.36.0", features = ["macros", "sync"] }

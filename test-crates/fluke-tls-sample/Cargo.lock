@@ -196,7 +196,7 @@ dependencies = [
  "http",
  "memchr",
  "nom",
- "pretty-hex",
+ "pretty-hex 0.4.1",
  "smallvec",
  "thiserror",
  "tokio",
@@ -213,7 +213,7 @@ dependencies = [
  "memchr",
  "memmap2",
  "nom",
- "pretty-hex",
+ "pretty-hex 0.4.1",
  "thiserror",
  "tokio",
  "tracing",
@@ -243,7 +243,7 @@ dependencies = [
  "fluke",
  "http",
  "ktls",
- "pretty-hex",
+ "pretty-hex 0.3.0",
  "rcgen",
  "rustls",
  "socket2 0.5.5",
@@ -660,6 +660,12 @@ name = "pretty-hex"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c6fa0831dd7cc608c38a5e323422a0077678fa5744aa2be4ad91c4ece8eec8d5"
+
+[[package]]
+name = "pretty-hex"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbc83ee4a840062f368f9096d80077a9841ec117e17e7f700df81958f1451254"
 
 [[package]]
 name = "proc-macro2"

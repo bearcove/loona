@@ -1627,7 +1627,7 @@ mod interop_tests {
     fn test_story(story_file_name: PathBuf) {
         // Set up the story by parsing the given file
         let story: TestStory = {
-            let buf = std::fs::read_to_string(&story_file_name);
+            let buf = std::fs::read_to_string(story_file_name);
             let raw_story: RawTestStory = serde_json::from_str(&buf.unwrap()).unwrap();
             raw_story.try_into().unwrap()
         };
