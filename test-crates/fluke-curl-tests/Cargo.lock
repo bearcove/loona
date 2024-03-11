@@ -167,7 +167,7 @@ dependencies = [
  "http",
  "memchr",
  "nom",
- "pretty-hex 0.4.1",
+ "pretty-hex",
  "smallvec",
  "thiserror",
  "tokio",
@@ -184,7 +184,7 @@ dependencies = [
  "memchr",
  "memmap2",
  "nom",
- "pretty-hex 0.4.1",
+ "pretty-hex",
  "thiserror",
  "tokio",
  "tracing",
@@ -202,7 +202,7 @@ dependencies = [
  "http",
  "httparse",
  "libc",
- "pretty-hex 0.3.0",
+ "pretty-hex",
  "pretty_assertions",
  "tokio",
  "tokio-stream",
@@ -447,12 +447,6 @@ name = "pkg-config"
 version = "0.3.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26072860ba924cbfa98ea39c8c19b4dd6a4a25423dbdf219c1eca91aa0cf6964"
-
-[[package]]
-name = "pretty-hex"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6fa0831dd7cc608c38a5e323422a0077678fa5744aa2be4ad91c4ece8eec8d5"
 
 [[package]]
 name = "pretty-hex"

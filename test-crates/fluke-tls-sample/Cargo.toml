@@ -15,7 +15,7 @@ rustls = { version = "0.21.10", features = ["secret_extraction"] }
 tokio = { version = "1.36.0", features = ["full"] }
 tokio-rustls = "0.24.1"
 http = "1.1.0"
-pretty-hex = "0.3.0"
+pretty-hex = "0.4.1"
 socket2 = "0.5.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
