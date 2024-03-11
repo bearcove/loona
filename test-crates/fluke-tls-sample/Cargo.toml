@@ -13,11 +13,11 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 rustls = { version = "0.23.1" }
 tokio = { version = "1.36.0", features = ["full"] }
-tokio-rustls = { git = "https://github.com/rustls/tokio-rustls", rev = "d26502cf444ab2fa24a6d6fe08933abd4a2e8f3e", default-features = false }
+tokio-rustls = { git = "https://github.com/rustls/tokio-rustls", rev = "caf4e8267f0e708a2bfc561dec98a842dc960ba6", default-features = false }
 http = "1.1.0"
 pretty-hex = "0.4.1"
 socket2 = "0.5.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # branch rustls-0.23
-ktls = { git = "https://github.com/hapsoc/ktls", rev = "335e7b851e33561d78854c9f6cf2c3caccd3d652" }
+ktls = { git = "https://github.com/hapsoc/ktls", rev = "e60101a5cda5c6a873ee8422463ef347c74643af" }

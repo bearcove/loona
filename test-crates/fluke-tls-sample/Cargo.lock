@@ -565,7 +565,7 @@ dependencies = [
 [[package]]
 name = "ktls"
 version = "5.0.0"
-source = "git+https://github.com/hapsoc/ktls?rev=335e7b851e33561d78854c9f6cf2c3caccd3d652#335e7b851e33561d78854c9f6cf2c3caccd3d652"
+source = "git+https://github.com/hapsoc/ktls?rev=e60101a5cda5c6a873ee8422463ef347c74643af#e60101a5cda5c6a873ee8422463ef347c74643af"
 dependencies = [
  "futures",
  "ktls-recvmsg",
@@ -1274,7 +1274,7 @@ dependencies = [
 [[package]]
 name = "tokio-rustls"
 version = "0.25.0"
-source = "git+https://github.com/rustls/tokio-rustls?rev=d26502cf444ab2fa24a6d6fe08933abd4a2e8f3e#d26502cf444ab2fa24a6d6fe08933abd4a2e8f3e"
+source = "git+https://github.com/rustls/tokio-rustls?rev=caf4e8267f0e708a2bfc561dec98a842dc960ba6#caf4e8267f0e708a2bfc561dec98a842dc960ba6"
 dependencies = [
  "rustls",
  "rustls-pki-types",
