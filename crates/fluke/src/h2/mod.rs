@@ -10,4 +10,3 @@ mod body;
 mod encode;
 mod read;
 mod types;
-mod write;

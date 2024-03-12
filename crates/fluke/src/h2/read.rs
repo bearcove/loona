@@ -49,6 +49,8 @@ pub(crate) struct H2ReadContext<D: ServerDriver + 'static, W: WriteOwned> {
     /// Whether we've received a GOAWAY frame.
     pub goaway_recv: bool,
 
+    /// TODO: encapsulate into a framer, don't
+    /// allow direct access from context methods
     transport_w: W,
 
     ev_tx: mpsc::Sender<H2Event>,
@@ -350,7 +352,28 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
         match &frame.frame_type {
             FrameType::Data(headers) => {
                 if headers.contains(DataFlags::EndStream) {
-                    // if the stream is open, this transitions to HalfClosedLocal
+                    // if the stream is open, this transitions to HalfClosedLocal.
+                    if let Some(ss) = self.state.streams.get_mut(&frame.stream_id) {
+                        match ss {
+                            StreamState::Open(_) => {
+                                // transition through StreamState::HalfClosedRemote
+                                // so we don't have to remove/re-insert.
+                                let mut entry = StreamState::HalfClosedRemote;
+                                std::mem::swap(&mut entry, ss);
+
+                                let body_tx = match entry {
+                                    StreamState::Open(body_tx) => body_tx,
+                                    _ => unreachable!(),
+                                };
+
+                                *ss = StreamState::HalfClosedLocal(body_tx);
+                            }
+                            _ => {
+                                // transition to closed
+                                self.state.streams.remove(&frame.stream_id);
+                            }
+                        }
+                    }
                 }
             }
             _ => {
