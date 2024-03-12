@@ -68,9 +68,16 @@ impl Default for ConnState {
 //  PP:  PUSH_PROMISE frame (with implied CONTINUATION frames); state
 //     transitions are for the promised stream
 pub(crate) enum StreamState {
+    // we have received full HEADERS
     Open(H2BodySender),
+
+    // the peer has sent END_STREAM/RST_STREAM
     HalfClosedRemote,
-    // note: the "Closed" state is indicated by not having an entry in the map
+
+    // we have sent END_STREAM/RST_STREAM
+    HalfClosedLocal(H2BodySender),
+    //
+    // Note: the "Closed" state is indicated by not having an entry in the map
 }
 
 #[derive(Debug, thiserror::Error)]

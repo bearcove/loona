@@ -8,7 +8,7 @@ use std::{
 use byteorder::{BigEndian, WriteBytesExt};
 use enumflags2::BitFlags;
 use eyre::Context;
-use fluke_buffet::{Piece, PieceStr, Roll, RollMut};
+use fluke_buffet::{Piece, PieceList, PieceStr, Roll, RollMut};
 use fluke_maybe_uring::io::{ReadOwned, WriteOwned};
 use http::{
     header,
@@ -35,7 +35,7 @@ use super::{
     parse::{
         ContinuationFlags, DataFlags, HeadersFlags, PingFlags, Settings, SettingsFlags, StreamId,
     },
-    types::{ConnState, H2Event, H2StreamError, HeadersOrTrailers, StreamState},
+    types::{ConnState, H2Event, H2EventPayload, H2StreamError, HeadersOrTrailers, StreamState},
 };
 
 /// Reads and processes h2 frames from the client.
@@ -270,8 +270,11 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
     ) -> Result<(), H2ConnectionError> {
         loop {
             tokio::select! {
-                _ = self.ev_rx.recv() => {
-                    todo!("handle conn events")
+                ev = self.ev_rx.recv() => {
+                    match ev {
+                        Some(ev) => self.handle_event(ev).await?,
+                        None => unreachable!("the context owns a copy of the sender, and this method has &mut self, so the sender can't be dropped while this method is running"),
+                    }
                 },
                 maybe_frame = rx.recv() => {
                     if let Some((frame, payload)) = maybe_frame {
@@ -287,7 +290,74 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
         Ok(())
     }
 
-    async fn write_frame(&mut self, frame: Frame, payload: Roll) -> Result<(), H2ConnectionError> {
+    async fn handle_event(&mut self, ev: H2Event) -> Result<(), H2ConnectionError> {
+        match ev.payload {
+            H2EventPayload::Headers(res) => {
+                let flags = HeadersFlags::EndHeaders;
+                let frame = Frame::new(FrameType::Headers(flags.into()), ev.stream_id);
+
+                // TODO: don't allocate so much for headers. all `encode_into`
+                // wants is an `IntoIter`, we can definitely have a custom iterator
+                // that operates on all this instead of using a `Vec`.
+
+                // TODO: limit header size
+                let mut headers: Vec<(&[u8], &[u8])> = vec![];
+                headers.push((b":status", res.status.as_str().as_bytes()));
+                for (name, value) in res.headers.iter() {
+                    if name == http::header::TRANSFER_ENCODING {
+                        // do not set transfer-encoding: chunked when doing HTTP/2
+                        continue;
+                    }
+                    headers.push((name.as_str().as_bytes(), value));
+                }
+
+                assert_eq!(self.out_scratch.len(), 0);
+                self.hpack_enc
+                    .encode_into(headers, &mut self.out_scratch)
+                    .map_err(H2ConnectionError::WriteError)?;
+                let payload = self.out_scratch.take_all();
+
+                self.write_frame(frame, payload).await?;
+            }
+            H2EventPayload::BodyChunk(chunk) => {
+                let flags = BitFlags::<DataFlags>::default();
+                let frame = Frame::new(FrameType::Data(flags), ev.stream_id);
+
+                self.write_frame(frame, chunk).await?;
+            }
+            H2EventPayload::BodyEnd => {
+                // FIXME: this should transition the stream to `Closed`
+                // state (or at the very least `HalfClosedLocal`).
+                // Either way, whoever owns the stream state should know
+                // about it, cf. https://github.com/hapsoc/fluke/issues/123
+
+                let flags = DataFlags::EndStream;
+                let frame = Frame::new(FrameType::Data(flags.into()), ev.stream_id);
+                self.write_frame(frame, Roll::empty()).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn write_frame(
+        &mut self,
+        frame: Frame,
+        payload: impl Into<Piece>,
+    ) -> Result<(), H2ConnectionError> {
+        let payload = payload.into();
+
+        match &frame.frame_type {
+            FrameType::Data(headers) => {
+                if headers.contains(DataFlags::EndStream) {
+                    // if the stream is open, this transitions to HalfClosedLocal
+                }
+            }
+            _ => {
+                // muffin.
+            }
+        }
+
         let frame_roll = frame.into_roll(&mut self.out_scratch)?;
 
         if payload.is_empty() {
@@ -297,7 +367,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
                 .map_err(H2ConnectionError::WriteError)?;
         } else {
             self.transport_w
-                .writev_all(&[frame_roll, payload])
+                .writev_all(PieceList::default().with(frame_roll).with(payload))
                 .await
                 .map_err(H2ConnectionError::WriteError)?;
         }
@@ -320,8 +390,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
                 )?;
 
                 match ss {
-                    StreamState::Open(tx) => {
-                        if tx
+                    StreamState::Open(body_tx) | StreamState::HalfClosedLocal(body_tx) => {
+                        if body_tx
                             .send(Ok(PieceOrTrailers::Piece(payload.into())))
                             .await
                             .is_err()
@@ -330,7 +400,13 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
                         }
 
                         if flags.contains(DataFlags::EndStream) {
-                            *ss = StreamState::HalfClosedRemote;
+                            // if we're HalfClosedLocal, this transitions to Closed
+                            // otherwise, it transitions to HalfClosedRemote
+                            if matches!(ss, StreamState::Open(_)) {
+                                *ss = StreamState::HalfClosedRemote;
+                            } else {
+                                self.state.streams.remove(&frame.stream_id);
+                            }
                         }
                     }
                     StreamState::HalfClosedRemote => {
@@ -406,7 +482,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
                             }
                         }
                     }
-                    Some(StreamState::Open(_)) => {
+                    Some(StreamState::Open(_) | StreamState::HalfClosedLocal(_)) => {
                         headers_or_trailers = HeadersOrTrailers::Trailers;
                         debug!("Receiving trailers for stream {}", frame.stream_id);
 
@@ -453,6 +529,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
                     });
                 }
             }
+            // note: this always unconditionally transitions the stream to closed
             FrameType::RstStream => match self.state.streams.remove(&frame.stream_id) {
                 None => {
                     return Err(H2ConnectionError::RstStreamForUnknownStream {
@@ -460,7 +537,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
                     })
                 }
                 Some(ss) => match ss {
-                    StreamState::Open(body_tx) => {
+                    StreamState::Open(body_tx) | StreamState::HalfClosedLocal(body_tx) => {
                         _ = body_tx
                             .send(Err(H2StreamError::ReceivedRstStream.into()))
                             .await;
