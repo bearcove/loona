@@ -115,7 +115,7 @@ pub(crate) async fn h2_write_loop(
                 last_stream_id,
             } => {
                 let error_code = err.as_known_error_code();
-                debug!("connection error: {err} ({err:?}) (code {error_code:?})");
+                debug!("Connection error: {err} ({err:?}) (code {error_code:?})");
 
                 // let's put something useful in debug data
                 let additional_debug_data = format!("{err}").into_bytes();

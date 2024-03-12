@@ -299,20 +299,27 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                         None => {
                             headers_or_trailers = HeadersOrTrailers::Headers;
                             debug!(
-                                "Receiving headers for stream {} (it's the {}th stream)",
-                                frame.stream_id,
-                                self.state.streams.len() + 1
+                                stream_id = %frame.stream_id,
+                                last_stream_id = %self.state.last_stream_id,
+                                next_stream_count = %self.state.streams.len() + 1,
+                                "Receiving headers",
                             );
 
                             if frame.stream_id.is_server_initiated() {
                                 return Err(H2ConnectionError::ClientSidShouldBeOdd);
                             }
 
-                            if frame.stream_id < self.state.last_stream_id {
+                            if frame.stream_id <= self.state.last_stream_id {
+                                debug!(
+                                    frame_stream_id = %frame.stream_id,
+                                    last_stream_id = %self.state.last_stream_id,
+                                    "Received headers for invalid stream ID"
+                                );
+
                                 // this stream may have existed, but it no longer does:
-                                self.send_rst(frame.stream_id, H2StreamError::StreamClosed)
-                                    .await;
-                                mode = ReadHeadersMode::Skip;
+                                return Err(H2ConnectionError::StreamClosed {
+                                    stream_id: frame.stream_id,
+                                });
                             } else {
                                 // TODO: if we're shutting down, ignore streams higher
                                 // than the last one we accepted.
@@ -349,12 +356,9 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                             }
                         }
                         Some(StreamState::HalfClosedRemote) => {
-                            // that's a connection error
-                            self.send_rst(frame.stream_id, H2StreamError::StreamClosed)
-                                .await;
-
-                            headers_or_trailers = HeadersOrTrailers::Trailers;
-                            mode = ReadHeadersMode::Skip;
+                            return Err(H2ConnectionError::StreamClosed {
+                                stream_id: frame.stream_id,
+                            });
                         }
                     }
 
