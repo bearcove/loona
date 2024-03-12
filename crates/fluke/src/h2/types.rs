@@ -78,12 +78,7 @@ impl Default for ConnState {
 //
 // FIXME: why tf is this called "StreamStage", the RFC calls it "Stream State".
 pub(crate) enum StreamStage {
-    // TODO: kill this variant: we should be going from Idle to Open directly,
-    // cf. https://github.com/hapsoc/fluke/issues/121
-    Headers(HeadersData),
     Open(H2BodySender),
-    // TODO: kill this variant too, see 121 above
-    Trailers(H2BodySender, HeadersData),
     HalfClosedRemote,
     Closed,
 }
@@ -105,6 +100,12 @@ pub(crate) enum H2ConnectionError {
         max_frame_size: u32,
     },
 
+    #[error("remote hung up while reading payload of {frame_type:?} with length {frame_size}")]
+    IncompleteFrame {
+        frame_type: FrameType,
+        frame_size: u32,
+    },
+
     #[error("headers frame had invalid priority: stream {stream_id} depends on itself")]
     HeadersInvalidPriority { stream_id: StreamId },
 
@@ -114,16 +115,20 @@ pub(crate) enum H2ConnectionError {
     #[error("client is trying to initiate stream with ID lower than the last one it initiated")]
     ClientSidShouldBeIncreasing,
 
-    #[error("received frame with Padded flag but empty payload")]
-    PaddedFrameEmpty,
+    #[error("received {frame_type:?} frame with Padded flag but empty payload")]
+    PaddedFrameEmpty { frame_type: FrameType },
 
-    #[error("received frame with Padded flag but payload too short to contain padding length")]
-    PaddedFrameTooShort,
+    #[error("received {frame_type:?} with Padded flag but payload was shorter than padding")]
+    PaddedFrameTooShort {
+        frame_type: FrameType,
+        padding_length: usize,
+        frame_size: u32,
+    },
 
     #[error("on stream {stream_id}, expected continuation frame, but got {frame_type:?}")]
     ExpectedContinuationFrame {
         stream_id: StreamId,
-        frame_type: FrameType,
+        frame_type: Option<FrameType>,
     },
 
     #[error("expected continuation from for stream {stream_id}, but got continuation for stream {continuation_stream_id}")]
@@ -153,6 +158,15 @@ pub(crate) enum H2ConnectionError {
 
     #[error("error reading/parsing H2 frame: {0:?}")]
     ReadError(eyre::Report),
+
+    #[error("{frame_type:?} should have no payload, but peer sent {frame_size} bytes")]
+    FrameShouldNotHavePayload {
+        frame_type: FrameType,
+        frame_size: u32,
+    },
+
+    #[error("received data frame for unknown stream {stream_id}")]
+    ReceivedDataForUnknownStream { stream_id: StreamId },
 }
 
 impl<T> From<H2ConnectionError> for H2Result<T> {
@@ -212,6 +226,9 @@ pub(crate) enum H2StreamError {
 
     #[error("received data for closed stream")]
     ReceivedDataForClosedStream,
+
+    #[error("trailers must have EndStream flag set")]
+    TrailersNotEndStream,
 }
 
 impl H2StreamError {
