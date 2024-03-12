@@ -405,8 +405,19 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                     },
                 },
                 FrameType::Settings(s) => {
+                    if frame.stream_id != StreamId::CONNECTION {
+                        return Err(H2ConnectionError::SettingsWithNonZeroStreamId {
+                            stream_id: frame.stream_id,
+                        });
+                    }
+
                     if s.contains(SettingsFlags::Ack) {
                         debug!("Peer has acknowledged our settings, cool");
+                        if !payload.is_empty() {
+                            return Err(H2ConnectionError::SettingsAckWithPayload {
+                                len: payload.len() as _,
+                            });
+                        }
                     } else {
                         let (_, settings) = Settings::parse(payload)
                             .finish()

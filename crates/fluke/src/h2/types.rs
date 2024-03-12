@@ -146,6 +146,12 @@ pub(crate) enum H2ConnectionError {
 
     #[error("received ping frame with invalid length {len}")]
     PingFrameInvalidLength { len: u32 },
+
+    #[error("received settings frame with invalid length {len}")]
+    SettingsAckWithPayload { len: u32 },
+
+    #[error("received settings frame with non-zero stream id")]
+    SettingsWithNonZeroStreamId { stream_id: StreamId },
 }
 
 impl H2ConnectionError {
@@ -156,6 +162,7 @@ impl H2ConnectionError {
             H2ConnectionError::PaddedFrameEmpty { .. } => KnownErrorCode::FrameSizeError,
             H2ConnectionError::PaddedFrameTooShort { .. } => KnownErrorCode::FrameSizeError,
             H2ConnectionError::PingFrameInvalidLength { .. } => KnownErrorCode::FrameSizeError,
+            H2ConnectionError::SettingsAckWithPayload { .. } => KnownErrorCode::FrameSizeError,
             // compression errors
             H2ConnectionError::CompressionError(_) => KnownErrorCode::CompressionError,
             // stream closed error
