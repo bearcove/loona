@@ -35,7 +35,7 @@ bench *args:
 h2spec *args:
 	#!/bin/bash -eux	
 	export RUST_LOG="${RUST_LOG:-fluke=debug,fluke_hpack=info}"
-	export RUST_BACKTRACE=1
+	export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 	cargo run --manifest-path test-crates/fluke-h2spec/Cargo.toml -- {{args}}
 
 check:
