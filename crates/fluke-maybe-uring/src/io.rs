@@ -1,3 +1,5 @@
+use std::net::Shutdown;
+
 use crate::{
     buf::{IoBuf, IoBufMut},
     BufResult,
@@ -126,6 +128,8 @@ pub trait WriteOwned {
 
         Ok(())
     }
+
+    async fn shutdown(&mut self, how: Shutdown) -> std::io::Result<()>;
 }
 
 #[cfg(all(test, not(feature = "miri")))]
@@ -162,6 +166,10 @@ mod tests {
                         (Ok(n), buf)
                     }
                 }
+            }
+
+            async fn shutdown(&mut self, _how: std::net::Shutdown) -> std::io::Result<()> {
+                Ok(())
             }
         }
 

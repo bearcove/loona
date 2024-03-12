@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     io::Write,
+    net::Shutdown,
     rc::Rc,
     sync::atomic::{AtomicU32, Ordering},
 };
@@ -57,9 +58,9 @@ pub async fn serve(
     let mut state = ConnState::default();
     state.self_settings.max_concurrent_streams = conf.max_streams;
 
-    ServerContext::new(driver.clone(), state, transport_w)?
-        .work(client_buf, transport_r)
-        .await?;
+    let mut cx = ServerContext::new(driver.clone(), state, transport_w)?;
+    cx.work(client_buf, transport_r).await?;
+    cx.transport_w.shutdown(Shutdown::Both).await?;
 
     debug!("finished serving");
     Ok(())
@@ -109,7 +110,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
     /// Reads and process h2 frames from the client.
     pub(crate) async fn work(
-        mut self,
+        &mut self,
         mut client_buf: RollMut,
         mut transport_r: impl ReadOwned,
     ) -> eyre::Result<()> {

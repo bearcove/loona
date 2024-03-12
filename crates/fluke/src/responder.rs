@@ -29,7 +29,7 @@ impl<E> Responder<E, ExpectResponseHeaders>
 where
     E: Encoder,
 {
-    /// Send an informational status code, cf. https://httpwg.org/specs/rfc9110.html#status.1xx
+    /// Send an informational status code, cf. <https://httpwg.org/specs/rfc9110.html#status.1xx>
     /// Errors out if the response status is not 1xx
     pub async fn write_interim_response(&mut self, res: Response) -> eyre::Result<()> {
         if !res.status.is_informational() {
@@ -122,7 +122,7 @@ where
         self.encoder.write_body_chunk(chunk, self.state.mode).await
     }
 
-    /// Finish the body, with optional trailers, cf. https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/TE
+    /// Finish the body, with optional trailers, cf. <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/TE>
     /// Errors out if the sent body doesn't match the announced content-length.
     /// Errors out if trailers that weren't announced are being sent, or if the client
     /// didn't explicitly announce it accepted trailers, or if the response is a 204,

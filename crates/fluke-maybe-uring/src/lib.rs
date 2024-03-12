@@ -15,7 +15,7 @@ pub mod io;
 
 pub type BufResult<T, B> = (std::io::Result<T>, B);
 
-/// Spawns a new asynchronous task, returning a [`JoinHandle`] for it.
+/// Spawns a new asynchronous task, returning a [tokio::task::JoinHandle] for it.
 ///
 /// Spawning a task enables the task to execute concurrently to other tasks.
 /// There is no guarantee that a spawned task will execute to completion. When a

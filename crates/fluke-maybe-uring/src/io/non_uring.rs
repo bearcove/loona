@@ -4,7 +4,7 @@ use crate::{
     BufResult,
 };
 
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 impl<T> ReadOwned for T
 where
@@ -36,4 +36,8 @@ where
     // TODO: implement writev, for performance. this involves wrapping
     // everything in `IoSlice`, advancing correctly, etc. It's not fun, but it
     // should yield a boost for non-uring codepaths.
+
+    async fn shutdown(&mut self, _how: std::net::Shutdown) -> std::io::Result<()> {
+        AsyncWriteExt::shutdown(self).await
+    }
 }

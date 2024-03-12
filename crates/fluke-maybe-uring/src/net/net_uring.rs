@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, rc::Rc};
+use std::{
+    net::{Shutdown, SocketAddr},
+    rc::Rc,
+};
 
 use crate::{
     buf::{tokio_uring_compat::BufCompat, IoBuf, IoBufMut},
@@ -55,6 +58,10 @@ impl WriteOwned for TcpWriteHalf {
         let (res, list) = self.0.writev(list).await;
         let list: Vec<B> = BufCompat::peel_vec(list);
         (res, list)
+    }
+
+    async fn shutdown(&mut self, how: Shutdown) -> std::io::Result<()> {
+        self.0.shutdown(how)
     }
 }
 
