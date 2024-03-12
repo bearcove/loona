@@ -20,6 +20,9 @@ test *args:
 	just build-testbed
 	RUST_BACKTRACE=1 cargo nextest run {{args}}
 
+curl-tests:
+	RUST_BACKTRACE=1 cargo nextest run --manifest-path test-crates/fluke-curl-tests/Cargo.toml
+
 build-testbed:
 	cargo build --release --manifest-path test-crates/hyper-testbed/Cargo.toml
 	
