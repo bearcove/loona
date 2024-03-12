@@ -1,5 +1,5 @@
-//! HTTP/1.1 https://httpwg.org/specs/rfc9112.html
-//! HTTP semantics https://httpwg.org/specs/rfc9110.html
+//! HTTP/1.1 <https://httpwg.org/specs/rfc9112.html>
+//! HTTP semantics <https://httpwg.org/specs/rfc9110.html>
 
 mod client;
 pub use client::*;

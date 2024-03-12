@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, rc::Rc};
+use std::{
+    net::{Shutdown, SocketAddr},
+    rc::Rc,
+};
 
 use crate::{
     buf::{tokio_uring_compat::BufCompat, IoBuf, IoBufMut},
@@ -24,7 +27,10 @@ impl TcpListener {
     }
 
     pub async fn accept(&self) -> std::io::Result<(TcpStream, SocketAddr)> {
-        self.tok.accept().await
+        self.tok.accept().await.map(|tuple| {
+            tuple.0.set_nodelay(true).unwrap();
+            tuple
+        })
     }
 }
 
@@ -41,7 +47,7 @@ pub struct TcpWriteHalf(Rc<TcpStream>);
 
 impl WriteOwned for TcpWriteHalf {
     async fn write<B: IoBuf>(&mut self, buf: B) -> BufResult<usize, B> {
-        let (res, b) = self.0.write(BufCompat(buf)).await;
+        let (res, b) = self.0.write(BufCompat(buf)).submit().await;
         (res, b.0)
     }
 
@@ -52,6 +58,10 @@ impl WriteOwned for TcpWriteHalf {
         let (res, list) = self.0.writev(list).await;
         let list: Vec<B> = BufCompat::peel_vec(list);
         (res, list)
+    }
+
+    async fn shutdown(&mut self, how: Shutdown) -> std::io::Result<()> {
+        self.0.shutdown(how)
     }
 }
 

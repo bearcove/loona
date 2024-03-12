@@ -1,7 +1,7 @@
 //! HTTP/2 parser
 //!
-//! HTTP/2 https://httpwg.org/specs/rfc9113.html
-//! HTTP semantics https://httpwg.org/specs/rfc9110.html
+//! HTTP/2 <https://httpwg.org/specs/rfc9113.html>
+//! HTTP semantics <https://httpwg.org/specs/rfc9110.html>
 
 use std::{fmt, ops::RangeInclusive};
 

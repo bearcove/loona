@@ -1,7 +1,7 @@
 //! HTTP/1.1 parser
 //!
-//! HTTP/1.1 https://httpwg.org/specs/rfc9112.html
-//! HTTP semantics https://httpwg.org/specs/rfc9110.html
+//! HTTP/1.1 <https://httpwg.org/specs/rfc9112.html>
+//! HTTP semantics <https://httpwg.org/specs/rfc9110.html>
 
 use http::{header::HeaderName, StatusCode, Version};
 use nom::{

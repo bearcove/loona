@@ -22,4 +22,4 @@ bytemuck = { version = "1.14.3", features = ["extern_crate_std"] }
 tokio = { version = "1.36.0", features = ["rt", "sync", "io-util"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-tokio-uring = { version = "0.4.0", optional = true }
+tokio-uring = { git = "https://github.com/tokio-rs/tokio-uring", rev = "a69d4bf57776a085a6516f4c022e2bf5d1814762", optional = true }

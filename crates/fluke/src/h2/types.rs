@@ -219,6 +219,9 @@ pub(crate) enum H2StreamError {
     #[error("received RST_STREAM frame")]
     ReceivedRstStream,
 
+    #[error("received PRIORITY frame with invalid size")]
+    InvalidPriorityFrameSize { frame_size: u32 },
+
     #[error("stream closed")]
     StreamClosed,
 }
@@ -231,6 +234,7 @@ impl H2StreamError {
         match self {
             StreamClosed => Code::StreamClosed,
             RefusedStream => Code::RefusedStream,
+            InvalidPriorityFrameSize { .. } => Code::FrameSizeError,
             _ => Code::ProtocolError,
         }
     }

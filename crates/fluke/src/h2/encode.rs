@@ -1,6 +1,6 @@
 use http::{StatusCode, Version};
 use tokio::sync::mpsc;
-use tracing::warn;
+use tracing::debug;
 
 use super::{
     parse::StreamId,
@@ -105,7 +105,7 @@ impl Drop for H2Encoder {
             fluke_maybe_uring::spawn(async move {
                 for ev in evs {
                     if tx.send(ev).await.is_err() {
-                        warn!("could not send event to h2 connection handler");
+                        debug!("could not send event to h2 connection handler");
                         break;
                     }
                 }

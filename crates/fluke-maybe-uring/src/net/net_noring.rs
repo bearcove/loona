@@ -21,6 +21,9 @@ impl TcpListener {
     }
 
     pub async fn accept(&self) -> std::io::Result<(TcpStream, SocketAddr)> {
-        self.tok.accept().await
+        self.tok.accept().await.map(|tuple| {
+            tuple.0.set_nodelay(true).unwrap();
+            tuple
+        })
     }
 }

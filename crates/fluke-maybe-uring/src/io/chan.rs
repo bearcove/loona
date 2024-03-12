@@ -172,6 +172,10 @@ impl WriteOwned for ChanWrite {
             Err(_) => (Err(std::io::ErrorKind::BrokenPipe.into()), buf),
         }
     }
+
+    async fn shutdown(&mut self, _how: std::net::Shutdown) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(all(test, not(feature = "miri")))]

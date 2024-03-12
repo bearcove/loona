@@ -68,6 +68,11 @@ impl ServerDriver for SDriver {
             }
         }
 
+        // some h2spec test cases (e.g. 5.1.2/1) fail because we're too
+        // fast at responding to their requests, so they can't successfully
+        // trigger our "too many concurrent streams" condition.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
         tracing::debug!("Done reading body, sending response!");
         let res = Response {
             version: Version::HTTP_2,

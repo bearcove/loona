@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     io::Write,
+    net::Shutdown,
     rc::Rc,
     sync::atomic::{AtomicU32, Ordering},
 };
@@ -57,9 +58,9 @@ pub async fn serve(
     let mut state = ConnState::default();
     state.self_settings.max_concurrent_streams = conf.max_streams;
 
-    ServerContext::new(driver.clone(), state, transport_w)?
-        .work(client_buf, transport_r)
-        .await?;
+    let mut cx = ServerContext::new(driver.clone(), state, transport_w)?;
+    cx.work(client_buf, transport_r).await?;
+    cx.transport_w.shutdown(Shutdown::Both).await?;
 
     debug!("finished serving");
     Ok(())
@@ -109,7 +110,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
     /// Reads and process h2 frames from the client.
     pub(crate) async fn work(
-        mut self,
+        &mut self,
         mut client_buf: RollMut,
         mut transport_r: impl ReadOwned,
     ) -> eyre::Result<()> {
@@ -148,7 +149,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
         {
             // read frames and send them into an mpsc buffer of size 1
-            let (tx, rx) = mpsc::channel::<(Frame, Roll)>(1);
+            let (tx, rx) = mpsc::channel::<(Frame, Roll)>(32);
 
             // store max frame size setting as an atomic so we can share it across tasks
             // FIXME: the process_task should update this
@@ -644,8 +645,15 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
             FrameType::Priority => {
                 let pri_spec = match PrioritySpec::parse(payload) {
                     Ok((_rest, pri_spec)) => pri_spec,
-                    Err(e) => {
-                        todo!("handle connection error: invalid priority frame {e}")
+                    Err(_e) => {
+                        self.rst(
+                            frame.stream_id,
+                            H2StreamError::InvalidPriorityFrameSize {
+                                frame_size: frame.len,
+                            },
+                        )
+                        .await?;
+                        return Ok(());
                     }
                 };
                 debug!(?pri_spec, "received priority frame");
