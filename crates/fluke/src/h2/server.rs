@@ -70,14 +70,7 @@ pub async fn serve(
 
     let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<H2ConnEvent>(32);
 
-    let mut h2_read_cx = H2ReadContext::new(driver.clone(), ev_tx.clone(), state);
-
-    enum Outcome {
-        PeerGone,
-        Ok,
-    }
-
-    let mut outcome = Outcome::Ok;
+    let h2_read_cx = H2ReadContext::new(driver.clone(), ev_tx, state);
 
     {
         let mut read_task = std::pin::pin!(h2_read_cx.read_loop(client_buf, transport_r));
@@ -88,7 +81,7 @@ pub async fn serve(
             res = &mut read_task => {
                 match res {
                     Err(e) => {
-                        return Err(e.wrap_err("h2 read (finished first)"));
+                       return Err(e.wrap_err("h2 read (finished first)"));
                     }
                     Ok(()) => {
                         debug!("read task finished, waiting on write task now");
@@ -96,7 +89,7 @@ pub async fn serve(
                         match res {
                             Err(e) => {
                                 if is_peer_gone(&e) {
-                                    outcome = Outcome::PeerGone;
+                                    debug!(%e, "write task failed with peer gone");
                                 } else {
                                     return Err(e.wrap_err("h2 write (finished second)"));
                                 }
@@ -112,7 +105,7 @@ pub async fn serve(
                 match res {
                     Err(e) => {
                         if is_peer_gone(&e) {
-                            outcome = Outcome::PeerGone;
+                            debug!(%e, "write task failed with peer gone");
                         } else {
                             return Err(e.wrap_err("h2 write (finished first)"));
                         }
@@ -125,21 +118,7 @@ pub async fn serve(
         };
     };
 
-    match outcome {
-        Outcome::PeerGone => {
-            if h2_read_cx.goaway_sent {
-                debug!("write task failed with broken pipe, but we already sent a goaway, so we're good");
-            } else {
-                return Err(eyre::eyre!(
-                    "peer closed connection without sending a goaway"
-                ));
-            }
-        }
-        Outcome::Ok => {
-            // all goodt hen!
-        }
-    }
-
+    debug!("finished serving");
     Ok(())
 }
 

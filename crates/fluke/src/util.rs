@@ -12,6 +12,7 @@ pub(crate) async fn read_and_parse<Parser, Output>(
     stream: &mut impl ReadOwned,
     mut buf: RollMut,
     max_len: usize,
+    // TODO: proper error handling, no eyre::Result
 ) -> eyre::Result<Option<(RollMut, Output)>>
 where
     Parser: Fn(Roll) -> IResult<Roll, Output>,

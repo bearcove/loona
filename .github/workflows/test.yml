@@ -23,7 +23,7 @@ jobs:
       - name: Install Rust specified toolchain
         run: rustup show
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.3
+        uses: mozilla-actions/sccache-action@v0.0.4
       - name: Make sure things build
         run: |
           cargo build --profile ci
@@ -42,7 +42,7 @@ jobs:
       - name: Install Rust specified toolchain
         run: rustup show
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.3
+        uses: mozilla-actions/sccache-action@v0.0.4
       - name: Make sure things build
         run: |
           cargo build --profile ci
@@ -67,7 +67,7 @@ jobs:
       - name: Install Rust specified toolchain
         run: rustup show
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.3
+        uses: mozilla-actions/sccache-action@v0.0.4
       - name: Set up sccache (part 2)
         run: sccache --start-server
       - uses: taiki-e/install-action@v2
