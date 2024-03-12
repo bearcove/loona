@@ -137,6 +137,9 @@ pub(crate) enum H2ConnectionError {
 
     #[error("received rst frame for unknown stream")]
     RstStreamForUnknownStream { stream_id: StreamId },
+
+    #[error("received frame for closed stream {stream_id}")]
+    StreamClosed { stream_id: StreamId },
 }
 
 impl H2ConnectionError {
@@ -148,6 +151,8 @@ impl H2ConnectionError {
             H2ConnectionError::PaddedFrameTooShort { .. } => KnownErrorCode::FrameSizeError,
             // compression errors
             H2ConnectionError::CompressionError(_) => KnownErrorCode::CompressionError,
+            // stream closed error
+            H2ConnectionError::StreamClosed { .. } => KnownErrorCode::StreamClosed,
             // internal errors
             H2ConnectionError::Internal(_) => KnownErrorCode::InternalError,
             // protocol errors

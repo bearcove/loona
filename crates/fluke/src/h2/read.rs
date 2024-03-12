@@ -141,8 +141,6 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         max_frame_size: Rc<AtomicU32>,
     ) -> Result<(), H2ConnectionError> {
         'read_frames: loop {
-            debug!("h2 io loop");
-
             const MAX_FRAME_HEADER_SIZE: usize = 128;
             let frame;
             let frame_res = read_and_parse(
@@ -160,7 +158,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
             (client_buf, frame) = match maybe_frame {
                 Some((client_buf, frame)) => (client_buf, frame),
                 None => {
-                    debug!("h2 client went away before sending a frame");
+                    debug!("Peer went away before sending a frame");
                     break 'read_frames;
                 }
             };
@@ -168,7 +166,6 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
             debug!(?frame, "Received");
 
             let max_frame_size = max_frame_size.load(Ordering::Relaxed);
-            debug!(frame_len = frame.len, %max_frame_size);
             if frame.len > max_frame_size {
                 return Err(H2ConnectionError::FrameTooLarge {
                     frame_type: frame.frame_type,
@@ -224,16 +221,12 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                 (payload, _) = payload.split_at(at);
             }
 
-            debug!("h2 io loop: sending frame {frame:?}");
             if tx.send((frame, payload)).await.is_err() {
                 debug!("h2 io loop: receiver dropped, closing connection");
                 return Ok(());
             }
-
-            debug!("h2 io loop: looping?")
         }
 
-        debug!("h2 io loop: done");
         Ok(())
     }
 
@@ -252,14 +245,11 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
 
             match frame.frame_type {
                 FrameType::Data(flags) => {
-                    let ss = match self.state.streams.get_mut(&frame.stream_id) {
-                        None => {
-                            self.send_rst(frame.stream_id, H2StreamError::StreamClosed)
-                                .await;
-                            continue;
-                        }
-                        Some(s) => s,
-                    };
+                    let ss = self.state.streams.get_mut(&frame.stream_id).ok_or(
+                        H2ConnectionError::StreamClosed {
+                            stream_id: frame.stream_id,
+                        },
+                    )?;
 
                     match ss {
                         StreamState::Open(tx) => {
@@ -318,9 +308,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                                 return Err(H2ConnectionError::ClientSidShouldBeOdd);
                             }
 
-                            self.state.last_stream_id = frame.stream_id;
-
-                            if frame.stream_id <= self.state.last_stream_id {
+                            if frame.stream_id < self.state.last_stream_id {
                                 // this stream may have existed, but it no longer does:
                                 self.send_rst(frame.stream_id, H2StreamError::StreamClosed)
                                     .await;
@@ -340,6 +328,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                                     // but we still need to skip over any continuation frames
                                     mode = ReadHeadersMode::Skip;
                                 } else {
+                                    self.state.last_stream_id = frame.stream_id;
                                     mode = ReadHeadersMode::Process;
                                 }
                             }
@@ -501,7 +490,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
 
     async fn send_rst(&mut self, stream_id: StreamId, e: H2StreamError) {
         let error_code = e.as_known_error_code();
-        debug!("sending rst because: {e} (known error code: {error_code:?})");
+        debug!("Sending rst because: {e} (known error code: {error_code:?})");
 
         if self
             .ev_tx
