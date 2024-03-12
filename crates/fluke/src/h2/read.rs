@@ -43,9 +43,6 @@ pub(crate) struct H2ReadContext<D: ServerDriver + 'static> {
     state: ConnState,
     hpack_dec: fluke_hpack::Decoder<'static>,
 
-    /// Whether we've sent a GOAWAY frame.
-    pub goaway_sent: bool,
-
     /// Whether we've received a GOAWAY frame.
     pub goaway_recv: bool,
 }
@@ -61,7 +58,6 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
             ev_tx,
             state,
             hpack_dec,
-            goaway_sent: false,
             goaway_recv: false,
         }
     }
@@ -71,53 +67,70 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         client_buf: RollMut,
         transport_r: impl ReadOwned,
     ) -> eyre::Result<()> {
-        // read frames and send them into an mpsc buffer of size 1
-        let (tx, rx) = mpsc::channel::<(Frame, Roll)>(1);
+        let mut goaway_err: Option<H2ConnectionError> = None;
 
-        // store max frame size setting as an atomic so we can share it across tasks
-        // FIXME: the process_task should update this
-        let max_frame_size = Rc::new(AtomicU32::new(self.state.self_settings.max_frame_size));
+        {
+            // read frames and send them into an mpsc buffer of size 1
+            let (tx, rx) = mpsc::channel::<(Frame, Roll)>(1);
 
-        let mut io_task =
-            std::pin::pin!(Self::io_loop(client_buf, transport_r, tx, max_frame_size));
-        let mut process_task = std::pin::pin!(self.process_loop(rx));
+            // store max frame size setting as an atomic so we can share it across tasks
+            // FIXME: the process_task should update this
+            let max_frame_size = Rc::new(AtomicU32::new(self.state.self_settings.max_frame_size));
 
-        tokio::select! {
-            res = &mut io_task => {
-                debug!(?res, "h2 io task finished");
+            let mut io_task =
+                std::pin::pin!(Self::io_loop(client_buf, transport_r, tx, max_frame_size));
+            let mut process_task = std::pin::pin!(self.process_loop(rx));
 
-                if let Err(H2ConnectionError::ReadError(e)) = res {
-                    let mut should_ignore_err = false;
+            tokio::select! {
+                res = &mut io_task => {
+                    debug!(?res, "h2 io task finished");
 
-                    // if this is a connection reset and we've sent a goaway, ignore it
-                    if let Some(io_error) = e.root_cause().downcast_ref::<std::io::Error>() {
-                        if io_error.kind() == std::io::ErrorKind::ConnectionReset {
-                            should_ignore_err = true;
+                    if let Err(H2ConnectionError::ReadError(e)) = res {
+                        let mut should_ignore_err = false;
+
+                        // if this is a connection reset and we've sent a goaway, ignore it
+                        if let Some(io_error) = e.root_cause().downcast_ref::<std::io::Error>() {
+                            if io_error.kind() == std::io::ErrorKind::ConnectionReset {
+                                should_ignore_err = true;
+                            }
+                        }
+
+                        if !should_ignore_err {
+                            return Err(e.wrap_err("h2 io"));
                         }
                     }
 
-                    if !should_ignore_err {
-                        return Err(e.wrap_err("h2 io"));
+                    if let Err(e) = (&mut process_task).await {
+                        debug!("h2 process task finished with error: {e}");
+                        return Err(e).wrap_err("h2 process");
                     }
                 }
+                res = &mut process_task => {
+                    debug!(?res, "h2 process task finished");
 
-                if let Err(e) = (&mut process_task).await {
-                    debug!("h2 process task finished with error: {e}");
-                    return Err(e).wrap_err("h2 process");
+                    if let Err(err) = res {
+                        goaway_err = Some(err);
+                    }
+
+                    // probably don't need to wait for the io task there
                 }
-            }
-            res = &mut process_task => {
-                debug!("h2 process task finished");
-
-                if let Err(e) = res {
-                    debug!("h2 process got an error, sending goaway: {e}");
-
-                    return Err(e).wrap_err("h2 process");
-                }
-
-                // probably don't need to wait for the io task there
             }
         }
+
+        if let Some(err) = goaway_err {
+            if self
+                .ev_tx
+                .send(H2ConnEvent::GoAway {
+                    err,
+                    last_stream_id: self.state.last_stream_id,
+                })
+                .await
+                .is_err()
+            {
+                debug!("error sending goaway");
+            }
+        }
+
         Ok(())
     }
 
@@ -286,11 +299,9 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                         debug!(exclusive = %pri_spec.exclusive, stream_dependency = ?pri_spec.stream_dependency, weight = %pri_spec.weight, "received priority, exclusive");
 
                         if pri_spec.stream_dependency == frame.stream_id {
-                            self.send_goaway(H2ConnectionError::HeadersInvalidPriority {
+                            return Err(H2ConnectionError::HeadersInvalidPriority {
                                 stream_id: frame.stream_id,
-                            })
-                            .await;
-                            return Ok(());
+                            });
                         }
                     }
 
@@ -369,11 +380,9 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                     debug!(?pri_spec, "received priority frame");
 
                     if pri_spec.stream_dependency == frame.stream_id {
-                        self.send_goaway(H2ConnectionError::HeadersInvalidPriority {
+                        return Err(H2ConnectionError::HeadersInvalidPriority {
                             stream_id: frame.stream_id,
-                        })
-                        .await;
-                        return Ok(());
+                        });
                     }
                 }
                 FrameType::RstStream => todo!("implement RstStream"),
@@ -404,9 +413,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                     }
                 }
                 FrameType::PushPromise => {
-                    self.send_goaway(H2ConnectionError::ClientSentPushPromise)
-                        .await;
-                    return Ok(());
+                    return Err(H2ConnectionError::ClientSentPushPromise);
                 }
                 FrameType::Ping(flags) => {
                     if frame.stream_id != StreamId::CONNECTION {
@@ -443,18 +450,16 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                             debug!("TODO: handle window update for stream {}", frame.stream_id)
                         }
                         None => {
-                            self.send_goaway(H2ConnectionError::WindowUpdateForUnknownStream {
+                            return Err(H2ConnectionError::WindowUpdateForUnknownStream {
                                 stream_id: frame.stream_id,
-                            })
-                            .await;
+                            });
                         }
                     },
                 },
                 FrameType::Continuation(_flags) => {
-                    self.send_goaway(H2ConnectionError::UnexpectedContinuationFrame {
+                    return Err(H2ConnectionError::UnexpectedContinuationFrame {
                         stream_id: frame.stream_id,
-                    })
-                    .await;
+                    });
                 }
                 FrameType::Unknown(ft) => {
                     trace!(
@@ -467,30 +472,6 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         }
 
         Ok(())
-    }
-
-    async fn send_goaway(&mut self, err: H2ConnectionError) {
-        // TODO: this should change the global server state: we should ignore
-        // any streams higher than the last stream id we've seen after
-        // we've done that.
-
-        if self.goaway_sent {
-            debug!("goaway already sent, ignoring");
-            return;
-        }
-
-        self.goaway_sent = true;
-        if self
-            .ev_tx
-            .send(H2ConnEvent::GoAway {
-                err,
-                last_stream_id: self.state.last_stream_id,
-            })
-            .await
-            .is_err()
-        {
-            debug!("error sending goaway");
-        }
     }
 
     async fn send_rst(&mut self, stream_id: StreamId, e: H2StreamError) {
