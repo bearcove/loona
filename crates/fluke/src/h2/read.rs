@@ -7,7 +7,7 @@ use std::{
 use enumflags2::BitFlags;
 use eyre::Context;
 use fluke_buffet::{Piece, PieceStr, Roll, RollMut};
-use fluke_maybe_uring::io::ReadOwned;
+use fluke_maybe_uring::io::{ReadOwned, WriteOwned};
 use http::{
     header,
     uri::{Authority, PathAndQuery, Scheme},
@@ -37,28 +37,36 @@ use super::{
 };
 
 /// Reads and processes h2 frames from the client.
-pub(crate) struct H2ReadContext<D: ServerDriver + 'static> {
+pub(crate) struct H2ReadContext<D: ServerDriver + 'static, W: WriteOwned> {
     driver: Rc<D>,
-    ev_tx: mpsc::Sender<H2ConnEvent>,
     state: ConnState,
     hpack_dec: fluke_hpack::Decoder<'static>,
 
     /// Whether we've received a GOAWAY frame.
     pub goaway_recv: bool,
+
+    transport_w: W,
+
+    ev_tx: mpsc::Sender<H2ConnEvent>,
+    ev_rx: mpsc::Receiver<H2ConnEvent>,
 }
 
-impl<D: ServerDriver + 'static> H2ReadContext<D> {
-    pub(crate) fn new(driver: Rc<D>, ev_tx: mpsc::Sender<H2ConnEvent>, state: ConnState) -> Self {
+impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
+    pub(crate) fn new(driver: Rc<D>, state: ConnState, transport_w: W) -> Self {
         let mut hpack_dec = fluke_hpack::Decoder::new();
         hpack_dec
             .set_max_allowed_table_size(Settings::default().header_table_size.try_into().unwrap());
 
+        let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<H2ConnEvent>(32);
+
         Self {
             driver,
             ev_tx,
+            ev_rx,
             state,
             hpack_dec,
             goaway_recv: false,
+            transport_w,
         }
     }
 

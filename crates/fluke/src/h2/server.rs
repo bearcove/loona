@@ -68,55 +68,9 @@ pub async fn serve(
         debug!("sent settings frame");
     }
 
-    let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<H2ConnEvent>(32);
-
-    let h2_read_cx = H2ReadContext::new(driver.clone(), ev_tx, state);
-
-    {
-        let mut read_task = std::pin::pin!(h2_read_cx.read_loop(client_buf, transport_r));
-        let mut write_task =
-            std::pin::pin!(super::write::h2_write_loop(ev_rx, transport_w, out_scratch));
-
-        tokio::select! {
-            res = &mut read_task => {
-                match res {
-                    Err(e) => {
-                       return Err(e.wrap_err("h2 read (finished first)"));
-                    }
-                    Ok(()) => {
-                        debug!("read task finished, waiting on write task now");
-                        let res = write_task.await;
-                        match res {
-                            Err(e) => {
-                                if is_peer_gone(&e) {
-                                    debug!(%e, "write task failed with peer gone");
-                                } else {
-                                    return Err(e.wrap_err("h2 write (finished second)"));
-                                }
-                            }
-                            Ok(()) => {
-                                debug!("write task finished okay");
-                            }
-                        }
-                    }
-                }
-            },
-            res = write_task.as_mut() => {
-                match res {
-                    Err(e) => {
-                        if is_peer_gone(&e) {
-                            debug!(%e, "write task failed with peer gone");
-                        } else {
-                            return Err(e.wrap_err("h2 write (finished first)"));
-                        }
-                    }
-                    Ok(()) => {
-                        debug!("write task finished, giving up read task");
-                    }
-                }
-            },
-        };
-    };
+    H2ReadContext::new(driver.clone(), state, transport_w)
+        .read_loop(client_buf, transport_r)
+        .await?;
 
     debug!("finished serving");
     Ok(())
