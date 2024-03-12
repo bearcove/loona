@@ -35,7 +35,7 @@ use super::{
     parse::{
         ContinuationFlags, DataFlags, HeadersFlags, PingFlags, Settings, SettingsFlags, StreamId,
     },
-    types::{ConnState, H2ConnEvent, H2StreamError, HeadersOrTrailers, StreamState},
+    types::{ConnState, H2Event, H2StreamError, HeadersOrTrailers, StreamState},
 };
 
 /// Reads and processes h2 frames from the client.
@@ -51,8 +51,8 @@ pub(crate) struct H2ReadContext<D: ServerDriver + 'static, W: WriteOwned> {
 
     transport_w: W,
 
-    ev_tx: mpsc::Sender<H2ConnEvent>,
-    ev_rx: mpsc::Receiver<H2ConnEvent>,
+    ev_tx: mpsc::Sender<H2Event>,
+    ev_rx: mpsc::Receiver<H2Event>,
 }
 
 impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
@@ -68,7 +68,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
 
         let hpack_enc = fluke_hpack::Encoder::new();
 
-        let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<H2ConnEvent>(32);
+        let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<H2Event>(32);
 
         Self {
             driver,

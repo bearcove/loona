@@ -229,10 +229,6 @@ pub(crate) enum HeadersOrTrailers {
     Trailers,
 }
 
-pub(crate) enum H2ConnEvent {
-    ServerEvent(H2Event),
-}
-
 #[derive(Debug)]
 pub(crate) struct H2Event {
     pub(crate) stream_id: StreamId,
