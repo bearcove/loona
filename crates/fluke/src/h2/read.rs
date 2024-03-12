@@ -275,10 +275,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
                 },
                 maybe_frame = rx.recv() => {
                     if let Some((frame, payload)) = maybe_frame {
-                        let res = self.process_frame(frame, payload, &mut rx).await;
-                        if let Err(e) = res {
-                            return Err(e);
-                        }
+                        self.process_frame(frame, payload, &mut rx).await?;
                     } else {
                         debug!("h2 process task: peer hung up");
                         break;
@@ -399,7 +396,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
                             if num_streams_if_accept > max_concurrent_streams as _ {
                                 // reset the stream, indicating we refused it
                                 self.rst(frame.stream_id, H2StreamError::RefusedStream)
-                                    .await;
+                                    .await?;
 
                                 // but we still need to skip over any continuation frames
                                 mode = ReadHeadersMode::Skip;
@@ -608,7 +605,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
 
         let frame = Frame::new(FrameType::RstStream, stream_id)
             .with_len((payload.len()).try_into().unwrap());
-        self.write_frame(frame, payload);
+        self.write_frame(frame, payload).await?;
 
         Ok(())
     }
