@@ -5,6 +5,7 @@ use std::{
     sync::atomic::{AtomicU32, Ordering},
 };
 
+use byteorder::{BigEndian, WriteBytesExt};
 use enumflags2::BitFlags;
 use eyre::Context;
 use fluke_buffet::{Piece, PieceStr, Roll, RollMut};
@@ -144,7 +145,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
             let error_code = err.as_known_error_code();
             debug!("Connection error: {err} ({err:?}) (code {error_code:?})");
 
-            // let's put something useful in debug data
+            // TODO: don't heap-allocate here
             let additional_debug_data = format!("{err}").into_bytes();
 
             // TODO: figure out graceful shutdown: this would involve sending a goaway
@@ -153,8 +154,6 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
             let payload =
                 self.out_scratch
                     .put_to_roll(8 + additional_debug_data.len(), |mut slice| {
-                        use byteorder::{BigEndian, WriteBytesExt};
-                        // TODO: do we ever need to write the reserved bit?
                         slice.write_u32::<BigEndian>(self.state.last_stream_id.0)?;
                         slice.write_u32::<BigEndian>(error_code.repr())?;
                         slice.write_all(additional_debug_data.as_slice())?;
@@ -313,7 +312,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
         &mut self,
         frame: Frame,
         mut payload: Roll,
-        mut rx: &mut mpsc::Receiver<(Frame, Roll)>,
+        rx: &mut mpsc::Receiver<(Frame, Roll)>,
     ) -> Result<(), H2ConnectionError> {
         match frame.frame_type {
             FrameType::Data(flags) => {
@@ -342,8 +341,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
                             stream_id = %frame.stream_id,
                             "Received data for closed stream"
                         );
-                        self.send_rst(frame.stream_id, H2StreamError::StreamClosed)
-                            .await
+                        self.rst(frame.stream_id, H2StreamError::StreamClosed)
+                            .await?;
                     }
                 }
             }
@@ -399,7 +398,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
                             let num_streams_if_accept = self.state.streams.len() + 1;
                             if num_streams_if_accept > max_concurrent_streams as _ {
                                 // reset the stream, indicating we refused it
-                                self.send_rst(frame.stream_id, H2StreamError::RefusedStream)
+                                self.rst(frame.stream_id, H2StreamError::RefusedStream)
                                     .await;
 
                                 // but we still need to skip over any continuation frames
@@ -421,8 +420,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
                             // ignore trailers, we're not accepting the stream
                             mode = ReadHeadersMode::Skip;
 
-                            self.send_rst(frame.stream_id, H2StreamError::TrailersNotEndStream)
-                                .await
+                            self.rst(frame.stream_id, H2StreamError::TrailersNotEndStream)
+                                .await?;
                         }
                     }
                     Some(StreamState::HalfClosedRemote) => {
@@ -595,23 +594,28 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
         Ok(())
     }
 
-    async fn send_rst(&mut self, stream_id: StreamId, e: H2StreamError) {
+    /// Send a RST_STREAM frame to the peer.
+    async fn rst(
+        &mut self,
+        stream_id: StreamId,
+        e: H2StreamError,
+    ) -> Result<(), H2ConnectionError> {
+        self.state.streams.remove(&stream_id);
+
         let error_code = e.as_known_error_code();
         debug!("Sending rst because: {e} (known error code: {error_code:?})");
 
-        if self
-            .ev_tx
-            .send(H2ConnEvent::RstStream {
-                stream_id,
-                error_code,
-            })
-            .await
-            .is_err()
-        {
-            debug!("error sending rst");
-        }
+        debug!(%stream_id, ?error_code, "Sending RstStream");
+        let payload = self.out_scratch.put_to_roll(4, |mut slice| {
+            slice.write_u32::<BigEndian>(error_code.repr())?;
+            Ok(())
+        })?;
 
-        self.state.streams.remove(&stream_id);
+        let frame = Frame::new(FrameType::RstStream, stream_id)
+            .with_len((payload.len()).try_into().unwrap());
+        self.write_frame(frame, payload);
+
+        Ok(())
     }
 
     async fn read_headers(

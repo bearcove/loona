@@ -6,7 +6,7 @@ use crate::{
     h2::{
         parse::{self, Frame, FrameType, StreamId},
         read::H2ReadContext,
-        types::{ConnState, H2ConnEvent},
+        types::ConnState,
     },
     util::read_and_parse,
     ServerDriver,
