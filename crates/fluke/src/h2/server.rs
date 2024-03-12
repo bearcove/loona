@@ -115,6 +115,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
     ) -> eyre::Result<()> {
         // first read the preface
         {
+            debug!("Reading preface");
             (client_buf, _) = match read_and_parse(
                 parse::preface,
                 &mut transport_r,
@@ -129,10 +130,12 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     return Ok(());
                 }
             };
+            debug!("Reading preface: done");
         }
 
         // then send our initial settings
         {
+            debug!("Sending initial settings");
             let payload = self.state.self_settings.into_roll(&mut self.out_scratch)?;
             let frame = Frame::new(
                 FrameType::Settings(Default::default()),
@@ -158,6 +161,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 max_frame_size
             ));
             let mut process_task = std::pin::pin!(self.process_loop(rx));
+
+            debug!("Starting both deframe & process tasks");
 
             tokio::select! {
                 res = &mut deframe_task => {
@@ -229,6 +234,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         'read_frames: loop {
             const MAX_FRAME_HEADER_SIZE: usize = 128;
             let frame;
+            debug!("Reading frame... Buffer length: {}", client_buf.len());
             let frame_res = read_and_parse(
                 Frame::parse,
                 &mut transport_r,
@@ -244,11 +250,14 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
             (client_buf, frame) = match maybe_frame {
                 Some((client_buf, frame)) => (client_buf, frame),
                 None => {
-                    debug!("Peer went away before sending a frame");
+                    debug!("Peer hung up");
                     break 'read_frames;
                 }
             };
-
+            debug!(
+                "Reading frame... done! New buffer length: {}",
+                client_buf.len()
+            );
             debug!(?frame, "<");
 
             let max_frame_size = max_frame_size.load(Ordering::Relaxed);
