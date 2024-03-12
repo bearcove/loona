@@ -645,8 +645,15 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
             FrameType::Priority => {
                 let pri_spec = match PrioritySpec::parse(payload) {
                     Ok((_rest, pri_spec)) => pri_spec,
-                    Err(e) => {
-                        todo!("handle connection error: invalid priority frame {e}")
+                    Err(_e) => {
+                        self.rst(
+                            frame.stream_id,
+                            H2StreamError::InvalidPriorityFrameSize {
+                                frame_size: frame.len,
+                            },
+                        )
+                        .await?;
+                        return Ok(());
                     }
                 };
                 debug!(?pri_spec, "received priority frame");
