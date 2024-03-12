@@ -340,12 +340,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
     ) -> Result<(), H2ConnectionError> {
         loop {
             tokio::select! {
-                ev = self.ev_rx.recv() => {
-                    match ev {
-                        Some(ev) => self.handle_event(ev).await?,
-                        None => unreachable!("the context owns a copy of the sender, and this method has &mut self, so the sender can't be dropped while this method is running"),
-                    }
-                },
+                biased;
+
                 maybe_frame = rx.recv() => {
                     if let Some((frame, payload)) = maybe_frame {
                         self.process_frame(frame, payload, &mut rx).await?;
@@ -354,6 +350,13 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         break;
                     }
                 }
+
+                ev = self.ev_rx.recv() => {
+                    match ev {
+                        Some(ev) => self.handle_event(ev).await?,
+                        None => unreachable!("the context owns a copy of the sender, and this method has &mut self, so the sender can't be dropped while this method is running"),
+                    }
+                },
             }
         }
 
@@ -557,14 +560,15 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                             return Err(H2ConnectionError::ClientSidShouldBeOdd);
                         }
 
-                        if frame.stream_id <= self.state.last_stream_id {
-                            debug!(
-                                frame_stream_id = %frame.stream_id,
-                                last_stream_id = %self.state.last_stream_id,
-                                "Received headers for invalid stream ID"
+                        if frame.stream_id < self.state.last_stream_id {
+                            // we're going back? we can't.
+                            return Err(
+                                H2ConnectionError::ClientSidShouldBeNumericallyIncreasing {
+                                    stream_id: frame.stream_id,
+                                    last_stream_id: self.state.last_stream_id,
+                                },
                             );
-
-                            // this stream may have existed, but it no longer does:
+                        } else if frame.stream_id == self.state.last_stream_id {
                             return Err(H2ConnectionError::StreamClosed {
                                 stream_id: frame.stream_id,
                             });

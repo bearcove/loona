@@ -101,6 +101,12 @@ pub(crate) enum H2ConnectionError {
     #[error("client tried to initiate an even-numbered stream")]
     ClientSidShouldBeOdd,
 
+    #[error("client stream IDs should be numerically increasing")]
+    ClientSidShouldBeNumericallyIncreasing {
+        stream_id: StreamId,
+        last_stream_id: StreamId,
+    },
+
     #[error("received {frame_type:?} frame with Padded flag but empty payload")]
     PaddedFrameEmpty { frame_type: FrameType },
 
