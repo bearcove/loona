@@ -385,7 +385,23 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                         });
                     }
                 }
-                FrameType::RstStream => todo!("implement RstStream"),
+                FrameType::RstStream => match self.state.streams.remove(&frame.stream_id) {
+                    Some(ss) => match ss {
+                        StreamStage::Open(body_tx) => {
+                            _ = body_tx
+                                .send(Err(H2StreamError::ReceivedRstStream.into()))
+                                .await;
+                        }
+                        StreamStage::HalfClosedRemote => {
+                            // good
+                        }
+                    },
+                    None => {
+                        return Err(H2ConnectionError::ReceivedRstStreamForUnknownStream {
+                            stream_id: frame.stream_id,
+                        })
+                    }
+                },
                 FrameType::Settings(s) => {
                     if s.contains(SettingsFlags::Ack) {
                         debug!("Peer has acknowledged our settings, cool");

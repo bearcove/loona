@@ -142,6 +142,9 @@ pub(crate) enum H2ConnectionError {
 
     #[error("received data frame for unknown stream {stream_id}")]
     ReceivedDataForUnknownStream { stream_id: StreamId },
+
+    #[error("received RST_STREAM frame for unknown stream")]
+    ReceivedRstStreamForUnknownStream { stream_id: StreamId },
 }
 
 impl H2ConnectionError {
@@ -178,6 +181,9 @@ pub(crate) enum H2StreamError {
 
     #[error("trailers must have EndStream flag set")]
     TrailersNotEndStream,
+
+    #[error("received RST_STREAM frame")]
+    ReceivedRstStream,
 }
 
 impl H2StreamError {
