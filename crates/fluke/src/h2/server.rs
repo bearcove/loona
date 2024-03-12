@@ -18,7 +18,7 @@ use http::{
 use nom::Finish;
 use smallvec::{smallvec, SmallVec};
 use tokio::sync::mpsc;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 use crate::{
     h2::{
@@ -260,7 +260,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 }
             };
 
-            debug!(?frame, "Received");
+            debug!(?frame, "<");
 
             let max_frame_size = max_frame_size.load(Ordering::Relaxed);
             if frame.len > max_frame_size {
@@ -408,6 +408,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         frame: Frame,
         payload: impl Into<Piece>,
     ) -> Result<(), H2ConnectionError> {
+        debug!(?frame, ">");
+
         let payload = payload.into();
 
         match &frame.frame_type {
@@ -480,7 +482,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                             .await
                             .is_err()
                         {
-                            warn!("TODO: The body is being ignored, we should reset the stream");
+                            debug!("TODO: The body is being ignored, we should reset the stream");
                         }
 
                         if flags.contains(DataFlags::EndStream) {

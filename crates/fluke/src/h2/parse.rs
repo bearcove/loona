@@ -210,12 +210,63 @@ impl fmt::Display for StreamId {
 }
 
 /// See https://httpwg.org/specs/rfc9113.html#FrameHeader
-#[derive(Debug)]
 pub struct Frame {
     pub frame_type: FrameType,
     pub reserved: u8,
     pub stream_id: StreamId,
     pub len: u32,
+}
+
+impl fmt::Debug for Frame {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut s = match &self.frame_type {
+            FrameType::Data(flags) => {
+                let mut s = f.debug_struct("Frame:Data");
+                s.field("flags", flags);
+                s
+            }
+            FrameType::Headers(flags) => {
+                let mut s = f.debug_struct("Frame:Headers");
+                s.field("flags", flags);
+                s
+            }
+            FrameType::Priority => f.debug_struct("Frame:Priority"),
+            FrameType::RstStream => f.debug_struct("Frame:RstStream"),
+            FrameType::Settings(flags) => {
+                let mut s = f.debug_struct("Frame:Settings");
+                s.field("flags", flags);
+                s
+            }
+            FrameType::PushPromise => f.debug_struct("Frame:PushPromise"),
+            FrameType::Ping(flags) => {
+                let mut s = f.debug_struct("Frame:Ping");
+                s.field("flags", flags);
+                s
+            }
+            FrameType::GoAway => f.debug_struct("Frame:GoAway"),
+            FrameType::WindowUpdate => f.debug_struct("Frame:WindowUpdate"),
+            FrameType::Continuation(flags) => {
+                let mut s = f.debug_struct("Frame:Continuation");
+                s.field("flags", flags);
+                s
+            }
+            FrameType::Unknown(eft) => {
+                let mut s = f.debug_struct("Frame:Unknown");
+                s.field("encoded_frame_type", eft);
+                s
+            }
+        };
+        if self.reserved != 0 {
+            s.field("reserved", &self.reserved);
+        }
+        if self.stream_id != StreamId::CONNECTION {
+            s.field("stream_id", &self.stream_id);
+        }
+        if self.len > 0 {
+            s.field("len", &self.len);
+        }
+        s.finish()
+    }
 }
 
 impl Frame {
