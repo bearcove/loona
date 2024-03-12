@@ -33,10 +33,7 @@ use super::{
     parse::{
         ContinuationFlags, DataFlags, HeadersFlags, PingFlags, Settings, SettingsFlags, StreamId,
     },
-    types::{
-        ConnState, ContinuationState, H2ConnEvent, H2Result, H2StreamError, HeadersData,
-        HeadersOrTrailers, StreamStage,
-    },
+    types::{ConnState, H2ConnEvent, H2StreamError, HeadersOrTrailers, StreamStage},
 };
 
 /// Reads and processes h2 frames from the client.
@@ -75,13 +72,14 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         transport_r: impl ReadOwned,
     ) -> eyre::Result<()> {
         // read frames and send them into an mpsc buffer of size 1
-        let (tx, mut rx) = mpsc::channel::<(Frame, Roll)>(1);
+        let (tx, rx) = mpsc::channel::<(Frame, Roll)>(1);
 
         // store max frame size setting as an atomic so we can share it across tasks
         // FIXME: the process_task should update this
         let max_frame_size = Rc::new(AtomicU32::new(self.state.self_settings.max_frame_size));
 
-        let mut io_task = Self::io_loop(client_buf, transport_r, tx, max_frame_size);
+        let mut io_task =
+            std::pin::pin!(Self::io_loop(client_buf, transport_r, tx, max_frame_size));
         let mut process_task = std::pin::pin!(self.process_loop(rx));
 
         loop {
@@ -108,6 +106,8 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                 }
                 res = &mut process_task => {
                     if let Err(e) = res {
+                        debug!("h2 process got an error, sending goaway: {e}");
+
                         return Err(e).wrap_err("h2 process");
                     }
 
@@ -227,13 +227,16 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         Ok(())
     }
 
-    async fn process_loop(&mut self, mut rx: mpsc::Receiver<(Frame, Roll)>) -> H2Result {
+    async fn process_loop(
+        &mut self,
+        mut rx: mpsc::Receiver<(Frame, Roll)>,
+    ) -> Result<(), H2ConnectionError> {
         loop {
             let (frame, mut payload) = match rx.recv().await {
                 Some(t) => t,
                 None => {
                     debug!("h2 process task: peer hung up");
-                    return Ok(());
+                    break;
                 }
             };
 
@@ -244,8 +247,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                         None => {
                             return Err(H2ConnectionError::ReceivedDataForUnknownStream {
                                 stream_id: frame.stream_id,
-                            }
-                            .into())
+                            })
                         }
                     };
 
@@ -265,21 +267,20 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                                 *stage = StreamStage::HalfClosedRemote;
                             }
                         }
-                        StreamStage::HalfClosedRemote | StreamStage::Closed => {
-                            return Err(H2StreamError::ReceivedDataForClosedStream
-                                .for_stream(frame.stream_id));
+                        StreamStage::HalfClosedRemote => {
+                            debug!(
+                                stream_id = %frame.stream_id,
+                                "Received data for closed stream"
+                            );
+                            self.send_rst(
+                                frame.stream_id,
+                                H2StreamError::ReceivedDataForClosedStream,
+                            )
+                            .await
                         }
                     }
                 }
                 FrameType::Headers(flags) => {
-                    if frame.stream_id.is_server_initiated() {
-                        return H2ConnectionError::ClientSidShouldBeOdd.into();
-                    }
-                    if frame.stream_id < self.state.last_stream_id {
-                        return H2ConnectionError::ClientSidShouldBeIncreasing.into();
-                    }
-                    self.state.last_stream_id = frame.stream_id;
-
                     if flags.contains(HeadersFlags::Priority) {
                         let pri_spec;
                         (payload, pri_spec) = PrioritySpec::parse(payload)
@@ -296,78 +297,70 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                         }
                     }
 
-                    let mut headers_data = HeadersData {
-                        end_stream: flags.contains(HeadersFlags::EndStream),
-                        fragments: smallvec![payload],
-                    };
+                    let headers_or_trailers;
+                    let mode;
 
                     match self.state.streams.get_mut(&frame.stream_id) {
                         None => {
+                            headers_or_trailers = HeadersOrTrailers::Headers;
+                            debug!(
+                                "Receiving headers for stream {} (it's the {}th stream)",
+                                frame.stream_id,
+                                self.state.streams.len() + 1
+                            );
+
+                            if frame.stream_id.is_server_initiated() {
+                                return Err(H2ConnectionError::ClientSidShouldBeOdd);
+                            }
+                            if frame.stream_id < self.state.last_stream_id {
+                                return Err(H2ConnectionError::ClientSidShouldBeIncreasing);
+                            }
+
+                            self.state.last_stream_id = frame.stream_id;
+
                             // TODO: if we're shutting down, ignore streams higher
                             // than the last one we accepted.
-
-                            debug!("Receiving headers for stream {} (if we accept this stream we'll have {} total)", frame.stream_id, self.state.streams.len() + 1);
 
                             let max_concurrent_streams =
                                 self.state.self_settings.max_concurrent_streams;
                             let num_streams_if_accept = self.state.streams.len() + 1;
                             if num_streams_if_accept > max_concurrent_streams as _ {
-                                return Err(H2ConnectionError::MaxConcurrentStreamsExceeded {
-                                    max_concurrent_streams,
-                                }
-                                .into());
-                            }
+                                // reset the stream, indicating we refused it
+                                self.send_rst(frame.stream_id, H2StreamError::RefusedStream)
+                                    .await;
 
-                            if !flags.contains(HeadersFlags::EndHeaders) {
-                                // read continuation
-                                let (continuation_frame, continuation_payload) = match rx
-                                    .recv()
-                                    .await
-                                {
-                                    Some(t) => t,
-                                    None => {
-                                        return Err(H2ConnectionError::ExpectedContinuationFrame {
-                                            stream_id: frame.stream_id,
-                                            frame_type: None,
-                                        }
-                                        .into())
-                                    }
-                                };
-
-                                if frame.stream_id != continuation_frame.stream_id {
-                                    return Err(H2ConnectionError::ExpectedContinuationForStream {
-                                        stream_id: frame.stream_id,
-                                        continuation_stream_id: continuation_frame.stream_id,
-                                    }
-                                    .into());
-                                }
-
-                                let cont_flags = match continuation_frame.frame_type {
-                                    FrameType::Continuation(flags) => flags,
-                                    other => {
-                                        return Err(H2ConnectionError::ExpectedContinuationFrame {
-                                            stream_id: frame.stream_id,
-                                            frame_type: Some(other),
-                                        }
-                                        .into())
-                                    }
-                                };
+                                // but we still need to skip over any continuation frames
+                                mode = ReadHeadersMode::Skip;
+                            } else {
+                                mode = ReadHeadersMode::Process;
                             }
                         }
-                        Some(stage) => {
+                        Some(_) => {
+                            headers_or_trailers = HeadersOrTrailers::Trailers;
                             debug!("Receiving trailers for stream {}", frame.stream_id);
 
-                            if !flags.contains(HeadersFlags::EndStream) {
-                                return Err(
-                                    H2StreamError::TrailersNotEndStream.for_stream(frame.stream_id)
-                                );
-                            }
+                            if flags.contains(HeadersFlags::EndStream) {
+                                // good, that's what we expect
+                                mode = ReadHeadersMode::Process;
+                            } else {
+                                // ignore trailers, we're not accepting the stream
+                                mode = ReadHeadersMode::Skip;
 
-                            if !flags.contains(HeadersFlags::EndHeaders) {
-                                //
+                                self.send_rst(frame.stream_id, H2StreamError::TrailersNotEndStream)
+                                    .await
                             }
                         }
                     }
+
+                    self.read_headers(
+                        headers_or_trailers,
+                        mode,
+                        flags,
+                        frame.stream_id,
+                        payload,
+                        &mut rx,
+                    )
+                    .await?;
                 }
                 FrameType::Priority => {
                     let pri_spec = match PrioritySpec::parse(payload) {
@@ -391,7 +384,6 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                     if s.contains(SettingsFlags::Ack) {
                         debug!("Peer has acknowledged our settings, cool");
                     } else {
-                        // TODO: actually apply settings
                         let (_, settings) = Settings::parse(payload)
                             .finish()
                             .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
@@ -476,71 +468,8 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                 }
             }
         }
-    }
 
-    // TODO: return `H2Error` from this, which can accommodate both connection-level
-    // and stream-level errors.
-    // cf.
-    async fn process_frame(&mut self, frame: Frame, payload: Roll) -> H2Result {
-        match self.continuation_state {
-            ContinuationState::Idle => self.process_idle_frame(frame, payload).await,
-            ContinuationState::ContinuingHeaders(expected_stream_id) => {
-                // TODO: kill, cf. https://github.com/hapsoc/fluke/issues/121
-                self.process_continuation_frame(frame, payload, expected_stream_id)
-                    .await
-            }
-        }
-    }
-
-    async fn process_continuation_frame(
-        &mut self,
-        frame: Frame,
-        payload: Roll,
-        expected_stream_id: StreamId,
-    ) -> H2Result {
-        let flags = match frame.frame_type {
-            FrameType::Continuation(flags) => flags,
-            other => {
-                return H2ConnectionError::ExpectedContinuationFrame {
-                    stream_id: expected_stream_id,
-                    frame_type: other,
-                }
-                .into()
-            }
-        };
-
-        if frame.stream_id != expected_stream_id {
-            return H2ConnectionError::ExpectedContinuationForStream {
-                stream_id: expected_stream_id,
-                continuation_stream_id: frame.stream_id,
-            }
-            .into();
-        }
-
-        // unwrap rationale: we just checked that this is a
-        // continuation of a stream we've already learned about.
-        let ss = self.state.streams.get_mut(&frame.stream_id).unwrap();
-        match ss {
-            StreamStage::Headers(data) | StreamStage::Trailers(_, data) => {
-                data.fragments.push(payload);
-            }
-            _ => {
-                // FIXME: store `HeadersData` in
-                // `ContinuationState` directly so this
-                // branch doesn't even exist.
-                unreachable!()
-            }
-        }
-
-        if flags.contains(ContinuationFlags::EndHeaders) {
-            self.end_headers(frame.stream_id).await
-        } else {
-            debug!(
-                "expecting more headers/trailers for stream {}",
-                frame.stream_id
-            );
-            Ok(())
-        }
+        Ok(())
     }
 
     async fn send_goaway(&mut self, err: H2ConnectionError) {
@@ -586,17 +515,81 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         self.state.streams.remove(&stream_id);
     }
 
-    // TODO: this can all be, again, greatly simplified because continuation
-    // frames are supposed to follow the headers frames directly, so we don't
-    // need any of that in the state machine, we can just keep popping more
-    // framesq
-    async fn end_headers(&mut self, stream_id: StreamId) -> H2Result {
-        let stage = self
-            .state
-            .streams
-            .get_mut(&stream_id)
-            // FIXME: don't panic
-            .expect("stream stage must exist");
+    async fn read_headers(
+        &mut self,
+        headers_or_trailers: HeadersOrTrailers,
+        mode: ReadHeadersMode,
+        flags: BitFlags<HeadersFlags, u8>,
+        stream_id: StreamId,
+        payload: Roll,
+        rx: &mut mpsc::Receiver<(Frame, Roll)>,
+    ) -> Result<(), H2ConnectionError> {
+        let end_stream = flags.contains(HeadersFlags::EndStream);
+
+        enum Data {
+            Single(Roll),
+            Multi(SmallVec<[Roll; 2]>),
+        }
+
+        let data = if flags.contains(HeadersFlags::EndHeaders) {
+            // good, no continuation frames needed
+            Data::Single(payload)
+        } else {
+            // read continuation frames
+
+            #[allow(unused, clippy::let_unit_value)]
+            let flags = (); // don't accidentally use the `flags` variable
+
+            let mut fragments = smallvec![payload];
+
+            loop {
+                let (continuation_frame, continuation_payload) = match rx.recv().await {
+                    Some(t) => t,
+                    None => {
+                        // even though this error is "for a stream", it's a
+                        // connection error, because it means the peer doesn't
+                        // know how to speak HTTP/2.
+                        return Err(H2ConnectionError::ExpectedContinuationFrame {
+                            stream_id,
+                            frame_type: None,
+                        });
+                    }
+                };
+
+                if stream_id != continuation_frame.stream_id {
+                    return Err(H2ConnectionError::ExpectedContinuationForStream {
+                        stream_id,
+                        continuation_stream_id: continuation_frame.stream_id,
+                    });
+                }
+
+                let cont_flags = match continuation_frame.frame_type {
+                    FrameType::Continuation(flags) => flags,
+                    other => {
+                        return Err(H2ConnectionError::ExpectedContinuationFrame {
+                            stream_id,
+                            frame_type: Some(other),
+                        })
+                    }
+                };
+
+                // add fragment
+                fragments.push(continuation_payload);
+
+                if cont_flags.contains(ContinuationFlags::EndHeaders) {
+                    // we're done
+                    break;
+                }
+            }
+
+            Data::Multi(fragments)
+        };
+
+        if matches!(mode, ReadHeadersMode::Skip) {
+            // that's all we need to do: we're not actually validating the
+            // headers, we already send a RST
+            return Ok(());
+        }
 
         let mut method: Option<Method> = None;
         let mut scheme: Option<Scheme> = None;
@@ -605,102 +598,90 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
 
         let mut headers = Headers::default();
 
-        let mut decode_data =
-            |headers_or_trailers: HeadersOrTrailers, data: &HeadersData| -> H2Result {
-                // TODO: find a way to propagate errors from here - probably will have to change
-                // the function signature in fluke-hpack.
-                let on_header_pair = |key: Cow<[u8]>, value: Cow<[u8]>| {
-                    debug!(
-                        "{headers_or_trailers:?} | {}: {}",
-                        std::str::from_utf8(&key).unwrap_or("<non-utf8-key>"), // TODO: does this hurt performance when debug logging is disabled?
-                        std::str::from_utf8(&value).unwrap_or("<non-utf8-value>"),
-                    );
+        // TODO: find a way to propagate errors from here - probably will have to change
+        // the function signature in fluke-hpack, or just write to some captured
+        // error
+        let on_header_pair = |key: Cow<[u8]>, value: Cow<[u8]>| {
+            debug!(
+                "{headers_or_trailers:?} | {}: {}",
+                std::str::from_utf8(&key).unwrap_or("<non-utf8-key>"), // TODO: does this hurt performance when debug logging is disabled?
+                std::str::from_utf8(&value).unwrap_or("<non-utf8-value>"),
+            );
 
-                    if &key[..1] == b":" {
-                        if matches!(headers_or_trailers, HeadersOrTrailers::Trailers) {
-                            // TODO: proper error handling
-                            panic!("trailers cannot contain pseudo-headers");
-                        }
+            if &key[..1] == b":" {
+                if matches!(headers_or_trailers, HeadersOrTrailers::Trailers) {
+                    // TODO: proper error handling
+                    panic!("trailers cannot contain pseudo-headers");
+                }
 
-                        // it's a pseudo-header!
-                        // TODO: reject headers that occur after pseudo-headers
-                        match &key[1..] {
-                            b"method" => {
-                                // TODO: error handling
-                                let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
-                                if method.replace(Method::from(value)).is_some() {
-                                    unreachable!(); // No duplicate allowed.
-                                }
-                            }
-                            b"scheme" => {
-                                // TODO: error handling
-                                let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
-                                if scheme.replace(value.parse().unwrap()).is_some() {
-                                    unreachable!(); // No duplicate allowed.
-                                }
-                            }
-                            b"path" => {
-                                // TODO: error handling
-                                let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
-                                if value.len() == 0 || path.replace(value).is_some() {
-                                    unreachable!(); // No empty path nor duplicate allowed.
-                                }
-                            }
-                            b"authority" => {
-                                // TODO: error handling
-                                let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
-                                if authority.replace(value.parse().unwrap()).is_some() {
-                                    unreachable!(); // No duplicate allowed. (h2spec doesn't seem to test for
-                                                    // this case but rejecting for duplicates seems
-                                                    // reasonable.)
-                                }
-                            }
-                            _ => {
-                                debug!("ignoring pseudo-header");
-                            }
+                // it's a pseudo-header!
+                // TODO: reject headers that occur after pseudo-headers
+                match &key[1..] {
+                    b"method" => {
+                        // TODO: error handling
+                        let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
+                        if method.replace(Method::from(value)).is_some() {
+                            unreachable!(); // No duplicate allowed.
                         }
-                    } else {
-                        // TODO: what do we do in case of malformed header names?
-                        // ignore it? return a 400?
-                        let name = HeaderName::from_bytes(&key[..]).expect("malformed header name");
-                        let value: Piece = value.to_vec().into();
-                        headers.append(name, value);
                     }
-                };
-
-                match &data.fragments[..] {
-                    [] => unreachable!("must have at least one fragment"),
-                    [payload] => {
-                        self.hpack_dec
-                            .decode_with_cb(&payload[..], on_header_pair)
-                            .map_err(|e| H2ConnectionError::CompressionError(format!("{e:?}")))?;
+                    b"scheme" => {
+                        // TODO: error handling
+                        let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
+                        if scheme.replace(value.parse().unwrap()).is_some() {
+                            unreachable!(); // No duplicate allowed.
+                        }
+                    }
+                    b"path" => {
+                        // TODO: error handling
+                        let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
+                        if value.len() == 0 || path.replace(value).is_some() {
+                            unreachable!(); // No empty path nor duplicate allowed.
+                        }
+                    }
+                    b"authority" => {
+                        // TODO: error handling
+                        let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
+                        if authority.replace(value.parse().unwrap()).is_some() {
+                            unreachable!(); // No duplicate allowed. (h2spec doesn't seem to test for
+                                            // this case but rejecting duplicates seems reasonable.)
+                        }
                     }
                     _ => {
-                        let total_len = data.fragments.iter().map(|f| f.len()).sum();
-                        // this is a slow path, let's do a little heap allocation. we could
-                        // be using `RollMut` for this, but it would probably need to resize
-                        // a bunch
-                        let mut payload = Vec::with_capacity(total_len);
-                        for frag in &data.fragments {
-                            payload.extend_from_slice(&frag[..]);
-                        }
-                        self.hpack_dec
-                            .decode_with_cb(&payload[..], on_header_pair)
-                            .map_err(|e| H2ConnectionError::CompressionError(format!("{e:?}")))?;
+                        debug!("ignoring pseudo-header");
                     }
-                };
+                }
+            } else {
+                // TODO: what do we do in case of malformed header names?
+                // ignore it? return a 400?
+                let name = HeaderName::from_bytes(&key[..]).expect("malformed header name");
+                let value: Piece = value.to_vec().into();
+                headers.append(name, value);
+            }
+        };
 
-                Ok(())
-            };
+        match data {
+            Data::Single(payload) => {
+                self.hpack_dec
+                    .decode_with_cb(&payload[..], on_header_pair)
+                    .map_err(|e| H2ConnectionError::CompressionError(format!("{e:?}")))?;
+            }
+            Data::Multi(fragments) => {
+                let total_len = fragments.iter().map(|f| f.len()).sum();
+                // this is a slow path, let's do a little heap allocation. we could
+                // be using `RollMut` for this, but it would probably need to resize
+                // a bunch
+                let mut payload = Vec::with_capacity(total_len);
+                for frag in &fragments {
+                    payload.extend_from_slice(&frag[..]);
+                }
+                self.hpack_dec
+                    .decode_with_cb(&payload[..], on_header_pair)
+                    .map_err(|e| H2ConnectionError::CompressionError(format!("{e:?}")))?;
+            }
+        };
 
-        // FIXME: don't panic on unexpected states here
-        let mut prev_stage = StreamStage::Closed;
-        std::mem::swap(&mut prev_stage, stage);
-
-        match prev_stage {
-            StreamStage::Headers(data) => {
-                decode_data(HeadersOrTrailers::Headers, &data)?;
-
+        match headers_or_trailers {
+            HeadersOrTrailers::Headers => {
                 // TODO: cf. https://httpwg.org/specs/rfc9113.html#HttpRequest
                 // A server SHOULD treat a request as malformed if it contains a Host header
                 // field that identifies an entity that differs from the entity in the
@@ -751,8 +732,8 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                 let req_body = H2Body {
                     // FIXME: that's not right. h2 requests can still specify
                     // a content-length
-                    content_length: if data.end_stream { Some(0) } else { None },
-                    eof: data.end_stream,
+                    content_length: if end_stream { Some(0) } else { None },
+                    eof: end_stream,
                     rx: piece_rx,
                 };
 
@@ -774,89 +755,43 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                     }
                 });
 
-                *stage = if data.end_stream {
-                    StreamStage::HalfClosedRemote
-                } else {
-                    StreamStage::Open(piece_tx)
-                };
+                self.state.streams.insert(
+                    stream_id,
+                    if end_stream {
+                        StreamStage::HalfClosedRemote
+                    } else {
+                        StreamStage::Open(piece_tx)
+                    },
+                );
             }
-            StreamStage::Open(_) => unreachable!(),
-            StreamStage::Trailers(body_tx, data) => {
-                decode_data(HeadersOrTrailers::Trailers, &data)?;
-
-                if body_tx
-                    .send(Ok(PieceOrTrailers::Trailers(Box::new(headers))))
-                    .await
-                    .is_err()
-                {
-                    warn!("TODO: The body is being ignored, we should reset the stream");
+            HeadersOrTrailers::Trailers => {
+                match self.state.streams.get_mut(&stream_id) {
+                    Some(StreamStage::Open(body_tx)) => {
+                        if body_tx
+                            .send(Ok(PieceOrTrailers::Trailers(Box::new(headers))))
+                            .await
+                            .is_err()
+                        {
+                            // the body is being ignored, but there's no point in
+                            // resetting the stream since we just got the end of it
+                        }
+                    }
+                    _ => {
+                        unreachable!("stream state should be open when we receive trailers")
+                    }
                 }
+                self.state.streams.remove(&stream_id);
             }
-            StreamStage::HalfClosedRemote => unreachable!(),
-            StreamStage::Closed => unreachable!(),
         }
 
         Ok(())
     }
 }
 
-impl HeadersData {
-    async fn read(
-        flags: BitFlags<HeadersFlags, u8>,
-        stream_id: StreamId,
-        payload: Roll,
-        rx: &mut mpsc::Receiver<(Frame, Roll)>,
-    ) -> H2Result<Self> {
-        let mut fragments: SmallVec<[Roll; 2]> = smallvec![payload];
-
-        if flags.contains(HeadersFlags::EndHeaders) {
-            // good, no continuation frames needed
-        } else {
-            // read continuation frames
-            loop {
-                let (continuation_frame, continuation_payload) = match rx.recv().await {
-                    Some(t) => t,
-                    None => {
-                        // even though this error is "for a stream", it's a
-                        // connection error, because it means the peer doesn't
-                        // know how to speak HTTP/2.
-                        return Err(H2ConnectionError::ExpectedContinuationFrame {
-                            stream_id,
-                            frame_type: None,
-                        }
-                        .into());
-                    }
-                };
-
-                if stream_id != continuation_frame.stream_id {
-                    return Err(H2ConnectionError::ExpectedContinuationForStream {
-                        stream_id,
-                        continuation_stream_id: continuation_frame.stream_id,
-                    }
-                    .into());
-                }
-
-                let cont_flags = match continuation_frame.frame_type {
-                    FrameType::Continuation(flags) => flags,
-                    other => {
-                        return Err(H2ConnectionError::ExpectedContinuationFrame {
-                            stream_id,
-                            frame_type: Some(other),
-                        }
-                        .into())
-                    }
-                };
-
-                // add fragment
-                fragments.push(continuation_payload);
-
-                if cont_flags.contains(ContinuationFlags::EndHeaders) {
-                    // we're done
-                    break;
-                }
-            }
-        }
-
-        todo!()
-    }
+enum ReadHeadersMode {
+    // we're accepting the stream or processing trailers, we want to
+    // process the headers we read.
+    Process,
+    // we're refusing the stream, we want to skip over the headers we read.
+    Skip,
 }

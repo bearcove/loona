@@ -1,7 +1,6 @@
 use std::{collections::HashMap, fmt};
 
 use fluke_buffet::{Piece, Roll};
-use smallvec::SmallVec;
 
 use crate::Response;
 
@@ -9,13 +8,6 @@ use super::{
     body::H2BodySender,
     parse::{FrameType, KnownErrorCode, Settings, StreamId},
 };
-
-#[derive(Default, Clone, Copy)]
-pub(crate) enum ContinuationState {
-    #[default]
-    Idle,
-    ContinuingHeaders(StreamId),
-}
 
 pub(crate) struct ConnState {
     pub(crate) streams: HashMap<StreamId, StreamStage>,
@@ -80,15 +72,7 @@ impl Default for ConnState {
 pub(crate) enum StreamStage {
     Open(H2BodySender),
     HalfClosedRemote,
-    Closed,
-}
-
-pub(crate) struct HeadersData {
-    /// If true, no DATA frames follow, cf. https://httpwg.org/specs/rfc9113.html#HttpFraming
-    pub(crate) end_stream: bool,
-
-    /// The field block fragments
-    pub(crate) fragments: SmallVec<[Roll; 2]>,
+    // note: the "Closed" state is indicated by not having an entry in the map
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -150,9 +134,6 @@ pub(crate) enum H2ConnectionError {
     #[error("received window update for unknown stream {stream_id}")]
     WindowUpdateForUnknownStream { stream_id: StreamId },
 
-    #[error("max concurrent streams exceeded (more than {max_concurrent_streams})")]
-    MaxConcurrentStreamsExceeded { max_concurrent_streams: u32 },
-
     #[error("other error: {0:?}")]
     Internal(#[from] eyre::Report),
 
@@ -186,8 +167,8 @@ impl H2ConnectionError {
         match self {
             // frame size errors
             H2ConnectionError::FrameTooLarge { .. } => KnownErrorCode::FrameSizeError,
-            H2ConnectionError::PaddedFrameEmpty => KnownErrorCode::FrameSizeError,
-            H2ConnectionError::PaddedFrameTooShort => KnownErrorCode::FrameSizeError,
+            H2ConnectionError::PaddedFrameEmpty { .. } => KnownErrorCode::FrameSizeError,
+            H2ConnectionError::PaddedFrameTooShort { .. } => KnownErrorCode::FrameSizeError,
             // compression errors
             H2ConnectionError::CompressionError(_) => KnownErrorCode::CompressionError,
             // internal errors
@@ -227,6 +208,9 @@ pub(crate) enum H2StreamError {
     #[error("received data for closed stream")]
     ReceivedDataForClosedStream,
 
+    #[error("refused stream (would exceed max concurrent streams)")]
+    RefusedStream,
+
     #[error("trailers must have EndStream flag set")]
     TrailersNotEndStream,
 }
@@ -237,8 +221,9 @@ impl H2StreamError {
         use KnownErrorCode as Code;
 
         match self {
-            DataLengthDoesNotMatchContentLength { .. } => Code::ProtocolError,
             ReceivedDataForClosedStream => Code::StreamClosed,
+            RefusedStream => Code::RefusedStream,
+            _ => Code::ProtocolError,
         }
     }
 
