@@ -9,6 +9,7 @@ pub(crate) enum PieceOrTrailers {
 }
 
 pub(crate) type H2BodySender = mpsc::Sender<H2BodyItem>;
+// FIXME: don't use eyre, do proper error handling
 pub(crate) type H2BodyItem = eyre::Result<PieceOrTrailers>;
 
 #[derive(Debug)]

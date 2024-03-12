@@ -94,9 +94,6 @@ pub(crate) enum H2ConnectionError {
     #[error("client tried to initiate an even-numbered stream")]
     ClientSidShouldBeOdd,
 
-    #[error("client is trying to initiate stream with ID lower than the last one it initiated")]
-    ClientSidShouldBeIncreasing,
-
     #[error("received {frame_type:?} frame with Padded flag but empty payload")]
     PaddedFrameEmpty { frame_type: FrameType },
 
@@ -138,11 +135,8 @@ pub(crate) enum H2ConnectionError {
     #[error("error reading/parsing H2 frame: {0:?}")]
     ReadError(eyre::Report),
 
-    #[error("received data frame for unknown stream {stream_id}")]
-    ReceivedDataForUnknownStream { stream_id: StreamId },
-
-    #[error("received RST_STREAM frame for unknown stream")]
-    ReceivedRstStreamForUnknownStream { stream_id: StreamId },
+    #[error("received rst frame for unknown stream")]
+    RstStreamForUnknownStream { stream_id: StreamId },
 }
 
 impl H2ConnectionError {
@@ -171,9 +165,6 @@ pub(crate) enum H2StreamError {
         content_length: u64,
     },
 
-    #[error("received data for closed stream")]
-    ReceivedDataForClosedStream,
-
     #[error("refused stream (would exceed max concurrent streams)")]
     RefusedStream,
 
@@ -182,6 +173,9 @@ pub(crate) enum H2StreamError {
 
     #[error("received RST_STREAM frame")]
     ReceivedRstStream,
+
+    #[error("stream closed")]
+    StreamClosed,
 }
 
 impl H2StreamError {
@@ -190,7 +184,7 @@ impl H2StreamError {
         use KnownErrorCode as Code;
 
         match self {
-            ReceivedDataForClosedStream => Code::StreamClosed,
+            StreamClosed => Code::StreamClosed,
             RefusedStream => Code::RefusedStream,
             _ => Code::ProtocolError,
         }

@@ -253,12 +253,12 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
             match frame.frame_type {
                 FrameType::Data(flags) => {
                     let ss = match self.state.streams.get_mut(&frame.stream_id) {
-                        Some(s) => s,
                         None => {
-                            return Err(H2ConnectionError::ReceivedDataForUnknownStream {
-                                stream_id: frame.stream_id,
-                            })
+                            self.send_rst(frame.stream_id, H2StreamError::StreamClosed)
+                                .await;
+                            continue;
                         }
+                        Some(s) => s,
                     };
 
                     match ss {
@@ -282,11 +282,8 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                                 stream_id = %frame.stream_id,
                                 "Received data for closed stream"
                             );
-                            self.send_rst(
-                                frame.stream_id,
-                                H2StreamError::ReceivedDataForClosedStream,
-                            )
-                            .await
+                            self.send_rst(frame.stream_id, H2StreamError::StreamClosed)
+                                .await
                         }
                     }
                 }
@@ -320,30 +317,34 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                             if frame.stream_id.is_server_initiated() {
                                 return Err(H2ConnectionError::ClientSidShouldBeOdd);
                             }
-                            if frame.stream_id < self.state.last_stream_id {
-                                return Err(H2ConnectionError::ClientSidShouldBeIncreasing);
-                            }
 
                             self.state.last_stream_id = frame.stream_id;
 
-                            // TODO: if we're shutting down, ignore streams higher
-                            // than the last one we accepted.
-
-                            let max_concurrent_streams =
-                                self.state.self_settings.max_concurrent_streams;
-                            let num_streams_if_accept = self.state.streams.len() + 1;
-                            if num_streams_if_accept > max_concurrent_streams as _ {
-                                // reset the stream, indicating we refused it
-                                self.send_rst(frame.stream_id, H2StreamError::RefusedStream)
+                            if frame.stream_id <= self.state.last_stream_id {
+                                // this stream may have existed, but it no longer does:
+                                self.send_rst(frame.stream_id, H2StreamError::StreamClosed)
                                     .await;
-
-                                // but we still need to skip over any continuation frames
                                 mode = ReadHeadersMode::Skip;
                             } else {
-                                mode = ReadHeadersMode::Process;
+                                // TODO: if we're shutting down, ignore streams higher
+                                // than the last one we accepted.
+
+                                let max_concurrent_streams =
+                                    self.state.self_settings.max_concurrent_streams;
+                                let num_streams_if_accept = self.state.streams.len() + 1;
+                                if num_streams_if_accept > max_concurrent_streams as _ {
+                                    // reset the stream, indicating we refused it
+                                    self.send_rst(frame.stream_id, H2StreamError::RefusedStream)
+                                        .await;
+
+                                    // but we still need to skip over any continuation frames
+                                    mode = ReadHeadersMode::Skip;
+                                } else {
+                                    mode = ReadHeadersMode::Process;
+                                }
                             }
                         }
-                        Some(_) => {
+                        Some(StreamState::Open(_)) => {
                             headers_or_trailers = HeadersOrTrailers::Trailers;
                             debug!("Receiving trailers for stream {}", frame.stream_id);
 
@@ -357,6 +358,14 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                                 self.send_rst(frame.stream_id, H2StreamError::TrailersNotEndStream)
                                     .await
                             }
+                        }
+                        Some(StreamState::HalfClosedRemote) => {
+                            // that's a connection error
+                            self.send_rst(frame.stream_id, H2StreamError::StreamClosed)
+                                .await;
+
+                            headers_or_trailers = HeadersOrTrailers::Trailers;
+                            mode = ReadHeadersMode::Skip;
                         }
                     }
 
@@ -386,6 +395,11 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                     }
                 }
                 FrameType::RstStream => match self.state.streams.remove(&frame.stream_id) {
+                    None => {
+                        return Err(H2ConnectionError::RstStreamForUnknownStream {
+                            stream_id: frame.stream_id,
+                        })
+                    }
                     Some(ss) => match ss {
                         StreamState::Open(body_tx) => {
                             _ = body_tx
@@ -396,11 +410,6 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                             // good
                         }
                     },
-                    None => {
-                        return Err(H2ConnectionError::ReceivedRstStreamForUnknownStream {
-                            stream_id: frame.stream_id,
-                        })
-                    }
                 },
                 FrameType::Settings(s) => {
                     if s.contains(SettingsFlags::Ack) {
@@ -492,7 +501,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
 
     async fn send_rst(&mut self, stream_id: StreamId, e: H2StreamError) {
         let error_code = e.as_known_error_code();
-        warn!("sending rst because: {e} (known error code: {error_code:?})");
+        debug!("sending rst because: {e} (known error code: {error_code:?})");
 
         if self
             .ev_tx
