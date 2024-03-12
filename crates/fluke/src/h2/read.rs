@@ -234,7 +234,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         &mut self,
         mut rx: mpsc::Receiver<(Frame, Roll)>,
     ) -> Result<(), H2ConnectionError> {
-        loop {
+        'process_frames: loop {
             let (frame, mut payload) = match rx.recv().await {
                 Some(t) => t,
                 None => {
@@ -457,7 +457,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
 
                     if flags.contains(PingFlags::Ack) {
                         // TODO: check that payload matches the one we sent?
-                        return Ok(());
+                        continue 'process_frames;
                     }
 
                     if self.ev_tx.send(H2ConnEvent::Ping(payload)).await.is_err() {
