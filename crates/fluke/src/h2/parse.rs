@@ -210,12 +210,88 @@ impl fmt::Display for StreamId {
 }
 
 /// See https://httpwg.org/specs/rfc9113.html#FrameHeader
-#[derive(Debug)]
 pub struct Frame {
     pub frame_type: FrameType,
     pub reserved: u8,
     pub stream_id: StreamId,
     pub len: u32,
+}
+
+impl fmt::Debug for Frame {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.stream_id.0 == 0 {
+            write!(f, "Conn:")?;
+        } else {
+            write!(f, "#{}:", self.stream_id.0)?;
+        }
+
+        let name = match &self.frame_type {
+            FrameType::Data(_) => "Data",
+            FrameType::Headers(_) => "Headers",
+            FrameType::Priority => "Priority",
+            FrameType::RstStream => "RstStream",
+            FrameType::Settings(_) => "Settings",
+            FrameType::PushPromise => "PushPromise",
+            FrameType::Ping(_) => "Ping",
+            FrameType::GoAway => "GoAway",
+            FrameType::WindowUpdate => "WindowUpdate",
+            FrameType::Continuation(_) => "Continuation",
+            FrameType::Unknown(EncodedFrameType { ty, flags }) => {
+                return write!(f, "UnknownFrame({:#x}, {:#x})", ty, flags)
+            }
+        };
+        let mut s = f.debug_struct(name);
+
+        if self.reserved != 0 {
+            s.field("reserved", &self.reserved);
+        }
+        if self.len > 0 {
+            s.field("len", &self.len);
+        }
+
+        // now write flags with DisplayDebug
+        struct DisplayDebug<'a, D: fmt::Display>(&'a D);
+        impl<'a, D: fmt::Display> fmt::Debug for DisplayDebug<'a, D> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                fmt::Display::fmt(self.0, f)
+            }
+        }
+
+        // for all the variants with flags, add a flags field, of value
+        // &DisplayDebug(flags)
+        match &self.frame_type {
+            FrameType::Data(flags) => {
+                if !flags.is_empty() {
+                    s.field("flags", &DisplayDebug(flags));
+                }
+            }
+            FrameType::Headers(flags) => {
+                if !flags.is_empty() {
+                    s.field("flags", &DisplayDebug(flags));
+                }
+            }
+            FrameType::Settings(flags) => {
+                if !flags.is_empty() {
+                    s.field("flags", &DisplayDebug(flags));
+                }
+            }
+            FrameType::Ping(flags) => {
+                if !flags.is_empty() {
+                    s.field("flags", &DisplayDebug(flags));
+                }
+            }
+            FrameType::Continuation(flags) => {
+                if !flags.is_empty() {
+                    s.field("flags", &DisplayDebug(flags));
+                }
+            }
+            _ => {
+                // muffin
+            }
+        }
+
+        s.finish()
+    }
 }
 
 impl Frame {
@@ -503,6 +579,7 @@ impl Settings {
     const MAX_FRAME_SIZE_ALLOWED_RANGE: RangeInclusive<u32> = (1 << 14)..=((1 << 24) - 1);
 
     pub fn parse(mut i: Roll) -> IResult<Roll, Self> {
+        tracing::trace!("parsing settings frame, roll length: {}", i.len());
         let mut settings = Self::default();
 
         while !i.is_empty() {

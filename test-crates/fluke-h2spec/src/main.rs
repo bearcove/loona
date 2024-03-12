@@ -20,7 +20,7 @@ fn main() {
             eprintln!("Couldn't parse RUST_LOG: {e}");
             EnvFilter::try_new("info").unwrap()
         }))
-        .without_time()
+        // .without_time()
         .init();
 
     let h2spec_binary = match which::which("h2spec") {

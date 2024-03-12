@@ -4,7 +4,7 @@ use tracing::warn;
 
 use super::{
     parse::StreamId,
-    types::{H2ConnEvent, H2Event, H2EventPayload},
+    types::{H2Event, H2EventPayload},
 };
 use crate::{h1::body::BodyWriteMode, Encoder, Response};
 
@@ -16,16 +16,16 @@ pub(crate) enum EncoderState {
 
 pub struct H2Encoder {
     pub(crate) stream_id: StreamId,
-    pub(crate) tx: mpsc::Sender<H2ConnEvent>,
+    pub(crate) tx: mpsc::Sender<H2Event>,
     pub(crate) state: EncoderState,
 }
 
 impl H2Encoder {
-    fn event(&self, payload: H2EventPayload) -> H2ConnEvent {
-        H2ConnEvent::ServerEvent(H2Event {
+    fn event(&self, payload: H2EventPayload) -> H2Event {
+        H2Event {
             payload,
             stream_id: self.stream_id,
-        })
+        }
     }
 
     async fn send(&self, payload: H2EventPayload) -> eyre::Result<()> {

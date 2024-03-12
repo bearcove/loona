@@ -18,11 +18,7 @@ where
     Parser: Fn(Roll) -> IResult<Roll, Output>,
 {
     loop {
-        trace!(
-            "reading+parsing (buf.len={}, buf.cap={})",
-            buf.len(),
-            buf.cap()
-        );
+        trace!("Running parser (len={}, cap={})", buf.len(), buf.cap());
         let filled = buf.filled();
 
         match parser(filled) {
@@ -34,7 +30,7 @@ where
                 if err.is_incomplete() {
                     {
                         trace!(
-                            "incomplete request, need more data. start of buffer: {:?}",
+                            "need more data. so far, we have:\n{:?}",
                             &buf[..std::cmp::min(buf.len(), 128)].hex_dump()
                         );
                     }
@@ -50,9 +46,9 @@ where
                         buf.reserve()?;
                     }
                     trace!(
-                        "calling read_into, buf.cap={}, buf.len={} read_limit={read_limit}",
+                        "Calling read_into (len={}, cap={}, read_limit={read_limit})",
+                        buf.len(),
                         buf.cap(),
-                        buf.len()
                     );
                     (res, buf) = buf.read_into(read_limit, stream).await;
 

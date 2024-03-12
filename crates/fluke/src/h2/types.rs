@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt};
 
-use fluke_buffet::{Piece, Roll};
+use fluke_buffet::Piece;
 
 use crate::Response;
 
@@ -68,9 +68,16 @@ impl Default for ConnState {
 //  PP:  PUSH_PROMISE frame (with implied CONTINUATION frames); state
 //     transitions are for the promised stream
 pub(crate) enum StreamState {
+    // we have received full HEADERS
     Open(H2BodySender),
+
+    // the peer has sent END_STREAM/RST_STREAM
     HalfClosedRemote,
-    // note: the "Closed" state is indicated by not having an entry in the map
+
+    // we have sent END_STREAM/RST_STREAM
+    HalfClosedLocal(H2BodySender),
+    //
+    // Note: the "Closed" state is indicated by not having an entry in the map
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -93,6 +100,12 @@ pub(crate) enum H2ConnectionError {
 
     #[error("client tried to initiate an even-numbered stream")]
     ClientSidShouldBeOdd,
+
+    #[error("client stream IDs should be numerically increasing")]
+    ClientSidShouldBeNumericallyIncreasing {
+        stream_id: StreamId,
+        last_stream_id: StreamId,
+    },
 
     #[error("received {frame_type:?} frame with Padded flag but empty payload")]
     PaddedFrameEmpty { frame_type: FrameType },
@@ -134,6 +147,9 @@ pub(crate) enum H2ConnectionError {
 
     #[error("error reading/parsing H2 frame: {0:?}")]
     ReadError(eyre::Report),
+
+    #[error("error writing H2 frame: {0:?}")]
+    WriteError(std::io::Error),
 
     #[error("received rst frame for unknown stream")]
     RstStreamForUnknownStream { stream_id: StreamId },
@@ -224,22 +240,6 @@ impl H2StreamError {
 pub(crate) enum HeadersOrTrailers {
     Headers,
     Trailers,
-}
-
-pub(crate) enum H2ConnEvent {
-    Ping(Roll),
-    ServerEvent(H2Event),
-    AcknowledgeSettings {
-        new_max_header_table_size: u32,
-    },
-    GoAway {
-        err: H2ConnectionError,
-        last_stream_id: StreamId,
-    },
-    RstStream {
-        stream_id: StreamId,
-        error_code: KnownErrorCode,
-    },
 }
 
 #[derive(Debug)]

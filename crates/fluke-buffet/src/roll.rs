@@ -255,7 +255,7 @@ impl RollMut {
             init: 0,
         };
         let (res, mut read_into) = r.read(read_into).await;
-        tracing::trace!(init = %read_into.init, "read_into done!");
+        tracing::trace!("read_into got {} bytes", read_into.init);
         read_into.buf.len += read_into.init;
         (res, read_into.buf)
     }
