@@ -256,152 +256,91 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
         &mut self,
         mut rx: mpsc::Receiver<(Frame, Roll)>,
     ) -> Result<(), H2ConnectionError> {
-        'process_frames: loop {
-            let (frame, mut payload) = match rx.recv().await {
-                Some(t) => t,
-                None => {
-                    debug!("h2 process task: peer hung up");
-                    break;
-                }
-            };
-
-            match frame.frame_type {
-                FrameType::Data(flags) => {
-                    let ss = self.state.streams.get_mut(&frame.stream_id).ok_or(
-                        H2ConnectionError::StreamClosed {
-                            stream_id: frame.stream_id,
-                        },
-                    )?;
-
-                    match ss {
-                        StreamState::Open(tx) => {
-                            if tx
-                                .send(Ok(PieceOrTrailers::Piece(payload.into())))
-                                .await
-                                .is_err()
-                            {
-                                warn!(
-                                    "TODO: The body is being ignored, we should reset the stream"
-                                );
-                            }
-
-                            if flags.contains(DataFlags::EndStream) {
-                                *ss = StreamState::HalfClosedRemote;
-                            }
+        loop {
+            tokio::select! {
+                _ = self.ev_rx.recv() => {
+                    todo!("handle conn events")
+                },
+                maybe_frame = rx.recv() => {
+                    if let Some((frame, payload)) = maybe_frame {
+                        let res = self.process_frame(frame, payload, &mut rx).await;
+                        if let Err(e) = res {
+                            return Err(e);
                         }
-                        StreamState::HalfClosedRemote => {
-                            debug!(
-                                stream_id = %frame.stream_id,
-                                "Received data for closed stream"
-                            );
-                            self.send_rst(frame.stream_id, H2StreamError::StreamClosed)
-                                .await
-                        }
+                    } else {
+                        debug!("h2 process task: peer hung up");
+                        break;
                     }
                 }
-                FrameType::Headers(flags) => {
-                    if flags.contains(HeadersFlags::Priority) {
-                        let pri_spec;
-                        (payload, pri_spec) = PrioritySpec::parse(payload)
-                            .finish()
-                            .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
-                        debug!(exclusive = %pri_spec.exclusive, stream_dependency = ?pri_spec.stream_dependency, weight = %pri_spec.weight, "received priority, exclusive");
+            }
+        }
 
-                        if pri_spec.stream_dependency == frame.stream_id {
-                            return Err(H2ConnectionError::HeadersInvalidPriority {
-                                stream_id: frame.stream_id,
-                            });
+        Ok(())
+    }
+
+    async fn write_frame(&mut self, frame: Frame, payload: Roll) -> Result<(), H2ConnectionError> {
+        let frame_roll = frame.into_roll(&mut self.out_scratch)?;
+
+        if payload.is_empty() {
+            self.transport_w
+                .write_all(frame_roll)
+                .await
+                .map_err(H2ConnectionError::WriteError)?;
+        } else {
+            self.transport_w
+                .writev_all(&[frame_roll, payload])
+                .await
+                .map_err(H2ConnectionError::WriteError)?;
+        }
+
+        Ok(())
+    }
+
+    async fn process_frame(
+        &mut self,
+        frame: Frame,
+        payload: Roll,
+        rx: &mut mpsc::Receiver<(Frame, Roll)>,
+    ) -> Result<(), H2ConnectionError> {
+        match frame.frame_type {
+            FrameType::Data(flags) => {
+                let ss = self.state.streams.get_mut(&frame.stream_id).ok_or(
+                    H2ConnectionError::StreamClosed {
+                        stream_id: frame.stream_id,
+                    },
+                )?;
+
+                match ss {
+                    StreamState::Open(tx) => {
+                        if tx
+                            .send(Ok(PieceOrTrailers::Piece(payload.into())))
+                            .await
+                            .is_err()
+                        {
+                            warn!("TODO: The body is being ignored, we should reset the stream");
+                        }
+
+                        if flags.contains(DataFlags::EndStream) {
+                            *ss = StreamState::HalfClosedRemote;
                         }
                     }
-
-                    let headers_or_trailers;
-                    let mode;
-
-                    match self.state.streams.get_mut(&frame.stream_id) {
-                        None => {
-                            headers_or_trailers = HeadersOrTrailers::Headers;
-                            debug!(
-                                stream_id = %frame.stream_id,
-                                last_stream_id = %self.state.last_stream_id,
-                                next_stream_count = %self.state.streams.len() + 1,
-                                "Receiving headers",
-                            );
-
-                            if frame.stream_id.is_server_initiated() {
-                                return Err(H2ConnectionError::ClientSidShouldBeOdd);
-                            }
-
-                            if frame.stream_id <= self.state.last_stream_id {
-                                debug!(
-                                    frame_stream_id = %frame.stream_id,
-                                    last_stream_id = %self.state.last_stream_id,
-                                    "Received headers for invalid stream ID"
-                                );
-
-                                // this stream may have existed, but it no longer does:
-                                return Err(H2ConnectionError::StreamClosed {
-                                    stream_id: frame.stream_id,
-                                });
-                            } else {
-                                // TODO: if we're shutting down, ignore streams higher
-                                // than the last one we accepted.
-
-                                let max_concurrent_streams =
-                                    self.state.self_settings.max_concurrent_streams;
-                                let num_streams_if_accept = self.state.streams.len() + 1;
-                                if num_streams_if_accept > max_concurrent_streams as _ {
-                                    // reset the stream, indicating we refused it
-                                    self.send_rst(frame.stream_id, H2StreamError::RefusedStream)
-                                        .await;
-
-                                    // but we still need to skip over any continuation frames
-                                    mode = ReadHeadersMode::Skip;
-                                } else {
-                                    self.state.last_stream_id = frame.stream_id;
-                                    mode = ReadHeadersMode::Process;
-                                }
-                            }
-                        }
-                        Some(StreamState::Open(_)) => {
-                            headers_or_trailers = HeadersOrTrailers::Trailers;
-                            debug!("Receiving trailers for stream {}", frame.stream_id);
-
-                            if flags.contains(HeadersFlags::EndStream) {
-                                // good, that's what we expect
-                                mode = ReadHeadersMode::Process;
-                            } else {
-                                // ignore trailers, we're not accepting the stream
-                                mode = ReadHeadersMode::Skip;
-
-                                self.send_rst(frame.stream_id, H2StreamError::TrailersNotEndStream)
-                                    .await
-                            }
-                        }
-                        Some(StreamState::HalfClosedRemote) => {
-                            return Err(H2ConnectionError::StreamClosed {
-                                stream_id: frame.stream_id,
-                            });
-                        }
+                    StreamState::HalfClosedRemote => {
+                        debug!(
+                            stream_id = %frame.stream_id,
+                            "Received data for closed stream"
+                        );
+                        self.send_rst(frame.stream_id, H2StreamError::StreamClosed)
+                            .await
                     }
-
-                    self.read_headers(
-                        headers_or_trailers,
-                        mode,
-                        flags,
-                        frame.stream_id,
-                        payload,
-                        &mut rx,
-                    )
-                    .await?;
                 }
-                FrameType::Priority => {
-                    let pri_spec = match PrioritySpec::parse(payload) {
-                        Ok((_rest, pri_spec)) => pri_spec,
-                        Err(e) => {
-                            todo!("handle connection error: invalid priority frame {e}")
-                        }
-                    };
-                    debug!(?pri_spec, "received priority frame");
+            }
+            FrameType::Headers(flags) => {
+                if flags.contains(HeadersFlags::Priority) {
+                    let pri_spec;
+                    (payload, pri_spec) = PrioritySpec::parse(payload)
+                        .finish()
+                        .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
+                    debug!(exclusive = %pri_spec.exclusive, stream_dependency = ?pri_spec.stream_dependency, weight = %pri_spec.weight, "received priority, exclusive");
 
                     if pri_spec.stream_dependency == frame.stream_id {
                         return Err(H2ConnectionError::HeadersInvalidPriority {
@@ -409,138 +348,232 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
                         });
                     }
                 }
-                FrameType::RstStream => match self.state.streams.remove(&frame.stream_id) {
+
+                let headers_or_trailers;
+                let mode;
+
+                match self.state.streams.get_mut(&frame.stream_id) {
                     None => {
-                        return Err(H2ConnectionError::RstStreamForUnknownStream {
-                            stream_id: frame.stream_id,
-                        })
-                    }
-                    Some(ss) => match ss {
-                        StreamState::Open(body_tx) => {
-                            _ = body_tx
-                                .send(Err(H2StreamError::ReceivedRstStream.into()))
-                                .await;
-                        }
-                        StreamState::HalfClosedRemote => {
-                            // good
-                        }
-                    },
-                },
-                FrameType::Settings(s) => {
-                    if frame.stream_id != StreamId::CONNECTION {
-                        return Err(H2ConnectionError::SettingsWithNonZeroStreamId {
-                            stream_id: frame.stream_id,
-                        });
-                    }
+                        headers_or_trailers = HeadersOrTrailers::Headers;
+                        debug!(
+                            stream_id = %frame.stream_id,
+                            last_stream_id = %self.state.last_stream_id,
+                            next_stream_count = %self.state.streams.len() + 1,
+                            "Receiving headers",
+                        );
 
-                    if s.contains(SettingsFlags::Ack) {
-                        debug!("Peer has acknowledged our settings, cool");
-                        if !payload.is_empty() {
-                            return Err(H2ConnectionError::SettingsAckWithPayload {
-                                len: payload.len() as _,
+                        if frame.stream_id.is_server_initiated() {
+                            return Err(H2ConnectionError::ClientSidShouldBeOdd);
+                        }
+
+                        if frame.stream_id <= self.state.last_stream_id {
+                            debug!(
+                                frame_stream_id = %frame.stream_id,
+                                last_stream_id = %self.state.last_stream_id,
+                                "Received headers for invalid stream ID"
+                            );
+
+                            // this stream may have existed, but it no longer does:
+                            return Err(H2ConnectionError::StreamClosed {
+                                stream_id: frame.stream_id,
                             });
-                        }
-                    } else {
-                        let (_, settings) = Settings::parse(payload)
-                            .finish()
-                            .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
-                        let new_max_header_table_size = settings.header_table_size;
-                        debug!(?settings, "Received settings");
-                        self.state.peer_settings = settings;
+                        } else {
+                            // TODO: if we're shutting down, ignore streams higher
+                            // than the last one we accepted.
 
-                        if self
-                            .ev_tx
-                            .send(H2ConnEvent::AcknowledgeSettings {
-                                new_max_header_table_size,
-                            })
-                            .await
-                            .is_err()
-                        {
-                            return Err(eyre::eyre!(
-                                "could not send H2 acknowledge settings event"
-                            )
-                            .into());
-                        }
-                    }
-                }
-                FrameType::PushPromise => {
-                    return Err(H2ConnectionError::ClientSentPushPromise);
-                }
-                FrameType::Ping(flags) => {
-                    if frame.stream_id != StreamId::CONNECTION {
-                        return Err(H2ConnectionError::PingFrameWithNonZeroStreamId {
-                            stream_id: frame.stream_id,
-                        });
-                    }
+                            let max_concurrent_streams =
+                                self.state.self_settings.max_concurrent_streams;
+                            let num_streams_if_accept = self.state.streams.len() + 1;
+                            if num_streams_if_accept > max_concurrent_streams as _ {
+                                // reset the stream, indicating we refused it
+                                self.send_rst(frame.stream_id, H2StreamError::RefusedStream)
+                                    .await;
 
-                    if frame.len != 8 {
-                        return Err(H2ConnectionError::PingFrameInvalidLength { len: frame.len });
-                    }
-
-                    if flags.contains(PingFlags::Ack) {
-                        // TODO: check that payload matches the one we sent?
-                        continue 'process_frames;
-                    }
-
-                    if self.ev_tx.send(H2ConnEvent::Ping(payload)).await.is_err() {
-                        return Err(eyre::eyre!("could not send H2 ping event").into());
-                    }
-                }
-                FrameType::GoAway => {
-                    if frame.stream_id != StreamId::CONNECTION {
-                        return Err(H2ConnectionError::GoAwayWithNonZeroStreamId {
-                            stream_id: frame.stream_id,
-                        });
-                    }
-
-                    self.goaway_recv = true;
-
-                    // TODO: this should probably have other effects than setting
-                    // this flag.
-                }
-                FrameType::WindowUpdate => {
-                    if payload.len() != 4 {
-                        return Err(H2ConnectionError::WindowUpdateInvalidLength {
-                            len: payload.len() as _,
-                        });
-                    }
-
-                    let increment;
-                    (_, (_, increment)) = parse_reserved_and_u31(payload)
-                        .finish()
-                        .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
-
-                    if increment == 0 {
-                        return Err(H2ConnectionError::WindowUpdateZeroIncrement);
-                    }
-
-                    if frame.stream_id == StreamId::CONNECTION {
-                        debug!("TODO: ignoring connection-wide window update");
-                    } else {
-                        match self.state.streams.get_mut(&frame.stream_id) {
-                            None => {
-                                return Err(H2ConnectionError::WindowUpdateForUnknownStream {
-                                    stream_id: frame.stream_id,
-                                });
-                            }
-                            Some(_ss) => {
-                                debug!("TODO: handle window update for stream {}", frame.stream_id)
+                                // but we still need to skip over any continuation frames
+                                mode = ReadHeadersMode::Skip;
+                            } else {
+                                self.state.last_stream_id = frame.stream_id;
+                                mode = ReadHeadersMode::Process;
                             }
                         }
                     }
+                    Some(StreamState::Open(_)) => {
+                        headers_or_trailers = HeadersOrTrailers::Trailers;
+                        debug!("Receiving trailers for stream {}", frame.stream_id);
+
+                        if flags.contains(HeadersFlags::EndStream) {
+                            // good, that's what we expect
+                            mode = ReadHeadersMode::Process;
+                        } else {
+                            // ignore trailers, we're not accepting the stream
+                            mode = ReadHeadersMode::Skip;
+
+                            self.send_rst(frame.stream_id, H2StreamError::TrailersNotEndStream)
+                                .await
+                        }
+                    }
+                    Some(StreamState::HalfClosedRemote) => {
+                        return Err(H2ConnectionError::StreamClosed {
+                            stream_id: frame.stream_id,
+                        });
+                    }
                 }
-                FrameType::Continuation(_flags) => {
-                    return Err(H2ConnectionError::UnexpectedContinuationFrame {
+
+                self.read_headers(
+                    headers_or_trailers,
+                    mode,
+                    flags,
+                    frame.stream_id,
+                    payload,
+                    &mut rx,
+                )
+                .await?;
+            }
+            FrameType::Priority => {
+                let pri_spec = match PrioritySpec::parse(payload) {
+                    Ok((_rest, pri_spec)) => pri_spec,
+                    Err(e) => {
+                        todo!("handle connection error: invalid priority frame {e}")
+                    }
+                };
+                debug!(?pri_spec, "received priority frame");
+
+                if pri_spec.stream_dependency == frame.stream_id {
+                    return Err(H2ConnectionError::HeadersInvalidPriority {
                         stream_id: frame.stream_id,
                     });
                 }
-                FrameType::Unknown(ft) => {
-                    trace!(
-                        "ignoring unknown frame with type 0x{:x}, flags 0x{:x}",
-                        ft.ty,
-                        ft.flags
-                    );
+            }
+            FrameType::RstStream => match self.state.streams.remove(&frame.stream_id) {
+                None => {
+                    return Err(H2ConnectionError::RstStreamForUnknownStream {
+                        stream_id: frame.stream_id,
+                    })
                 }
+                Some(ss) => match ss {
+                    StreamState::Open(body_tx) => {
+                        _ = body_tx
+                            .send(Err(H2StreamError::ReceivedRstStream.into()))
+                            .await;
+                    }
+                    StreamState::HalfClosedRemote => {
+                        // good
+                    }
+                },
+            },
+            FrameType::Settings(s) => {
+                if frame.stream_id != StreamId::CONNECTION {
+                    return Err(H2ConnectionError::SettingsWithNonZeroStreamId {
+                        stream_id: frame.stream_id,
+                    });
+                }
+
+                if s.contains(SettingsFlags::Ack) {
+                    debug!("Peer has acknowledged our settings, cool");
+                    if !payload.is_empty() {
+                        return Err(H2ConnectionError::SettingsAckWithPayload {
+                            len: payload.len() as _,
+                        });
+                    }
+                } else {
+                    let (_, settings) = Settings::parse(payload)
+                        .finish()
+                        .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
+                    let new_max_header_table_size = settings.header_table_size;
+                    debug!(?settings, "Received settings");
+                    self.state.peer_settings = settings;
+
+                    if self
+                        .ev_tx
+                        .send(H2ConnEvent::AcknowledgeSettings {
+                            new_max_header_table_size,
+                        })
+                        .await
+                        .is_err()
+                    {
+                        return Err(
+                            eyre::eyre!("could not send H2 acknowledge settings event").into()
+                        );
+                    }
+                }
+            }
+            FrameType::PushPromise => {
+                return Err(H2ConnectionError::ClientSentPushPromise);
+            }
+            FrameType::Ping(flags) => {
+                if frame.stream_id != StreamId::CONNECTION {
+                    return Err(H2ConnectionError::PingFrameWithNonZeroStreamId {
+                        stream_id: frame.stream_id,
+                    });
+                }
+
+                if frame.len != 8 {
+                    return Err(H2ConnectionError::PingFrameInvalidLength { len: frame.len });
+                }
+
+                if flags.contains(PingFlags::Ack) {
+                    // TODO: check that payload matches the one we sent?
+                    continue 'process_frames;
+                }
+
+                if self.ev_tx.send(H2ConnEvent::Ping(payload)).await.is_err() {
+                    return Err(eyre::eyre!("could not send H2 ping event").into());
+                }
+            }
+            FrameType::GoAway => {
+                if frame.stream_id != StreamId::CONNECTION {
+                    return Err(H2ConnectionError::GoAwayWithNonZeroStreamId {
+                        stream_id: frame.stream_id,
+                    });
+                }
+
+                self.goaway_recv = true;
+
+                // TODO: this should probably have other effects than setting
+                // this flag.
+            }
+            FrameType::WindowUpdate => {
+                if payload.len() != 4 {
+                    return Err(H2ConnectionError::WindowUpdateInvalidLength {
+                        len: payload.len() as _,
+                    });
+                }
+
+                let increment;
+                (_, (_, increment)) = parse_reserved_and_u31(payload)
+                    .finish()
+                    .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
+
+                if increment == 0 {
+                    return Err(H2ConnectionError::WindowUpdateZeroIncrement);
+                }
+
+                if frame.stream_id == StreamId::CONNECTION {
+                    debug!("TODO: ignoring connection-wide window update");
+                } else {
+                    match self.state.streams.get_mut(&frame.stream_id) {
+                        None => {
+                            return Err(H2ConnectionError::WindowUpdateForUnknownStream {
+                                stream_id: frame.stream_id,
+                            });
+                        }
+                        Some(_ss) => {
+                            debug!("TODO: handle window update for stream {}", frame.stream_id)
+                        }
+                    }
+                }
+            }
+            FrameType::Continuation(_flags) => {
+                return Err(H2ConnectionError::UnexpectedContinuationFrame {
+                    stream_id: frame.stream_id,
+                });
+            }
+            FrameType::Unknown(ft) => {
+                trace!(
+                    "ignoring unknown frame with type 0x{:x}, flags 0x{:x}",
+                    ft.ty,
+                    ft.flags
+                );
             }
         }
 

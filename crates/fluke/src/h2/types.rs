@@ -135,6 +135,9 @@ pub(crate) enum H2ConnectionError {
     #[error("error reading/parsing H2 frame: {0:?}")]
     ReadError(eyre::Report),
 
+    #[error("error writing H2 frame: {0:?}")]
+    WriteError(std::io::Error),
+
     #[error("received rst frame for unknown stream")]
     RstStreamForUnknownStream { stream_id: StreamId },
 
