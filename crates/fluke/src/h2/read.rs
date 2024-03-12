@@ -67,7 +67,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
     }
 
     pub(crate) async fn read_loop(
-        &mut self,
+        mut self,
         client_buf: RollMut,
         transport_r: impl ReadOwned,
     ) -> eyre::Result<()> {
@@ -84,7 +84,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
 
         tokio::select! {
             res = &mut io_task => {
-                debug!("h2 io task finished");
+                debug!(?res, "h2 io task finished");
 
                 if let Err(H2ConnectionError::ReadError(e)) = res {
                     let mut should_ignore_err = false;
@@ -128,6 +128,8 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
         max_frame_size: Rc<AtomicU32>,
     ) -> Result<(), H2ConnectionError> {
         'read_frames: loop {
+            debug!("h2 io loop");
+
             const MAX_FRAME_HEADER_SIZE: usize = 128;
             let frame;
             let frame_res = read_and_parse(
@@ -144,90 +146,81 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
             };
             (client_buf, frame) = match maybe_frame {
                 Some((client_buf, frame)) => (client_buf, frame),
-                None => break 'read_frames,
+                None => {
+                    debug!("h2 client went away before sending a frame");
+                    break 'read_frames;
+                }
             };
 
             debug!(?frame, "Received");
 
-            let payload = match &frame.frame_type {
-                FrameType::Headers(..) | FrameType::Data(..) => {
-                    let max_frame_size = max_frame_size.load(Ordering::Relaxed);
-                    debug!(frame_len = frame.len, %max_frame_size);
-                    if frame.len > max_frame_size {
-                        return Err(H2ConnectionError::FrameTooLarge {
-                            frame_type: frame.frame_type,
-                            frame_size: frame.len,
-                            max_frame_size,
-                        });
-                    }
+            let max_frame_size = max_frame_size.load(Ordering::Relaxed);
+            debug!(frame_len = frame.len, %max_frame_size);
+            if frame.len > max_frame_size {
+                return Err(H2ConnectionError::FrameTooLarge {
+                    frame_type: frame.frame_type,
+                    frame_size: frame.len,
+                    max_frame_size,
+                });
+            }
 
-                    let mut payload;
-                    (client_buf, payload) = match read_and_parse(
-                        nom::bytes::streaming::take(frame.len as usize),
-                        &mut transport_r,
-                        client_buf,
-                        frame.len as usize,
-                    )
-                    .await?
-                    {
-                        Some((client_buf, payload)) => (client_buf, payload),
-                        None => {
-                            return Err(H2ConnectionError::IncompleteFrame {
-                                frame_type: frame.frame_type,
-                                frame_size: frame.len,
-                            })
-                        }
-                    };
-
-                    let has_padding = match frame.frame_type {
-                        FrameType::Data(flags) => flags.contains(DataFlags::Padded),
-                        FrameType::Headers(flags) => flags.contains(HeadersFlags::Padded),
-                        _ => unreachable!(),
-                    };
-
-                    if has_padding {
-                        if payload.is_empty() {
-                            return Err(H2ConnectionError::PaddedFrameEmpty {
-                                frame_type: frame.frame_type,
-                            });
-                        }
-
-                        let padding_length_roll;
-                        (padding_length_roll, payload) = payload.split_at(1);
-                        let padding_length = padding_length_roll[0] as usize;
-                        if payload.len() < padding_length {
-                            return Err(H2ConnectionError::PaddedFrameTooShort {
-                                frame_type: frame.frame_type,
-                                padding_length,
-                                frame_size: frame.len,
-                            });
-                        }
-
-                        // padding is on the end of the payload
-                        let at = payload.len() - padding_length;
-                        (payload, _) = payload.split_at(at);
-                    }
-
-                    payload
-                }
-                _ => {
-                    if frame.len > 0 {
-                        return Err(H2ConnectionError::FrameShouldNotHavePayload {
-                            frame_type: frame.frame_type,
-                            frame_size: frame.len,
-                        });
-                    }
-
-                    Roll::empty()
+            let mut payload;
+            (client_buf, payload) = match read_and_parse(
+                nom::bytes::streaming::take(frame.len as usize),
+                &mut transport_r,
+                client_buf,
+                frame.len as usize,
+            )
+            .await?
+            {
+                Some((client_buf, payload)) => (client_buf, payload),
+                None => {
+                    return Err(H2ConnectionError::IncompleteFrame {
+                        frame_type: frame.frame_type,
+                        frame_size: frame.len,
+                    })
                 }
             };
 
+            let has_padding = match frame.frame_type {
+                FrameType::Data(flags) => flags.contains(DataFlags::Padded),
+                FrameType::Headers(flags) => flags.contains(HeadersFlags::Padded),
+                _ => false,
+            };
+
+            if has_padding {
+                if payload.is_empty() {
+                    return Err(H2ConnectionError::PaddedFrameEmpty {
+                        frame_type: frame.frame_type,
+                    });
+                }
+
+                let padding_length_roll;
+                (padding_length_roll, payload) = payload.split_at(1);
+                let padding_length = padding_length_roll[0] as usize;
+                if payload.len() < padding_length {
+                    return Err(H2ConnectionError::PaddedFrameTooShort {
+                        frame_type: frame.frame_type,
+                        padding_length,
+                        frame_size: frame.len,
+                    });
+                }
+
+                // padding is on the end of the payload
+                let at = payload.len() - padding_length;
+                (payload, _) = payload.split_at(at);
+            }
+
+            debug!("h2 io loop: sending frame {frame:?}");
             if tx.send((frame, payload)).await.is_err() {
-                debug!("h2 read loop: receiver dropped, closing connection");
+                debug!("h2 io loop: receiver dropped, closing connection");
                 return Ok(());
             }
+
+            debug!("h2 io loop: looping?")
         }
 
+        debug!("h2 io loop: done");
         Ok(())
     }
 

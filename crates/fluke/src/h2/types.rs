@@ -140,12 +140,6 @@ pub(crate) enum H2ConnectionError {
     #[error("error reading/parsing H2 frame: {0:?}")]
     ReadError(eyre::Report),
 
-    #[error("{frame_type:?} should have no payload, but peer sent {frame_size} bytes")]
-    FrameShouldNotHavePayload {
-        frame_type: FrameType,
-        frame_size: u32,
-    },
-
     #[error("received data frame for unknown stream {stream_id}")]
     ReceivedDataForUnknownStream { stream_id: StreamId },
 }
