@@ -234,7 +234,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         'read_frames: loop {
             const MAX_FRAME_HEADER_SIZE: usize = 128;
             let frame;
-            debug!("Reading frame... Buffer length: {}", client_buf.len());
+            trace!("Reading frame... Buffer length: {}", client_buf.len());
             let frame_res = read_and_parse(
                 Frame::parse,
                 &mut transport_r,
@@ -254,7 +254,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     break 'read_frames;
                 }
             };
-            debug!(
+            trace!(
                 "Reading frame... done! New buffer length: {}",
                 client_buf.len()
             );
@@ -269,7 +269,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 });
             }
 
-            debug!(
+            trace!(
                 "Reading payload of size {}... Buffer length: {}",
                 frame.len,
                 client_buf.len()
@@ -291,7 +291,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     })
                 }
             };
-            debug!(
+            trace!(
                 "Reading payload... done! New buffer length: {}",
                 client_buf.len()
             );
@@ -442,7 +442,13 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                             }
                             _ => {
                                 // transition to closed
-                                self.state.streams.remove(&frame.stream_id);
+                                if self.state.streams.remove(&frame.stream_id).is_some() {
+                                    debug!(
+                                        "Closed stream {} (wrote data w/EndStream), now have {} streams",
+                                        frame.stream_id,
+                                        self.state.streams.len()
+                                    );
+                                }
                             }
                         }
                     }
@@ -513,8 +519,12 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                             // otherwise, it transitions to HalfClosedRemote
                             if matches!(ss, StreamState::Open(_)) {
                                 *ss = StreamState::HalfClosedRemote;
-                            } else {
-                                self.state.streams.remove(&frame.stream_id);
+                            } else if self.state.streams.remove(&frame.stream_id).is_some() {
+                                debug!(
+                                    "Closed stream (read data w/EndStream) {}, now have {} streams",
+                                    frame.stream_id,
+                                    self.state.streams.len()
+                                );
                             }
                         }
                     }
@@ -560,35 +570,42 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                             return Err(H2ConnectionError::ClientSidShouldBeOdd);
                         }
 
-                        if frame.stream_id < self.state.last_stream_id {
-                            // we're going back? we can't.
-                            return Err(
-                                H2ConnectionError::ClientSidShouldBeNumericallyIncreasing {
+                        match frame.stream_id.cmp(&self.state.last_stream_id) {
+                            std::cmp::Ordering::Less => {
+                                // we're going back? we can't.
+                                return Err(
+                                    H2ConnectionError::ClientSidShouldBeNumericallyIncreasing {
+                                        stream_id: frame.stream_id,
+                                        last_stream_id: self.state.last_stream_id,
+                                    },
+                                );
+                            }
+                            std::cmp::Ordering::Equal => {
+                                // we already received headers for this stream,
+                                // if we're in this branch (no entry in streams)
+                                // that means it was closed in-between.
+                                return Err(H2ConnectionError::StreamClosed {
                                     stream_id: frame.stream_id,
-                                    last_stream_id: self.state.last_stream_id,
-                                },
-                            );
-                        } else if frame.stream_id == self.state.last_stream_id {
-                            return Err(H2ConnectionError::StreamClosed {
-                                stream_id: frame.stream_id,
-                            });
-                        } else {
-                            // TODO: if we're shutting down, ignore streams higher
-                            // than the last one we accepted.
+                                });
+                            }
+                            std::cmp::Ordering::Greater => {
+                                // TODO: if we're shutting down, ignore streams higher
+                                // than the last one we accepted.
 
-                            let max_concurrent_streams =
-                                self.state.self_settings.max_concurrent_streams;
-                            let num_streams_if_accept = self.state.streams.len() + 1;
-                            if num_streams_if_accept > max_concurrent_streams as _ {
-                                // reset the stream, indicating we refused it
-                                self.rst(frame.stream_id, H2StreamError::RefusedStream)
-                                    .await?;
+                                let max_concurrent_streams =
+                                    self.state.self_settings.max_concurrent_streams;
+                                let num_streams_if_accept = self.state.streams.len() + 1;
+                                if num_streams_if_accept > max_concurrent_streams as _ {
+                                    // reset the stream, indicating we refused it
+                                    self.rst(frame.stream_id, H2StreamError::RefusedStream)
+                                        .await?;
 
-                                // but we still need to skip over any continuation frames
-                                mode = ReadHeadersMode::Skip;
-                            } else {
-                                self.state.last_stream_id = frame.stream_id;
-                                mode = ReadHeadersMode::Process;
+                                    // but we still need to skip over any continuation frames
+                                    mode = ReadHeadersMode::Skip;
+                                } else {
+                                    self.state.last_stream_id = frame.stream_id;
+                                    mode = ReadHeadersMode::Process;
+                                }
                             }
                         }
                     }
@@ -646,16 +663,23 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         stream_id: frame.stream_id,
                     })
                 }
-                Some(ss) => match ss {
-                    StreamState::Open(body_tx) | StreamState::HalfClosedLocal(body_tx) => {
-                        _ = body_tx
-                            .send(Err(H2StreamError::ReceivedRstStream.into()))
-                            .await;
+                Some(ss) => {
+                    debug!(
+                        "Closed stream (read RstStream) {}, now have {} streams",
+                        frame.stream_id,
+                        self.state.streams.len()
+                    );
+                    match ss {
+                        StreamState::Open(body_tx) | StreamState::HalfClosedLocal(body_tx) => {
+                            _ = body_tx
+                                .send(Err(H2StreamError::ReceivedRstStream.into()))
+                                .await;
+                        }
+                        StreamState::HalfClosedRemote => {
+                            // good
+                        }
                     }
-                    StreamState::HalfClosedRemote => {
-                        // good
-                    }
-                },
+                }
             },
             FrameType::Settings(s) => {
                 if frame.stream_id != StreamId::CONNECTION {
@@ -1020,6 +1044,19 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     rx: piece_rx,
                 };
 
+                self.state.streams.insert(
+                    stream_id,
+                    if end_stream {
+                        StreamState::HalfClosedRemote
+                    } else {
+                        StreamState::Open(piece_tx)
+                    },
+                );
+                debug!(
+                    "Just accepted stream, now have {} streams",
+                    self.state.streams.len()
+                );
+
                 fluke_maybe_uring::spawn({
                     let driver = self.driver.clone();
                     async move {
@@ -1037,15 +1074,6 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         }
                     }
                 });
-
-                self.state.streams.insert(
-                    stream_id,
-                    if end_stream {
-                        StreamState::HalfClosedRemote
-                    } else {
-                        StreamState::Open(piece_tx)
-                    },
-                );
             }
             HeadersOrTrailers::Trailers => {
                 match self.state.streams.get_mut(&stream_id) {

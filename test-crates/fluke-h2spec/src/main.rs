@@ -46,13 +46,29 @@ impl ServerDriver for SDriver {
         req_body: &mut impl Body,
         respond: Responder<E, ExpectResponseHeaders>,
     ) -> color_eyre::Result<Responder<E, ResponseDone>> {
-        tracing::info!(
+        tracing::debug!(
             "Handling {:?} {}, content_len = {:?}",
             req.method,
             req.uri,
             req_body.content_len()
         );
 
+        // read the entire body first
+        loop {
+            match req_body.next_chunk().await? {
+                BodyChunk::Chunk(chunk) => {
+                    tracing::debug!(len = %chunk.len(), "Got chunk")
+                }
+                BodyChunk::Done { trailers } => {
+                    if let Some(trailers) = trailers {
+                        tracing::debug!(num_trailers = trailers.len(), "Got trailers");
+                    }
+                    break;
+                }
+            }
+        }
+
+        tracing::debug!("Done reading body, sending response!");
         let res = Response {
             version: Version::HTTP_2,
             status: StatusCode::OK,
