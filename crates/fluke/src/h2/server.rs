@@ -49,49 +49,15 @@ impl Default for ServerConf {
 }
 
 pub async fn serve(
-    (mut transport_r, mut transport_w): (impl ReadOwned, impl WriteOwned),
+    (transport_r, transport_w): (impl ReadOwned, impl WriteOwned),
     conf: Rc<ServerConf>,
-    mut client_buf: RollMut,
+    client_buf: RollMut,
     driver: Rc<impl ServerDriver + 'static>,
 ) -> eyre::Result<()> {
     let mut state = ConnState::default();
     state.self_settings.max_concurrent_streams = conf.max_streams;
 
-    (client_buf, _) = match read_and_parse(
-        parse::preface,
-        &mut transport_r,
-        client_buf,
-        parse::PREFACE.len(),
-    )
-    .await?
-    {
-        Some((client_buf, frame)) => (client_buf, frame),
-        None => {
-            debug!("h2 client closed connection before sending preface");
-            return Ok(());
-        }
-    };
-    debug!("read preface");
-
-    let mut out_scratch = RollMut::alloc()?;
-
-    // we have to send an initial settings frame
-    {
-        let payload_roll = state.self_settings.into_roll(&mut out_scratch)?;
-        let frame_roll = Frame::new(
-            FrameType::Settings(Default::default()),
-            StreamId::CONNECTION,
-        )
-        .with_len(payload_roll.len().try_into().unwrap())
-        .into_roll(&mut out_scratch)?;
-
-        transport_w
-            .writev_all(vec![frame_roll, payload_roll])
-            .await?;
-        debug!("sent settings frame");
-    }
-
-    ServerContext::new(driver.clone(), state, transport_w, out_scratch)
+    ServerContext::new(driver.clone(), state, transport_w)?
         .work(client_buf, transport_r)
         .await?;
 
@@ -119,12 +85,7 @@ pub(crate) struct ServerContext<D: ServerDriver + 'static, W: WriteOwned> {
 }
 
 impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
-    pub(crate) fn new(
-        driver: Rc<D>,
-        state: ConnState,
-        transport_w: W,
-        out_scratch: RollMut,
-    ) -> Self {
+    pub(crate) fn new(driver: Rc<D>, state: ConnState, transport_w: W) -> eyre::Result<Self> {
         let mut hpack_dec = fluke_hpack::Decoder::new();
         hpack_dec
             .set_max_allowed_table_size(Settings::default().header_table_size.try_into().unwrap());
@@ -133,25 +94,53 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
         let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<H2Event>(32);
 
-        Self {
+        Ok(Self {
             driver,
             ev_tx,
             ev_rx,
             state,
             hpack_dec,
             hpack_enc,
-            out_scratch,
+            out_scratch: RollMut::alloc()?,
             goaway_recv: false,
             transport_w,
-        }
+        })
     }
 
     /// Reads and process h2 frames from the client.
     pub(crate) async fn work(
         mut self,
-        client_buf: RollMut,
-        transport_r: impl ReadOwned,
+        mut client_buf: RollMut,
+        mut transport_r: impl ReadOwned,
     ) -> eyre::Result<()> {
+        // first read the preface
+        {
+            (client_buf, _) = match read_and_parse(
+                parse::preface,
+                &mut transport_r,
+                client_buf,
+                parse::PREFACE.len(),
+            )
+            .await?
+            {
+                Some((client_buf, frame)) => (client_buf, frame),
+                None => {
+                    debug!("h2 client closed connection before sending preface");
+                    return Ok(());
+                }
+            };
+        }
+
+        // then send our initial settings
+        {
+            let payload = self.state.self_settings.into_roll(&mut self.out_scratch)?;
+            let frame = Frame::new(
+                FrameType::Settings(Default::default()),
+                StreamId::CONNECTION,
+            );
+            self.write_frame(frame, payload).await?;
+        }
+
         let mut goaway_err: Option<H2ConnectionError> = None;
 
         {
@@ -439,6 +428,9 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     }
                 }
             }
+            FrameType::Settings(_) => {
+                // TODO: keep track of whether our new settings have been acknowledged
+            }
             _ => {
                 // muffin.
             }
@@ -654,7 +646,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     self.hpack_enc
                         .set_max_table_size(settings.header_table_size as usize);
 
-                    debug!(?settings, "Received settings");
+                    debug!("Peer sent us {settings:#?}");
                     self.state.peer_settings = settings;
 
                     let frame = Frame::new(

@@ -219,52 +219,77 @@ pub struct Frame {
 
 impl fmt::Debug for Frame {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut s = match &self.frame_type {
-            FrameType::Data(flags) => {
-                let mut s = f.debug_struct("Frame:Data");
-                s.field("flags", flags);
-                s
-            }
-            FrameType::Headers(flags) => {
-                let mut s = f.debug_struct("Frame:Headers");
-                s.field("flags", flags);
-                s
-            }
-            FrameType::Priority => f.debug_struct("Frame:Priority"),
-            FrameType::RstStream => f.debug_struct("Frame:RstStream"),
-            FrameType::Settings(flags) => {
-                let mut s = f.debug_struct("Frame:Settings");
-                s.field("flags", flags);
-                s
-            }
-            FrameType::PushPromise => f.debug_struct("Frame:PushPromise"),
-            FrameType::Ping(flags) => {
-                let mut s = f.debug_struct("Frame:Ping");
-                s.field("flags", flags);
-                s
-            }
-            FrameType::GoAway => f.debug_struct("Frame:GoAway"),
-            FrameType::WindowUpdate => f.debug_struct("Frame:WindowUpdate"),
-            FrameType::Continuation(flags) => {
-                let mut s = f.debug_struct("Frame:Continuation");
-                s.field("flags", flags);
-                s
-            }
-            FrameType::Unknown(eft) => {
-                let mut s = f.debug_struct("Frame:Unknown");
-                s.field("encoded_frame_type", eft);
-                s
+        if self.stream_id.0 == 0 {
+            write!(f, "Conn:")?;
+        } else {
+            write!(f, "#{}:", self.stream_id.0)?;
+        }
+
+        let name = match &self.frame_type {
+            FrameType::Data(_) => "Data",
+            FrameType::Headers(_) => "Headers",
+            FrameType::Priority => "Priority",
+            FrameType::RstStream => "RstStream",
+            FrameType::Settings(_) => "Settings",
+            FrameType::PushPromise => "PushPromise",
+            FrameType::Ping(_) => "Ping",
+            FrameType::GoAway => "GoAway",
+            FrameType::WindowUpdate => "WindowUpdate",
+            FrameType::Continuation(_) => "Continuation",
+            FrameType::Unknown(EncodedFrameType { ty, flags }) => {
+                return write!(f, "UnknownFrame({:#x}, {:#x})", ty, flags)
             }
         };
+        let mut s = f.debug_struct(name);
+
         if self.reserved != 0 {
             s.field("reserved", &self.reserved);
-        }
-        if self.stream_id != StreamId::CONNECTION {
-            s.field("stream_id", &self.stream_id);
         }
         if self.len > 0 {
             s.field("len", &self.len);
         }
+
+        // now write flags with DisplayDebug
+        struct DisplayDebug<'a, D: fmt::Display>(&'a D);
+        impl<'a, D: fmt::Display> fmt::Debug for DisplayDebug<'a, D> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                fmt::Display::fmt(self.0, f)
+            }
+        }
+
+        // for all the variants with flags, add a flags field, of value
+        // &DisplayDebug(flags)
+        match &self.frame_type {
+            FrameType::Data(flags) => {
+                if !flags.is_empty() {
+                    s.field("flags", &DisplayDebug(flags));
+                }
+            }
+            FrameType::Headers(flags) => {
+                if !flags.is_empty() {
+                    s.field("flags", &DisplayDebug(flags));
+                }
+            }
+            FrameType::Settings(flags) => {
+                if !flags.is_empty() {
+                    s.field("flags", &DisplayDebug(flags));
+                }
+            }
+            FrameType::Ping(flags) => {
+                if !flags.is_empty() {
+                    s.field("flags", &DisplayDebug(flags));
+                }
+            }
+            FrameType::Continuation(flags) => {
+                if !flags.is_empty() {
+                    s.field("flags", &DisplayDebug(flags));
+                }
+            }
+            _ => {
+                // muffin
+            }
+        }
+
         s.finish()
     }
 }
