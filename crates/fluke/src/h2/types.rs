@@ -10,7 +10,7 @@ use super::{
 };
 
 pub(crate) struct ConnState {
-    pub(crate) streams: HashMap<StreamId, StreamStage>,
+    pub(crate) streams: HashMap<StreamId, StreamState>,
     pub(crate) last_stream_id: StreamId,
     pub(crate) self_settings: Settings,
     pub(crate) peer_settings: Settings,
@@ -67,9 +67,7 @@ impl Default for ConnState {
 //  R:  RST_STREAM frame
 //  PP:  PUSH_PROMISE frame (with implied CONTINUATION frames); state
 //     transitions are for the promised stream
-//
-// FIXME: why tf is this called "StreamStage", the RFC calls it "Stream State".
-pub(crate) enum StreamStage {
+pub(crate) enum StreamState {
     Open(H2BodySender),
     HalfClosedRemote,
     // note: the "Closed" state is indicated by not having an entry in the map

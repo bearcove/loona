@@ -33,7 +33,7 @@ use super::{
     parse::{
         ContinuationFlags, DataFlags, HeadersFlags, PingFlags, Settings, SettingsFlags, StreamId,
     },
-    types::{ConnState, H2ConnEvent, H2StreamError, HeadersOrTrailers, StreamStage},
+    types::{ConnState, H2ConnEvent, H2StreamError, HeadersOrTrailers, StreamState},
 };
 
 /// Reads and processes h2 frames from the client.
@@ -252,7 +252,7 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
 
             match frame.frame_type {
                 FrameType::Data(flags) => {
-                    let stage = match self.state.streams.get_mut(&frame.stream_id) {
+                    let ss = match self.state.streams.get_mut(&frame.stream_id) {
                         Some(s) => s,
                         None => {
                             return Err(H2ConnectionError::ReceivedDataForUnknownStream {
@@ -261,8 +261,8 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                         }
                     };
 
-                    match stage {
-                        StreamStage::Open(tx) => {
+                    match ss {
+                        StreamState::Open(tx) => {
                             if tx
                                 .send(Ok(PieceOrTrailers::Piece(payload.into())))
                                 .await
@@ -274,10 +274,10 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                             }
 
                             if flags.contains(DataFlags::EndStream) {
-                                *stage = StreamStage::HalfClosedRemote;
+                                *ss = StreamState::HalfClosedRemote;
                             }
                         }
-                        StreamStage::HalfClosedRemote => {
+                        StreamState::HalfClosedRemote => {
                             debug!(
                                 stream_id = %frame.stream_id,
                                 "Received data for closed stream"
@@ -387,12 +387,12 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                 }
                 FrameType::RstStream => match self.state.streams.remove(&frame.stream_id) {
                     Some(ss) => match ss {
-                        StreamStage::Open(body_tx) => {
+                        StreamState::Open(body_tx) => {
                             _ = body_tx
                                 .send(Err(H2StreamError::ReceivedRstStream.into()))
                                 .await;
                         }
-                        StreamStage::HalfClosedRemote => {
+                        StreamState::HalfClosedRemote => {
                             // good
                         }
                     },
@@ -752,15 +752,15 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                 self.state.streams.insert(
                     stream_id,
                     if end_stream {
-                        StreamStage::HalfClosedRemote
+                        StreamState::HalfClosedRemote
                     } else {
-                        StreamStage::Open(piece_tx)
+                        StreamState::Open(piece_tx)
                     },
                 );
             }
             HeadersOrTrailers::Trailers => {
                 match self.state.streams.get_mut(&stream_id) {
-                    Some(StreamStage::Open(body_tx)) => {
+                    Some(StreamState::Open(body_tx)) => {
                         if body_tx
                             .send(Ok(PieceOrTrailers::Trailers(Box::new(headers))))
                             .await
