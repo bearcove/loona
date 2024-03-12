@@ -267,3 +267,14 @@ impl fmt::Debug for H2EventPayload {
 #[derive(thiserror::Error, Debug)]
 #[error("the peer closed the connection unexpectedly")]
 pub(crate) struct ConnectionClosed;
+
+fn is_peer_gone(e: &eyre::Report) -> bool {
+    if let Some(io_error) = e.root_cause().downcast_ref::<std::io::Error>() {
+        matches!(
+            io_error.kind(),
+            std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+        )
+    } else {
+        false
+    }
+}

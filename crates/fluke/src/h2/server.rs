@@ -52,7 +52,7 @@ pub async fn serve(
 
     let mut out_scratch = RollMut::alloc()?;
 
-    // we have to send a settings frame
+    // we have to send an initial settings frame
     {
         let payload_roll = state.self_settings.into_roll(&mut out_scratch)?;
         let frame_roll = Frame::new(
@@ -68,21 +68,10 @@ pub async fn serve(
         debug!("sent settings frame");
     }
 
-    H2ReadContext::new(driver.clone(), state, transport_w)
-        .read_loop(client_buf, transport_r)
+    H2ReadContext::new(driver.clone(), state, transport_w, out_scratch)
+        .work(client_buf, transport_r)
         .await?;
 
     debug!("finished serving");
     Ok(())
-}
-
-fn is_peer_gone(e: &eyre::Report) -> bool {
-    if let Some(io_error) = e.root_cause().downcast_ref::<std::io::Error>() {
-        matches!(
-            io_error.kind(),
-            std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
-        )
-    } else {
-        false
-    }
 }

@@ -41,6 +41,8 @@ pub(crate) struct H2ReadContext<D: ServerDriver + 'static, W: WriteOwned> {
     driver: Rc<D>,
     state: ConnState,
     hpack_dec: fluke_hpack::Decoder<'static>,
+    hpack_enc: fluke_hpack::Encoder<'static>,
+    out_scratch: RollMut,
 
     /// Whether we've received a GOAWAY frame.
     pub goaway_recv: bool,
@@ -52,10 +54,17 @@ pub(crate) struct H2ReadContext<D: ServerDriver + 'static, W: WriteOwned> {
 }
 
 impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
-    pub(crate) fn new(driver: Rc<D>, state: ConnState, transport_w: W) -> Self {
+    pub(crate) fn new(
+        driver: Rc<D>,
+        state: ConnState,
+        transport_w: W,
+        out_scratch: RollMut,
+    ) -> Self {
         let mut hpack_dec = fluke_hpack::Decoder::new();
         hpack_dec
             .set_max_allowed_table_size(Settings::default().header_table_size.try_into().unwrap());
+
+        let hpack_enc = fluke_hpack::Encoder::new();
 
         let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<H2ConnEvent>(32);
 
@@ -65,12 +74,15 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
             ev_rx,
             state,
             hpack_dec,
+            hpack_enc,
+            out_scratch,
             goaway_recv: false,
             transport_w,
         }
     }
 
-    pub(crate) async fn read_loop(
+    /// Reads and process h2 frames from the client.
+    pub(crate) async fn work(
         mut self,
         client_buf: RollMut,
         transport_r: impl ReadOwned,
@@ -85,13 +97,17 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
             // FIXME: the process_task should update this
             let max_frame_size = Rc::new(AtomicU32::new(self.state.self_settings.max_frame_size));
 
-            let mut io_task =
-                std::pin::pin!(Self::io_loop(client_buf, transport_r, tx, max_frame_size));
+            let mut deframe_task = std::pin::pin!(Self::deframe_loop(
+                client_buf,
+                transport_r,
+                tx,
+                max_frame_size
+            ));
             let mut process_task = std::pin::pin!(self.process_loop(rx));
 
             tokio::select! {
-                res = &mut io_task => {
-                    debug!(?res, "h2 io task finished");
+                res = &mut deframe_task => {
+                    debug!(?res, "h2 deframe task finished");
 
                     if let Err(H2ConnectionError::ReadError(e)) = res {
                         let mut should_ignore_err = false;
@@ -119,8 +135,6 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
                     if let Err(err) = res {
                         goaway_err = Some(err);
                     }
-
-                    // probably don't need to wait for the io task there
                 }
             }
         }
@@ -142,7 +156,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
         Ok(())
     }
 
-    async fn io_loop(
+    async fn deframe_loop(
         mut client_buf: RollMut,
         mut transport_r: impl ReadOwned,
         tx: mpsc::Sender<(Frame, Roll)>,
@@ -230,7 +244,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
             }
 
             if tx.send((frame, payload)).await.is_err() {
-                debug!("h2 io loop: receiver dropped, closing connection");
+                debug!("h2 deframer: receiver dropped, closing connection");
                 return Ok(());
             }
         }
