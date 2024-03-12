@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, trace};
 
 use crate::h2::{
-    parse::{DataFlags, Frame, FrameType, HeadersFlags, PingFlags, SettingsFlags, StreamId},
+    parse::{DataFlags, Frame, FrameType, HeadersFlags, SettingsFlags, StreamId},
     types::{H2ConnEvent, H2EventPayload},
 };
 use fluke_buffet::{PieceList, RollMut};
@@ -21,21 +21,6 @@ pub(crate) async fn h2_write_loop(
     while let Some(ev) = ev_rx.recv().await {
         trace!("h2_write_loop: received H2 event");
         match ev {
-            H2ConnEvent::AcknowledgeSettings {
-                new_max_header_table_size,
-            } => {
-                debug!("Acknowledging new settings");
-                hpack_enc.set_max_table_size(new_max_header_table_size.try_into().unwrap());
-
-                let frame = Frame::new(
-                    FrameType::Settings(SettingsFlags::Ack.into()),
-                    StreamId::CONNECTION,
-                );
-                transport_w
-                    .write_all(frame.into_roll(&mut out_scratch)?)
-                    .await
-                    .wrap_err("writing acknowledge settings")?;
-            }
             H2ConnEvent::ServerEvent(ev) => {
                 debug!(?ev, "Writing");
 
@@ -95,29 +80,6 @@ pub(crate) async fn h2_write_loop(
                             .wrap_err("writing BodyEnd")?;
                     }
                 }
-            }
-            H2ConnEvent::RstStream {
-                stream_id,
-                error_code,
-            } => {
-                debug!(%stream_id, ?error_code, "Sending RstStream");
-                let header = out_scratch.put_to_roll(4, |mut slice| {
-                    use byteorder::{BigEndian, WriteBytesExt};
-                    slice.write_u32::<BigEndian>(error_code.repr())?;
-                    Ok(())
-                })?;
-
-                let frame = Frame::new(FrameType::RstStream, stream_id)
-                    .with_len((header.len()).try_into().unwrap());
-
-                transport_w
-                    .writev_all(
-                        PieceList::default()
-                            .with(frame.into_roll(&mut out_scratch)?)
-                            .with(header),
-                    )
-                    .await
-                    .wrap_err("writing rststream")?;
             }
         }
     }

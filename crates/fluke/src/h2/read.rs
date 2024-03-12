@@ -491,22 +491,17 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
                     let (_, settings) = Settings::parse(payload)
                         .finish()
                         .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
-                    let new_max_header_table_size = settings.header_table_size;
+                    self.hpack_enc
+                        .set_max_table_size(settings.header_table_size as usize);
+
                     debug!(?settings, "Received settings");
                     self.state.peer_settings = settings;
 
-                    if self
-                        .ev_tx
-                        .send(H2ConnEvent::AcknowledgeSettings {
-                            new_max_header_table_size,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        return Err(
-                            eyre::eyre!("could not send H2 acknowledge settings event").into()
-                        );
-                    }
+                    let frame = Frame::new(
+                        FrameType::Settings(SettingsFlags::Ack.into()),
+                        StreamId::CONNECTION,
+                    );
+                    self.write_frame(frame, Roll::empty()).await?;
                 }
             }
             FrameType::PushPromise => {

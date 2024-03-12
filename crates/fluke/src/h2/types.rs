@@ -231,7 +231,6 @@ pub(crate) enum HeadersOrTrailers {
 
 pub(crate) enum H2ConnEvent {
     ServerEvent(H2Event),
-    AcknowledgeSettings { new_max_header_table_size: u32 },
 }
 
 #[derive(Debug)]
