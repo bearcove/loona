@@ -81,7 +81,7 @@ pub async fn serve(
             res = &mut read_task => {
                 match res {
                     Err(e) => {
-                        return Err(e.wrap_err("h2 read (finished first)"));
+                       return Err(e.wrap_err("h2 read (finished first)"));
                     }
                     Ok(()) => {
                         debug!("read task finished, waiting on write task now");
