@@ -152,6 +152,15 @@ pub(crate) enum H2ConnectionError {
 
     #[error("received settings frame with non-zero stream id")]
     SettingsWithNonZeroStreamId { stream_id: StreamId },
+
+    #[error("received goaway frame with non-zero stream id")]
+    GoAwayWithNonZeroStreamId { stream_id: StreamId },
+
+    #[error("zero increment in window update frame for stream")]
+    WindowUpdateZeroIncrement,
+
+    #[error("received window update frame with invalid length {len}")]
+    WindowUpdateInvalidLength { len: usize },
 }
 
 impl H2ConnectionError {
@@ -163,6 +172,7 @@ impl H2ConnectionError {
             H2ConnectionError::PaddedFrameTooShort { .. } => KnownErrorCode::FrameSizeError,
             H2ConnectionError::PingFrameInvalidLength { .. } => KnownErrorCode::FrameSizeError,
             H2ConnectionError::SettingsAckWithPayload { .. } => KnownErrorCode::FrameSizeError,
+            H2ConnectionError::WindowUpdateInvalidLength { .. } => KnownErrorCode::FrameSizeError,
             // compression errors
             H2ConnectionError::CompressionError(_) => KnownErrorCode::CompressionError,
             // stream closed error

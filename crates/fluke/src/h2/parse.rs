@@ -274,17 +274,21 @@ impl Frame {
 }
 
 /// See https://httpwg.org/specs/rfc9113.html#FrameHeader - the first bit
-/// is reserved, and the rest is a 32-bit stream id
-fn parse_reserved_and_stream_id(i: Roll) -> IResult<Roll, (u8, StreamId)> {
+/// is reserved, and the rest is a 31-bit stream id
+pub fn parse_reserved_and_u31(i: Roll) -> IResult<Roll, (u8, u32)> {
     fn reserved(i: (Roll, usize)) -> IResult<(Roll, usize), u8> {
         nom::bits::streaming::take(1_usize)(i)
     }
 
-    fn stream_id(i: (Roll, usize)) -> IResult<(Roll, usize), StreamId> {
-        nom::combinator::map(nom::bits::streaming::take(31_usize), StreamId)(i)
+    fn stream_id(i: (Roll, usize)) -> IResult<(Roll, usize), u32> {
+        nom::bits::streaming::take(31_usize)(i)
     }
 
     nom::bits::bits(tuple((reserved, stream_id)))(i)
+}
+
+fn parse_reserved_and_stream_id(i: Roll) -> IResult<Roll, (u8, StreamId)> {
+    parse_reserved_and_u31(i).map(|(i, (reserved, stream_id))| (i, (reserved, StreamId(stream_id))))
 }
 
 // cf. https://httpwg.org/specs/rfc9113.html#HEADERS

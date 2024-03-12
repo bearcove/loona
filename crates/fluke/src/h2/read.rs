@@ -20,7 +20,7 @@ use tracing::{debug, trace, warn};
 
 use crate::{
     h2::{
-        parse::{Frame, FrameType, PrioritySpec},
+        parse::{parse_reserved_and_u31, Frame, FrameType, PrioritySpec},
         types::H2ConnectionError,
     },
     util::read_and_parse,
@@ -465,26 +465,48 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                     }
                 }
                 FrameType::GoAway => {
+                    if frame.stream_id != StreamId::CONNECTION {
+                        return Err(H2ConnectionError::GoAwayWithNonZeroStreamId {
+                            stream_id: frame.stream_id,
+                        });
+                    }
+
                     self.goaway_recv = true;
 
                     // TODO: this should probably have other effects than setting
                     // this flag.
                 }
-                FrameType::WindowUpdate => match frame.stream_id.0 {
-                    0 => {
-                        debug!("TODO: ignoring connection-wide window update");
+                FrameType::WindowUpdate => {
+                    if payload.len() != 4 {
+                        return Err(H2ConnectionError::WindowUpdateInvalidLength {
+                            len: payload.len() as _,
+                        });
                     }
-                    _ => match self.state.streams.get_mut(&frame.stream_id) {
-                        Some(_ss) => {
-                            debug!("TODO: handle window update for stream {}", frame.stream_id)
+
+                    let increment;
+                    (_, (_, increment)) = parse_reserved_and_u31(payload)
+                        .finish()
+                        .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
+
+                    if increment == 0 {
+                        return Err(H2ConnectionError::WindowUpdateZeroIncrement);
+                    }
+
+                    if frame.stream_id == StreamId::CONNECTION {
+                        debug!("TODO: ignoring connection-wide window update");
+                    } else {
+                        match self.state.streams.get_mut(&frame.stream_id) {
+                            None => {
+                                return Err(H2ConnectionError::WindowUpdateForUnknownStream {
+                                    stream_id: frame.stream_id,
+                                });
+                            }
+                            Some(_ss) => {
+                                debug!("TODO: handle window update for stream {}", frame.stream_id)
+                            }
                         }
-                        None => {
-                            return Err(H2ConnectionError::WindowUpdateForUnknownStream {
-                                stream_id: frame.stream_id,
-                            });
-                        }
-                    },
-                },
+                    }
+                }
                 FrameType::Continuation(_flags) => {
                     return Err(H2ConnectionError::UnexpectedContinuationFrame {
                         stream_id: frame.stream_id,
