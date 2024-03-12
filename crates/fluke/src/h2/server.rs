@@ -118,6 +118,7 @@ pub async fn serve(
         };
     };
 
+    debug!("finished serving");
     Ok(())
 }
 

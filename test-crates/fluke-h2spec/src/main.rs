@@ -135,6 +135,7 @@ pub(crate) async fn run_server(ln: TcpListener) -> color_eyre::Result<()> {
             if let Err(e) = fluke::h2::serve(stream.into_halves(), conf, client_buf, driver).await {
                 tracing::debug!("error serving client {addr}: {e}, {e:?}");
             }
+            tracing::debug!("done serving client {addr}");
         });
     }
 }

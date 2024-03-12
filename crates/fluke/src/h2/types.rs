@@ -140,6 +140,12 @@ pub(crate) enum H2ConnectionError {
 
     #[error("received frame for closed stream {stream_id}")]
     StreamClosed { stream_id: StreamId },
+
+    #[error("received ping frame frame with non-zero stream id")]
+    PingFrameWithNonZeroStreamId { stream_id: StreamId },
+
+    #[error("received ping frame with invalid length {len}")]
+    PingFrameInvalidLength { len: u32 },
 }
 
 impl H2ConnectionError {
@@ -149,6 +155,7 @@ impl H2ConnectionError {
             H2ConnectionError::FrameTooLarge { .. } => KnownErrorCode::FrameSizeError,
             H2ConnectionError::PaddedFrameEmpty { .. } => KnownErrorCode::FrameSizeError,
             H2ConnectionError::PaddedFrameTooShort { .. } => KnownErrorCode::FrameSizeError,
+            H2ConnectionError::PingFrameInvalidLength { .. } => KnownErrorCode::FrameSizeError,
             // compression errors
             H2ConnectionError::CompressionError(_) => KnownErrorCode::CompressionError,
             // stream closed error

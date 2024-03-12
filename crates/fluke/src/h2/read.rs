@@ -435,17 +435,17 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
                 }
                 FrameType::Ping(flags) => {
                     if frame.stream_id != StreamId::CONNECTION {
-                        todo!("handle connection error: ping frame with non-zero stream id");
+                        return Err(H2ConnectionError::PingFrameWithNonZeroStreamId {
+                            stream_id: frame.stream_id,
+                        });
                     }
 
                     if frame.len != 8 {
-                        todo!("handle connection error: ping frame with invalid length");
+                        return Err(H2ConnectionError::PingFrameInvalidLength { len: frame.len });
                     }
 
                     if flags.contains(PingFlags::Ack) {
                         // TODO: check that payload matches the one we sent?
-
-                        debug!("received ping ack");
                         return Ok(());
                     }
 
