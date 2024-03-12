@@ -233,6 +233,7 @@ impl ServerDriver for SDriver {
         let driver = CDriver { respond };
 
         req.version = Version::HTTP_11;
+        req.headers.insert("host", "httpbingo.org".into());
         let (transport, respond) =
             h1::request(transport.into_halves(), req, req_body, driver).await?;
 
