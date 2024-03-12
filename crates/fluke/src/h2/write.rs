@@ -96,20 +96,6 @@ pub(crate) async fn h2_write_loop(
                     }
                 }
             }
-            H2ConnEvent::Ping(payload) => {
-                // send pong frame
-                let flags = PingFlags::Ack.into();
-                let frame = Frame::new(FrameType::Ping(flags), StreamId::CONNECTION)
-                    .with_len(payload.len() as u32);
-                transport_w
-                    .writev_all(
-                        PieceList::default()
-                            .with(frame.into_roll(&mut out_scratch)?)
-                            .with(payload),
-                    )
-                    .await
-                    .wrap_err("writing pong")?;
-            }
             H2ConnEvent::GoAway {
                 err,
                 last_stream_id,

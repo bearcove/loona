@@ -513,12 +513,14 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
 
                 if flags.contains(PingFlags::Ack) {
                     // TODO: check that payload matches the one we sent?
-                    continue 'process_frames;
+                    return Ok(());
                 }
 
-                if self.ev_tx.send(H2ConnEvent::Ping(payload)).await.is_err() {
-                    return Err(eyre::eyre!("could not send H2 ping event").into());
-                }
+                // send pong frame
+                let flags = PingFlags::Ack.into();
+                let frame = Frame::new(FrameType::Ping(flags), StreamId::CONNECTION)
+                    .with_len(payload.len() as u32);
+                self.write_frame(frame, payload).await?;
             }
             FrameType::GoAway => {
                 if frame.stream_id != StreamId::CONNECTION {
