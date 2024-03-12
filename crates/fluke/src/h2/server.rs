@@ -148,7 +148,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
         {
             // read frames and send them into an mpsc buffer of size 1
-            let (tx, rx) = mpsc::channel::<(Frame, Roll)>(1);
+            let (tx, rx) = mpsc::channel::<(Frame, Roll)>(32);
 
             // store max frame size setting as an atomic so we can share it across tasks
             // FIXME: the process_task should update this

@@ -24,7 +24,10 @@ impl TcpListener {
     }
 
     pub async fn accept(&self) -> std::io::Result<(TcpStream, SocketAddr)> {
-        self.tok.accept().await
+        self.tok.accept().await.map(|tuple| {
+            tuple.0.set_nodelay(true).unwrap();
+            tuple
+        })
     }
 }
 
@@ -41,7 +44,7 @@ pub struct TcpWriteHalf(Rc<TcpStream>);
 
 impl WriteOwned for TcpWriteHalf {
     async fn write<B: IoBuf>(&mut self, buf: B) -> BufResult<usize, B> {
-        let (res, b) = self.0.write(BufCompat(buf)).await;
+        let (res, b) = self.0.write(BufCompat(buf)).submit().await;
         (res, b.0)
     }
 

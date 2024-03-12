@@ -68,6 +68,9 @@ impl ServerDriver for SDriver {
             }
         }
 
+        // simulate delay
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
         tracing::debug!("Done reading body, sending response!");
         let res = Response {
             version: Version::HTTP_2,
