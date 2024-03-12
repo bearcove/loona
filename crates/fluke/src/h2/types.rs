@@ -150,18 +150,6 @@ pub(crate) enum H2ConnectionError {
     ReceivedDataForUnknownStream { stream_id: StreamId },
 }
 
-impl<T> From<H2ConnectionError> for H2Result<T> {
-    fn from(e: H2ConnectionError) -> Self {
-        Err(e.into())
-    }
-}
-
-impl<T> From<H2Error> for H2Result<T> {
-    fn from(e: H2Error) -> Self {
-        Err(e)
-    }
-}
-
 impl H2ConnectionError {
     pub(crate) fn as_known_error_code(&self) -> KnownErrorCode {
         match self {
@@ -176,23 +164,6 @@ impl H2ConnectionError {
             // protocol errors
             _ => KnownErrorCode::ProtocolError,
         }
-    }
-}
-
-pub(crate) type H2Result<T = ()> = Result<T, H2Error>;
-
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum H2Error {
-    #[error("connection error: {0:?}")]
-    Connection(#[from] H2ConnectionError),
-
-    #[error("stream error: for stream {0}: {1:?}")]
-    Stream(StreamId, H2StreamError),
-}
-
-impl From<eyre::Report> for H2Error {
-    fn from(e: eyre::Report) -> Self {
-        Self::Connection(H2ConnectionError::Internal(e))
     }
 }
 
@@ -225,10 +196,6 @@ impl H2StreamError {
             RefusedStream => Code::RefusedStream,
             _ => Code::ProtocolError,
         }
-    }
-
-    pub(crate) fn for_stream(self, stream_id: StreamId) -> H2Error {
-        H2Error::Stream(stream_id, self)
     }
 }
 

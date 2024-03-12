@@ -82,39 +82,43 @@ impl<D: ServerDriver + 'static> H2ReadContext<D> {
             std::pin::pin!(Self::io_loop(client_buf, transport_r, tx, max_frame_size));
         let mut process_task = std::pin::pin!(self.process_loop(rx));
 
-        loop {
-            tokio::select! {
-                res = &mut io_task => {
-                    debug!("h2 io task finished");
+        tokio::select! {
+            res = &mut io_task => {
+                debug!("h2 io task finished");
 
-                    if let Err(H2ConnectionError::ReadError(e)) = res {
-                        let mut should_ignore_err = false;
+                if let Err(H2ConnectionError::ReadError(e)) = res {
+                    let mut should_ignore_err = false;
 
-                        // if this is a connection reset and we've sent a goaway, ignore it
-                        if let Some(io_error) = e.root_cause().downcast_ref::<std::io::Error>() {
-                            if io_error.kind() == std::io::ErrorKind::ConnectionReset {
-                                should_ignore_err = true;
-                            }
-                        }
-
-                        if !should_ignore_err {
-                            return Err(e.wrap_err("h2 io"));
+                    // if this is a connection reset and we've sent a goaway, ignore it
+                    if let Some(io_error) = e.root_cause().downcast_ref::<std::io::Error>() {
+                        if io_error.kind() == std::io::ErrorKind::ConnectionReset {
+                            should_ignore_err = true;
                         }
                     }
 
-                    todo!("wait for the process task")
+                    if !should_ignore_err {
+                        return Err(e.wrap_err("h2 io"));
+                    }
                 }
-                res = &mut process_task => {
-                    if let Err(e) = res {
-                        debug!("h2 process got an error, sending goaway: {e}");
 
-                        return Err(e).wrap_err("h2 process");
-                    }
-
-                    debug!("h2 process task finished");
+                if let Err(e) = (&mut process_task).await {
+                    debug!("h2 process task finished with error: {e}");
+                    return Err(e).wrap_err("h2 process");
                 }
             }
+            res = &mut process_task => {
+                debug!("h2 process task finished");
+
+                if let Err(e) = res {
+                    debug!("h2 process got an error, sending goaway: {e}");
+
+                    return Err(e).wrap_err("h2 process");
+                }
+
+                // probably don't need to wait for the io task there
+            }
         }
+        Ok(())
     }
 
     async fn io_loop(
