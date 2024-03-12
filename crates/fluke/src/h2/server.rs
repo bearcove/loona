@@ -269,6 +269,11 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 });
             }
 
+            debug!(
+                "Reading payload of size {}... Buffer length: {}",
+                frame.len,
+                client_buf.len()
+            );
             let mut payload;
             (client_buf, payload) = match read_and_parse(
                 nom::bytes::streaming::take(frame.len as usize),
@@ -286,6 +291,10 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     })
                 }
             };
+            debug!(
+                "Reading payload... done! New buffer length: {}",
+                client_buf.len()
+            );
 
             let has_padding = match frame.frame_type {
                 FrameType::Data(flags) => flags.contains(DataFlags::Padded),
@@ -403,11 +412,10 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
     async fn write_frame(
         &mut self,
-        frame: Frame,
+        mut frame: Frame,
         payload: impl Into<Piece>,
     ) -> Result<(), H2ConnectionError> {
         debug!(?frame, ">");
-
         let payload = payload.into();
 
         match &frame.frame_type {
@@ -445,14 +453,25 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
             }
         }
 
+        // TODO: enforce max_frame_size from the peer settings, not just u32::max
+        frame.len = payload
+            .len()
+            .try_into()
+            .map_err(|_| H2ConnectionError::FrameTooLarge {
+                frame_type: frame.frame_type,
+                frame_size: payload.len() as _,
+                max_frame_size: u32::MAX,
+            })?;
         let frame_roll = frame.into_roll(&mut self.out_scratch)?;
 
         if payload.is_empty() {
+            trace!("Writing frame without payload");
             self.transport_w
                 .write_all(frame_roll)
                 .await
                 .map_err(H2ConnectionError::WriteError)?;
         } else {
+            trace!("Writing frame with payload");
             self.transport_w
                 .writev_all(PieceList::default().with(frame_roll).with(payload))
                 .await
@@ -663,6 +682,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         StreamId::CONNECTION,
                     );
                     self.write_frame(frame, Roll::empty()).await?;
+                    debug!("Acknowledged peer settings");
                 }
             }
             FrameType::PushPromise => {

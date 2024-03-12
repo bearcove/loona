@@ -579,6 +579,7 @@ impl Settings {
     const MAX_FRAME_SIZE_ALLOWED_RANGE: RangeInclusive<u32> = (1 << 14)..=((1 << 24) - 1);
 
     pub fn parse(mut i: Roll) -> IResult<Roll, Self> {
+        tracing::trace!("parsing settings frame, roll length: {}", i.len());
         let mut settings = Self::default();
 
         while !i.is_empty() {
