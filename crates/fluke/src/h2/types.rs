@@ -150,6 +150,9 @@ pub(crate) enum H2ConnectionError {
 
     #[error("other error: {0:?}")]
     Internal(#[from] eyre::Report),
+
+    #[error("error reading/parsing H2 frame: {0:?}")]
+    ReadError(eyre::Report),
 }
 
 impl<T> From<H2ConnectionError> for H2Result<T> {
