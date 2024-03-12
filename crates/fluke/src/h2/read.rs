@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    io::Write,
     rc::Rc,
     sync::atomic::{AtomicU32, Ordering},
 };
@@ -140,17 +141,29 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
         }
 
         if let Some(err) = goaway_err {
-            if self
-                .ev_tx
-                .send(H2ConnEvent::GoAway {
-                    err,
-                    last_stream_id: self.state.last_stream_id,
-                })
-                .await
-                .is_err()
-            {
-                debug!("error sending goaway");
-            }
+            let error_code = err.as_known_error_code();
+            debug!("Connection error: {err} ({err:?}) (code {error_code:?})");
+
+            // let's put something useful in debug data
+            let additional_debug_data = format!("{err}").into_bytes();
+
+            // TODO: figure out graceful shutdown: this would involve sending a goaway
+            // before this point, and processing all the connections we've accepted
+            debug!(last_stream_id = %self.state.last_stream_id, ?error_code, "Sending GoAway");
+            let payload =
+                self.out_scratch
+                    .put_to_roll(8 + additional_debug_data.len(), |mut slice| {
+                        use byteorder::{BigEndian, WriteBytesExt};
+                        // TODO: do we ever need to write the reserved bit?
+                        slice.write_u32::<BigEndian>(self.state.last_stream_id.0)?;
+                        slice.write_u32::<BigEndian>(error_code.repr())?;
+                        slice.write_all(additional_debug_data.as_slice())?;
+
+                        Ok(())
+                    })?;
+
+            let frame = Frame::new(FrameType::GoAway, StreamId::CONNECTION);
+            self.write_frame(frame, payload).await?;
         }
 
         Ok(())
@@ -299,8 +312,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
     async fn process_frame(
         &mut self,
         frame: Frame,
-        payload: Roll,
-        rx: &mut mpsc::Receiver<(Frame, Roll)>,
+        mut payload: Roll,
+        mut rx: &mut mpsc::Receiver<(Frame, Roll)>,
     ) -> Result<(), H2ConnectionError> {
         match frame.frame_type {
             FrameType::Data(flags) => {
@@ -425,7 +438,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> H2ReadContext<D, W> {
                     flags,
                     frame.stream_id,
                     payload,
-                    &mut rx,
+                    rx,
                 )
                 .await?;
             }

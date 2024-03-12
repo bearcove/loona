@@ -96,42 +96,6 @@ pub(crate) async fn h2_write_loop(
                     }
                 }
             }
-            H2ConnEvent::GoAway {
-                err,
-                last_stream_id,
-            } => {
-                let error_code = err.as_known_error_code();
-                debug!("Connection error: {err} ({err:?}) (code {error_code:?})");
-
-                // let's put something useful in debug data
-                let additional_debug_data = format!("{err}").into_bytes();
-
-                debug!(%last_stream_id, ?error_code, "Sending GoAway");
-                let header = out_scratch.put_to_roll(8, |mut slice| {
-                    use byteorder::{BigEndian, WriteBytesExt};
-                    // TODO: do we ever need to write the reserved bit?
-                    slice.write_u32::<BigEndian>(last_stream_id.0)?;
-                    slice.write_u32::<BigEndian>(error_code.repr())?;
-
-                    Ok(())
-                })?;
-
-                let frame = Frame::new(FrameType::GoAway, StreamId::CONNECTION).with_len(
-                    (header.len() + additional_debug_data.len())
-                        .try_into()
-                        .unwrap(),
-                );
-
-                transport_w
-                    .writev_all(
-                        PieceList::default()
-                            .with(frame.into_roll(&mut out_scratch)?)
-                            .with(header)
-                            .with(additional_debug_data),
-                    )
-                    .await
-                    .wrap_err("writing goaway")?;
-            }
             H2ConnEvent::RstStream {
                 stream_id,
                 error_code,

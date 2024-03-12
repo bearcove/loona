@@ -234,10 +234,6 @@ pub(crate) enum H2ConnEvent {
     AcknowledgeSettings {
         new_max_header_table_size: u32,
     },
-    GoAway {
-        err: H2ConnectionError,
-        last_stream_id: StreamId,
-    },
     RstStream {
         stream_id: StreamId,
         error_code: KnownErrorCode,
