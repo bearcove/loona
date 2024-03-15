@@ -594,7 +594,16 @@ impl Settings {
                         settings.header_table_size = value;
                     }
                     SettingIdentifier::EnablePush => {
-                        settings.enable_push = value != 0;
+                        settings.enable_push = match value {
+                            0 => false,
+                            1 => true,
+                            _ => {
+                                return Err(nom::Err::Error(nom::error::Error::new(
+                                    rest,
+                                    nom::error::ErrorKind::Digit,
+                                )));
+                            }
+                        }
                     }
                     SettingIdentifier::MaxConcurrentStreams => {
                         settings.max_concurrent_streams = value;

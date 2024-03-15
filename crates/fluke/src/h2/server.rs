@@ -713,6 +713,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                             }
                             Ok(t) => t,
                         };
+
                     self.hpack_enc
                         .set_max_table_size(settings.header_table_size as usize);
 
