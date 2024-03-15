@@ -224,6 +224,9 @@ pub(crate) enum H2StreamError {
 
     #[error("stream closed")]
     StreamClosed,
+
+    #[error("received RST_STREAM frame with invalid size, expected 4 got {frame_size}")]
+    InvalidRstStreamFrameSize { frame_size: u32 },
 }
 
 impl H2StreamError {
@@ -235,6 +238,7 @@ impl H2StreamError {
             StreamClosed => Code::StreamClosed,
             RefusedStream => Code::RefusedStream,
             InvalidPriorityFrameSize { .. } => Code::FrameSizeError,
+            InvalidRstStreamFrameSize { .. } => Code::FrameSizeError,
             _ => Code::ProtocolError,
         }
     }

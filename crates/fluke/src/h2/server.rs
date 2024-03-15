@@ -665,30 +665,46 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 }
             }
             // note: this always unconditionally transitions the stream to closed
-            FrameType::RstStream => match self.state.streams.remove(&frame.stream_id) {
-                None => {
-                    return Err(H2ConnectionError::RstStreamForUnknownStream {
-                        stream_id: frame.stream_id,
-                    })
-                }
-                Some(ss) => {
-                    debug!(
-                        "Closed stream (read RstStream) {}, now have {} streams",
+            FrameType::RstStream => {
+                // error code is a 32bit little-endian integer
+                // a frame size of 4 is expected, if not send a PROTOCOL_ERROR
+                if frame.len != 4 {
+                    self.rst(
                         frame.stream_id,
-                        self.state.streams.len()
-                    );
-                    match ss {
-                        StreamState::Open(body_tx) | StreamState::HalfClosedLocal(body_tx) => {
-                            _ = body_tx
-                                .send(Err(H2StreamError::ReceivedRstStream.into()))
-                                .await;
-                        }
-                        StreamState::HalfClosedRemote => {
-                            // good
+                        H2StreamError::InvalidRstStreamFrameSize {
+                            frame_size: frame.len,
+                        },
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                // TODO: do something with the error code?
+
+                match self.state.streams.remove(&frame.stream_id) {
+                    None => {
+                        return Err(H2ConnectionError::RstStreamForUnknownStream {
+                            stream_id: frame.stream_id,
+                        })
+                    }
+                    Some(ss) => {
+                        debug!(
+                            "Closed stream (read RstStream) {}, now have {} streams",
+                            frame.stream_id,
+                            self.state.streams.len()
+                        );
+                        match ss {
+                            StreamState::Open(body_tx) | StreamState::HalfClosedLocal(body_tx) => {
+                                _ = body_tx
+                                    .send(Err(H2StreamError::ReceivedRstStream.into()))
+                                    .await;
+                            }
+                            StreamState::HalfClosedRemote => {
+                                // good
+                            }
                         }
                     }
                 }
-            },
+            }
             FrameType::Settings(s) => {
                 if frame.stream_id != StreamId::CONNECTION {
                     return Err(H2ConnectionError::SettingsWithNonZeroStreamId {
