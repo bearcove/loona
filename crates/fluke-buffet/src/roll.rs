@@ -16,6 +16,7 @@ use nom::{
     Compare, CompareResult, FindSubstring, InputIter, InputLength, InputTake, InputTakeAtPosition,
     Needed, Slice,
 };
+use tracing::trace;
 
 use crate::{Buf, BufMut, BUF_SIZE};
 
@@ -197,11 +198,27 @@ impl RollMut {
             return Ok(());
         }
 
-        if self.len() < self.storage_size() {
+        if self.cap() < self.storage_size() {
             // we don't need to go up a buffer size
+            trace!(cap = %self.cap(), storage_size = %self.storage_size(), "in reserve: reallocating");
             self.realloc()?
         } else {
+            trace!(cap = %self.cap(), storage_size = %self.storage_size(), "in reserve: growing");
             self.grow()
+        }
+
+        Ok(())
+    }
+
+    /// Make sure we can hold "request_len"
+    pub fn reserve_at_least(&mut self, requested_len: usize) -> Result<(), eyre::Error> {
+        while self.cap() < requested_len {
+            if self.cap() < self.storage_size() {
+                // we don't need to go up a buffer size
+                self.realloc()?
+            } else {
+                self.grow()
+            }
         }
 
         Ok(())
@@ -309,9 +326,7 @@ impl RollMut {
         // it's weird that we need to do all this for it to happen but ah well.
 
         assert_eq!(self.len(), 0);
-        if self.cap() < len {
-            self.reserve()?;
-        }
+        self.reserve_at_least(len)?;
         self.put_with(len, f)?;
         let roll = self.take_all();
         debug_assert_eq!(roll.len(), len);

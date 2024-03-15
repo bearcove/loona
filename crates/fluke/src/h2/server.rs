@@ -704,9 +704,15 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         });
                     }
                 } else {
-                    let (_, settings) = Settings::parse(payload)
-                        .finish()
-                        .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
+                    let (_, settings) =
+                        match nom::combinator::complete(Settings::parse)(payload).finish() {
+                            Err(_) => {
+                                return Err(H2ConnectionError::ReadError(eyre::eyre!(
+                                    "could not parse settings frame"
+                                )));
+                            }
+                            Ok(t) => t,
+                        };
                     self.hpack_enc
                         .set_max_table_size(settings.header_table_size as usize);
 
