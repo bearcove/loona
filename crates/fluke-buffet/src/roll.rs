@@ -198,12 +198,12 @@ impl RollMut {
             return Ok(());
         }
 
-        if self.cap() < self.storage_size() {
+        if self.len() < self.storage_size() {
             // we don't need to go up a buffer size
-            trace!(cap = %self.cap(), storage_size = %self.storage_size(), "in reserve: reallocating");
+            trace!(len = %self.len(), cap = %self.cap(), storage_size = %self.storage_size(), "in reserve: reallocating");
             self.realloc()?
         } else {
-            trace!(cap = %self.cap(), storage_size = %self.storage_size(), "in reserve: growing");
+            trace!(len = %self.len(), cap = %self.cap(), storage_size = %self.storage_size(), "in reserve: growing");
             self.grow()
         }
 
