@@ -4,7 +4,7 @@ on:
   workflow_run:
     workflows: [test]
     types: [completed]
-    
+
 permissions:
   checks: write
 
@@ -42,8 +42,8 @@ jobs:
           name: h2spec-http2
           path: h2spec-http2.xml
           reporter: java-junit
-      - name: Report h2spec regressions      
+      - name: Report h2spec regressions
         if: success() || failure()
-        uses: hapsoc/report-h2spec-regressions@22403fe3e79edebe2b39068606b4cb40cf016cf7
+        uses: bearcove/report-h2spec-regressions@22403fe3e79edebe2b39068606b4cb40cf016cf7
         with:
           suites: "h2spec-generic,h2spec-hpack,h2spec-http2"

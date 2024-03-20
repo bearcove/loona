@@ -1,7 +1,7 @@
 # fluke
 
 [![Crates.io](https://img.shields.io/crates/v/fluke)](https://crates.io/crates/fluke)
-[![test pipeline](https://github.com/hapsoc/fluke/actions/workflows/test.yml/badge.svg)](https://github.com/hapsoc/fluke/actions/workflows/test.yml?query=branch%3Amain)
+[![test pipeline](https://github.com/bearcove/fluke/actions/workflows/test.yml/badge.svg)](https://github.com/bearcove/fluke/actions/workflows/test.yml?query=branch%3Amain)
 
 An experimental, HTTP/1.1 and HTTP/2 implementation in Rust on top of
 [tokio-uring](https://github.com/tokio-rs/tokio-uring).

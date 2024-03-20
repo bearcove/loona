@@ -403,7 +403,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 // FIXME: this should transition the stream to `Closed`
                 // state (or at the very least `HalfClosedLocal`).
                 // Either way, whoever owns the stream state should know
-                // about it, cf. https://github.com/hapsoc/fluke/issues/123
+                // about it, cf. https://github.com/bearcove/fluke/issues/123
 
                 let flags = DataFlags::EndStream;
                 let frame = Frame::new(FrameType::Data(flags.into()), ev.stream_id);

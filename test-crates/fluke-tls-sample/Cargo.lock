@@ -565,7 +565,7 @@ dependencies = [
 [[package]]
 name = "ktls"
 version = "5.0.0"
-source = "git+https://github.com/hapsoc/ktls?rev=e60101a5cda5c6a873ee8422463ef347c74643af#e60101a5cda5c6a873ee8422463ef347c74643af"
+source = "git+https://github.com/bearcove/ktls?rev=e60101a5cda5c6a873ee8422463ef347c74643af#e60101a5cda5c6a873ee8422463ef347c74643af"
 dependencies = [
  "futures",
  "ktls-recvmsg",
