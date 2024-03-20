@@ -36,7 +36,7 @@ smallvec = { version = "1.13.1", default-features = false, features = [
     "const_new",
     "union",
 ] }
-thiserror = { version = "1.0.57", default-features = false }
+thiserror = { version = "1.0.58", default-features = false }
 tokio = { version = "1.36.0", features = ["macros", "sync"] }
 tracing = { version = "0.1.40", default-features = false }
 
@@ -48,7 +48,7 @@ bytes = { version = "1.5.0", default-features = false }
 pretty_assertions = { version = "1.4.0", default-features = false, features = [
     "std",
 ] }
-tokio-stream = { version = "0.1.14", default-features = false }
+tokio-stream = { version = "0.1.15", default-features = false }
 tracing-subscriber = { version = "0.3.18", default-features = false, features = [
     "std",
     "fmt",

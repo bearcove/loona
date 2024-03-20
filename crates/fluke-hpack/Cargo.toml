@@ -24,7 +24,7 @@ interop-tests = []
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0.114"
 hex = "0.4.3"
-thiserror = "1.0.57"
+thiserror = "1.0.58"
 
 [dependencies]
 tracing = "0.1"
