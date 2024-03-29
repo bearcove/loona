@@ -3,7 +3,7 @@ mod helpers;
 use bytes::BytesMut;
 use curl::easy::{Easy, HttpVersion, List};
 use fluke::{
-    buffet::{Piece, PieceCore, RollMut},
+    buffet::{PieceCore, RollMut},
     h1, h2,
     maybe_uring::io::{ChanRead, ChanWrite, IntoHalves},
     Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, HeadersExt, Method, Request,

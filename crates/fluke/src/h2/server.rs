@@ -166,7 +166,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 FrameType::Settings(Default::default()),
                 StreamId::CONNECTION,
             );
-            self.write_frame(frame, PieceList::default().followed_by(payload)).await?;
+            self.write_frame(frame, PieceList::default().followed_by(payload))
+                .await?;
         }
 
         let mut goaway_err: Option<H2ConnectionError> = None;
@@ -244,7 +245,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     })?;
 
             let frame = Frame::new(FrameType::GoAway, StreamId::CONNECTION);
-            self.write_frame(frame, PieceList::default().followed_by(payload)).await?;
+            self.write_frame(frame, PieceList::default().followed_by(payload))
+                .await?;
         }
 
         Ok(())
@@ -414,7 +416,11 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
             .copied()
             .collect();
 
-        for id in streams_with_pending_data {
+        // this vec exists for borrow-checker reasons: we can't
+        // borrow self mutably twice in 'each_stream
+        let mut frames = vec![];
+
+        'each_stream: for id in streams_with_pending_data {
             let outgoing = self
                 .state
                 .streams
@@ -424,7 +430,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
             if outgoing.is_empty() {
                 not_pending.insert(id);
-                continue;
+                continue 'each_stream;
             }
 
             let max_fram = self.state.peer_settings.max_frame_size as usize;
@@ -434,63 +440,71 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
             // bytes written this turn, possibly over multiple frames
             let mut total_bytes_written = 0;
 
-            while total_bytes_written < capacity {
+            'queue_frames: while total_bytes_written < capacity {
                 // send as much data as we can, respecting max frame size and
                 // connection / stream capacity
                 let mut plist = PieceList::default();
-                let mut plist_byte_len = 0;
+                let mut frame_len = 0;
 
-                'pop_pieces: loop {
+                'build_frame: loop {
                     let piece = match outgoing.pieces.pop_front() {
-                        None => break 'pop_pieces,
+                        None => break 'build_frame,
                         Some(piece) => piece,
                     };
 
                     // do we need to split the piece because we don't have
                     // enough capacity left / we hit the max frame size?
-                    let piece_byte_len = piece.len();
+                    let piece_len = piece.len();
+                    debug!(%piece_len, "popped a piece");
 
-                    enum Outcome {
-                        Done,
-                        KeepAccumulating,
-                    }
-
-                    let outcome: Outcome;
-                    let write_size: usize;
-
-                    let fram_size_if_full_piece = plist_byte_len + piece_byte_len;
+                    let fram_size_if_full_piece = frame_len + piece_len;
                     if fram_size_if_full_piece > max_fram {
                         // we can't fit this piece in the current frame, so
                         // we have to split it
-                        write_size = max_fram - plist_byte_len;
+                        let write_size = max_fram - frame_len;
+                        frame_len += write_size;
                         let (written, requeued) = piece.split_at(write_size);
-                        outcome = Outcome::Done;
+                        debug!(written_len = %written.len(), requeued_len = %requeued.len(), "splitting piece");
 
                         plist.push_back(written);
-                        outgoing.pieces.push_front(requeued); // thx johann
+                        outgoing.pieces.push_front(requeued);
+
+                        break 'build_frame;
                     } else {
                         // we can write the full piece
-                        write_size = piece_byte_len;
-                        outcome = Outcome::KeepAccumulating;
+                        let write_size = piece_len;
+                        frame_len += write_size;
 
                         plist.push_back(piece);
-                    }
-
-                    total_bytes_written += write_size;
-                    plist_byte_len += write_size;
-
-                    if let Outcome::Done = outcome {
-                        break 'pop_pieces;
                     }
                 }
 
                 let mut flags: BitFlags<DataFlags> = Default::default();
-                if outgoing.is_eof() {
+                let is_eof = outgoing.is_eof();
+                if is_eof {
                     flags |= DataFlags::EndStream;
+                } else {
+                    if frame_len == 0 {
+                        // we've sent all the data we can for this stream
+                        break 'queue_frames;
+                    }
                 }
+
                 let frame = Frame::new(FrameType::Data(flags.into()), id);
-                self.write_frame(frame, plist);
+                debug!(?frame, %frame_len, "queuing");
+                frames.push((frame, plist));
+                total_bytes_written += frame_len;
+
+                if is_eof {
+                    break 'queue_frames;
+                }
             }
+
+            not_pending.insert(id);
+        }
+
+        for (frame, plist) in frames {
+            self.write_frame(frame, plist).await?;
         }
 
         for id in not_pending {
@@ -527,7 +541,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     .map_err(H2ConnectionError::WriteError)?;
                 let payload = self.out_scratch.take_all();
 
-                self.write_frame(frame, payload).await?;
+                self.write_frame(frame, PieceList::default().followed_by(payload))
+                    .await?;
             }
             H2EventPayload::BodyChunk(chunk) => {
                 let outgoing = match self
@@ -591,7 +606,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
     async fn write_frame(
         &mut self,
         mut frame: Frame,
-        mut payload: PieceList,
+        payload: PieceList,
     ) -> Result<(), H2ConnectionError> {
         match &frame.frame_type {
             FrameType::Data(flags) => {
@@ -952,7 +967,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         FrameType::Settings(SettingsFlags::Ack.into()),
                         StreamId::CONNECTION,
                     );
-                    self.write_frame(frame, PieceList::default().(Roll::empty()))
+                    self.write_frame(frame, PieceList::default().followed_by(Roll::empty()))
                         .await?;
                     debug!("Acknowledged peer settings");
                 }
