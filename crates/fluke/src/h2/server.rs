@@ -608,75 +608,91 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         mut frame: Frame,
         payload: PieceList,
     ) -> Result<(), H2ConnectionError> {
-        match &frame.frame_type {
-            FrameType::Data(flags) => {
-                let mut ss = match self.state.streams.entry(frame.stream_id) {
-                    std::collections::hash_map::Entry::Occupied(entry) => entry,
-                    std::collections::hash_map::Entry::Vacant(_) => unreachable!(
-                        "writing DATA frame for non-existent stream, this should never happen"
-                    ),
-                };
+        struct FlowControlledFrameInfo {
+            len: usize,
+            end_stream: bool,
+        }
 
-                // update stream flow control window
-                {
-                    let outgoing = match ss.get_mut().outgoing_mut() {
-                        Some(og) => og,
-                        None => unreachable!("writing DATA frame for stream in the wrong state"),
-                    };
-                    let payload_len: u32 = payload.len().try_into().unwrap();
-                    if let Some(next_cap) = outgoing.capacity.checked_sub(payload_len) {
-                        outgoing.capacity = next_cap;
-                    } else {
-                        unreachable!(
-                            "should never write a frame that makes the stream capacity negative"
-                        )
-                    }
-                }
-
-                // now update connection flow control window
-                {
-                    let payload_len: u32 = payload.len().try_into().unwrap();
-                    if let Some(next_cap) = self.state.outgoing_capacity.checked_sub(payload_len) {
-                        self.state.outgoing_capacity = next_cap;
-                    } else {
-                        unreachable!(
-                            "should never write a frame that makes the connection capacity negative"
-                        )
-                    }
-                }
-
-                if flags.contains(DataFlags::EndStream) {
-                    // we won't be sending any more data on this stream
-                    self.state
-                        .streams_with_pending_data
-                        .remove(&frame.stream_id);
-
-                    match ss.get_mut() {
-                        StreamState::Open { .. } => {
-                            let incoming = match std::mem::take(ss.get_mut()) {
-                                StreamState::Open { incoming, .. } => incoming,
-                                _ => unreachable!(),
-                            };
-                            // this avoid having to re-insert the stream in the map
-                            *ss.get_mut() = StreamState::HalfClosedLocal { incoming };
-                        }
-                        _ => {
-                            // transition to closed
-                            ss.remove();
-                            debug!(
-                                "Closed stream {} (wrote data w/EndStream), now have {} streams",
-                                frame.stream_id,
-                                self.state.streams.len()
-                            );
-                        }
-                    }
-                }
-            }
+        let flow_controlled_frame_info = match &frame.frame_type {
+            FrameType::Data(flags) => Some(FlowControlledFrameInfo {
+                len: payload.len(),
+                end_stream: flags.contains(DataFlags::EndStream),
+            }),
+            FrameType::Headers(flags) => Some(FlowControlledFrameInfo {
+                len: payload.len(),
+                end_stream: flags.contains(HeadersFlags::EndStream),
+            }),
             FrameType::Settings(_) => {
                 // TODO: keep track of whether our new settings have been acknowledged
+                None
             }
             _ => {
                 // muffin.
+                None
+            }
+        };
+
+        if let Some(flow_controlled_frame_info) = flow_controlled_frame_info {
+            let mut ss = match self.state.streams.entry(frame.stream_id) {
+                std::collections::hash_map::Entry::Occupied(entry) => entry,
+                std::collections::hash_map::Entry::Vacant(_) => unreachable!(
+                    "writing DATA frame for non-existent stream, this should never happen"
+                ),
+            };
+
+            // update stream flow control window
+            {
+                let outgoing = match ss.get_mut().outgoing_mut() {
+                    Some(og) => og,
+                    None => unreachable!("writing DATA frame for stream in the wrong state"),
+                };
+                let payload_len: u32 = payload.len().try_into().unwrap();
+                if let Some(next_cap) = outgoing.capacity.checked_sub(payload_len) {
+                    outgoing.capacity = next_cap;
+                } else {
+                    unreachable!(
+                        "should never write a frame that makes the stream capacity negative"
+                    )
+                }
+            }
+
+            // now update connection flow control window
+            {
+                let payload_len: u32 = payload.len().try_into().unwrap();
+                if let Some(next_cap) = self.state.outgoing_capacity.checked_sub(payload_len) {
+                    self.state.outgoing_capacity = next_cap;
+                } else {
+                    unreachable!(
+                        "should never write a frame that makes the connection capacity negative"
+                    )
+                }
+            }
+
+            if flow_controlled_frame_info.end_stream {
+                // we won't be sending any more data on this stream
+                self.state
+                    .streams_with_pending_data
+                    .remove(&frame.stream_id);
+
+                match ss.get_mut() {
+                    StreamState::Open { .. } => {
+                        let incoming = match std::mem::take(ss.get_mut()) {
+                            StreamState::Open { incoming, .. } => incoming,
+                            _ => unreachable!(),
+                        };
+                        // this avoid having to re-insert the stream in the map
+                        *ss.get_mut() = StreamState::HalfClosedLocal { incoming };
+                    }
+                    _ => {
+                        // transition to closed
+                        ss.remove();
+                        debug!(
+                            "Closed stream {} (wrote data w/EndStream), now have {} streams",
+                            frame.stream_id,
+                            self.state.streams.len()
+                        );
+                    }
+                }
             }
         }
 
