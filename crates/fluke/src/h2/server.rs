@@ -402,10 +402,6 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
             debug!(conn_cap = %self.state.outgoing_capacity, strm_cap = %outgoing.capacity, %max_fram, "ready to write");
 
-            let capacity = self.state.outgoing_capacity.min(outgoing.capacity) as usize;
-            // bytes written this turn, possibly over multiple frames
-            let mut total_bytes_written = 0;
-
             if outgoing.headers.has_more_to_write() {
                 debug!("writing headers...");
 
@@ -417,19 +413,16 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     continue 'each_stream;
                 }
 
-                'queue_header_frames: while total_bytes_written < capacity {
-                    debug!(total_bytes_written, capacity, "writing headers...");
+                'queue_header_frames: loop {
+                    debug!("writing headers...");
 
                     let is_continuation =
                         matches!(&outgoing.headers, HeadersOutgoing::WroteSome(_));
                     let piece = outgoing.headers.take_piece();
                     let piece_len = piece.len();
 
-                    let cap_left = capacity - total_bytes_written;
-                    let max_this_fram = max_fram.min(cap_left);
-
-                    if piece_len > max_this_fram {
-                        let write_size = max_this_fram;
+                    if piece_len > max_fram {
+                        let write_size = max_fram;
                         let (written, requeued) = piece.split_at(write_size);
                         debug!(%write_size, requeued_len = %requeued.len(), "splitting headers");
                         let frame_type = if is_continuation {
@@ -440,7 +433,6 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         outgoing.headers = HeadersOutgoing::WroteSome(requeued);
 
                         let frame = Frame::new(frame_type, id);
-                        total_bytes_written += write_size;
                         frames.push((frame, PieceList::single(written)));
                     } else {
                         let frame_type = if is_continuation {
@@ -455,13 +447,16 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         };
 
                         let frame = Frame::new(frame_type, id);
-                        total_bytes_written += piece_len;
                         frames.push((frame, PieceList::single(piece)));
 
                         break 'queue_header_frames;
                     }
                 }
             }
+
+            let capacity = self.state.outgoing_capacity.min(outgoing.capacity) as usize;
+            // bytes written this turn, possibly over multiple frames
+            let mut total_bytes_written = 0;
 
             if outgoing.body.has_more_to_write() {
                 'queue_body_frames: while total_bytes_written < capacity {
@@ -662,94 +657,80 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         mut frame: Frame,
         payload: PieceList,
     ) -> Result<(), H2ConnectionError> {
-        struct FlowControlledFrameInfo {
-            len: usize,
-            end_stream: bool,
-        }
+        match &frame.frame_type {
+            FrameType::Data(flags) => {
+                let mut ss = match self.state.streams.entry(frame.stream_id) {
+                    std::collections::hash_map::Entry::Occupied(entry) => entry,
+                    std::collections::hash_map::Entry::Vacant(_) => unreachable!(
+                        "writing DATA frame for non-existent stream, this should never happen"
+                    ),
+                };
 
-        let flow_controlled_frame_info = match &frame.frame_type {
-            FrameType::Data(flags) => Some(FlowControlledFrameInfo {
-                len: payload.len(),
-                end_stream: flags.contains(DataFlags::EndStream),
-            }),
-            FrameType::Headers(flags) => Some(FlowControlledFrameInfo {
-                len: payload.len(),
-                end_stream: flags.contains(HeadersFlags::EndStream),
-            }),
+                // update stream flow control window
+                {
+                    let outgoing = match ss.get_mut().outgoing_mut() {
+                        Some(og) => og,
+                        None => {
+                            unreachable!("writing DATA frame for stream in the wrong state")
+                        }
+                    };
+                    let payload_len: u32 = payload.len().try_into().unwrap();
+                    if let Some(next_cap) = outgoing.capacity.checked_sub(payload_len) {
+                        outgoing.capacity = next_cap;
+                    } else {
+                        unreachable!(
+                                "should never write a frame that makes the stream capacity negative: outgoing.capacity = {}, payload_len = {}",
+                                outgoing.capacity, payload.len()
+                            )
+                    }
+                }
+
+                // now update connection flow control window
+                {
+                    let payload_len: u32 = payload.len().try_into().unwrap();
+                    if let Some(next_cap) = self.state.outgoing_capacity.checked_sub(payload_len) {
+                        self.state.outgoing_capacity = next_cap;
+                    } else {
+                        unreachable!(
+                                "should never write a frame that makes the connection capacity negative"
+                            )
+                    }
+                }
+
+                if flags.contains(DataFlags::EndStream) {
+                    // we won't be sending any more data on this stream
+                    self.state
+                        .streams_with_pending_data
+                        .remove(&frame.stream_id);
+
+                    match ss.get_mut() {
+                        StreamState::Open { .. } => {
+                            let incoming = match std::mem::take(ss.get_mut()) {
+                                StreamState::Open { incoming, .. } => incoming,
+                                _ => unreachable!(),
+                            };
+                            // this avoid having to re-insert the stream in the map
+                            *ss.get_mut() = StreamState::HalfClosedLocal { incoming };
+                        }
+                        _ => {
+                            // transition to closed
+                            ss.remove();
+                            debug!(
+                                "Closed stream {} (wrote data w/EndStream), now have {} streams",
+                                frame.stream_id,
+                                self.state.streams.len()
+                            );
+                        }
+                    }
+                }
+            }
             FrameType::Settings(_) => {
                 // TODO: keep track of whether our new settings have been acknowledged
-                None
             }
             _ => {
                 // muffin.
-                None
             }
         };
-
-        if let Some(flow_controlled_frame_info) = flow_controlled_frame_info {
-            let mut ss = match self.state.streams.entry(frame.stream_id) {
-                std::collections::hash_map::Entry::Occupied(entry) => entry,
-                std::collections::hash_map::Entry::Vacant(_) => unreachable!(
-                    "writing DATA frame for non-existent stream, this should never happen"
-                ),
-            };
-
-            // update stream flow control window
-            {
-                let outgoing = match ss.get_mut().outgoing_mut() {
-                    Some(og) => og,
-                    None => unreachable!("writing DATA frame for stream in the wrong state"),
-                };
-                let payload_len: u32 = payload.len().try_into().unwrap();
-                if let Some(next_cap) = outgoing.capacity.checked_sub(payload_len) {
-                    outgoing.capacity = next_cap;
-                } else {
-                    unreachable!(
-                        "should never write a frame that makes the stream capacity negative: outgoing.capacity = {}, payload_len = {}",
-                        outgoing.capacity, payload.len()
-                    )
-                }
-            }
-
-            // now update connection flow control window
-            {
-                let payload_len: u32 = payload.len().try_into().unwrap();
-                if let Some(next_cap) = self.state.outgoing_capacity.checked_sub(payload_len) {
-                    self.state.outgoing_capacity = next_cap;
-                } else {
-                    unreachable!(
-                        "should never write a frame that makes the connection capacity negative"
-                    )
-                }
-            }
-
-            if flow_controlled_frame_info.end_stream {
-                // we won't be sending any more data on this stream
-                self.state
-                    .streams_with_pending_data
-                    .remove(&frame.stream_id);
-
-                match ss.get_mut() {
-                    StreamState::Open { .. } => {
-                        let incoming = match std::mem::take(ss.get_mut()) {
-                            StreamState::Open { incoming, .. } => incoming,
-                            _ => unreachable!(),
-                        };
-                        // this avoid having to re-insert the stream in the map
-                        *ss.get_mut() = StreamState::HalfClosedLocal { incoming };
-                    }
-                    _ => {
-                        // transition to closed
-                        ss.remove();
-                        debug!(
-                            "Closed stream {} (wrote data w/EndStream), now have {} streams",
-                            frame.stream_id,
-                            self.state.streams.len()
-                        );
-                    }
-                }
-            }
-        }
 
         // TODO: enforce max_frame_size from the peer settings, not just u32::max
         frame.len = payload
