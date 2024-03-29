@@ -14,7 +14,7 @@ pub(crate) struct StreamIncoming {
 
     // incoming capacity (that we decide, we get to tell
     // the peer how much we can handle with window updates)
-    pub(crate) capacity: u32,
+    pub(crate) capacity: i64,
 }
 
 // FIXME: don't use eyre, do proper error handling

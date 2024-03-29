@@ -39,6 +39,8 @@ use crate::{
     ExpectResponseHeaders, Headers, Method, Request, Responder, ServerDriver,
 };
 
+pub const MAX_WINDOW_SIZE: i64 = u32::MAX as i64;
+
 /// HTTP/2 server configuration
 pub struct ServerConf {
     pub max_streams: u32,
@@ -388,7 +390,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
             .collect();
 
         'each_stream: for id in streams_with_pending_data {
-            if self.state.outgoing_capacity == 0 {
+            if self.state.outgoing_capacity <= 0 {
                 // that's all we can do
                 break 'each_stream;
             }
@@ -675,26 +677,29 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         }
                     };
                     let payload_len: u32 = payload.len().try_into().unwrap();
-                    if let Some(next_cap) = outgoing.capacity.checked_sub(payload_len) {
-                        outgoing.capacity = next_cap;
-                    } else {
+                    let next_cap = outgoing.capacity - payload_len as i64;
+
+                    if next_cap < 0 {
                         unreachable!(
-                                "should never write a frame that makes the stream capacity negative: outgoing.capacity = {}, payload_len = {}",
-                                outgoing.capacity, payload.len()
-                            )
+                            "should never write a frame that makes the stream capacity negative: outgoing.capacity = {}, payload_len = {}",
+                            outgoing.capacity, payload.len()
+                        )
                     }
+                    outgoing.capacity = next_cap;
                 }
 
                 // now update connection flow control window
                 {
                     let payload_len: u32 = payload.len().try_into().unwrap();
-                    if let Some(next_cap) = self.state.outgoing_capacity.checked_sub(payload_len) {
-                        self.state.outgoing_capacity = next_cap;
-                    } else {
+                    let next_cap = self.state.outgoing_capacity - payload_len as i64;
+
+                    if next_cap < 0 {
                         unreachable!(
-                                "should never write a frame that makes the connection capacity negative"
-                            )
+                            "should never write a frame that makes the connection capacity negative: outgoing_capacity = {}, payload_len = {}",
+                            self.state.outgoing_capacity, payload.len()
+                        )
                     }
+                    self.state.outgoing_capacity = next_cap;
                 }
 
                 if flags.contains(DataFlags::EndStream) {
@@ -1013,6 +1018,27 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         .set_max_table_size(settings.header_table_size as usize);
 
                     debug!("Peer sent us {settings:#?}");
+                    let initial_window_size_delta = (settings.initial_window_size as i64)
+                        - (self.state.peer_settings.initial_window_size as i64);
+                    // apply that delta to the connection and all streams
+                    self.state.outgoing_capacity += initial_window_size_delta;
+                    if self.state.outgoing_capacity > MAX_WINDOW_SIZE {
+                        return Err(H2ConnectionError::ConnectionWindowSizeOverflowDueToSettings);
+                    }
+
+                    for (id, stream) in self.state.streams.iter_mut() {
+                        if let Some(outgoing) = stream.outgoing_mut() {
+                            outgoing.capacity += initial_window_size_delta;
+                            if outgoing.capacity > MAX_WINDOW_SIZE {
+                                return Err(
+                                    H2ConnectionError::StreamWindowSizeOverflowDueToSettings {
+                                        stream_id: *id,
+                                    },
+                                );
+                            }
+                        }
+                    }
+
                     self.state.peer_settings = settings;
 
                     let frame = Frame::new(
@@ -1078,12 +1104,11 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 }
 
                 if frame.stream_id == StreamId::CONNECTION {
-                    let new_capacity = match self.state.outgoing_capacity.checked_add(increment) {
-                        Some(x) => x,
-                        None => {
-                            return Err(H2ConnectionError::WindowUpdateOverflow);
-                        }
+                    let new_capacity = self.state.outgoing_capacity + increment as i64;
+                    if new_capacity > MAX_WINDOW_SIZE {
+                        return Err(H2ConnectionError::WindowUpdateOverflow);
                     };
+
                     debug!(old_capacity = %self.state.outgoing_capacity, %new_capacity, "connection window update");
                     self.state.outgoing_capacity = new_capacity;
                     self.state.send_data_maybe.notify_one();
@@ -1102,15 +1127,13 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         }
                     };
 
-                    let new_capacity = match outgoing.capacity.checked_add(increment) {
-                        Some(x) => x,
-                        None => {
-                            // reset the stream
-                            self.rst(frame.stream_id, H2StreamError::WindowUpdateOverflow)
-                                .await?;
-                            return Ok(());
-                        }
-                    };
+                    let new_capacity = outgoing.capacity + increment as i64;
+                    if new_capacity > MAX_WINDOW_SIZE {
+                        // reset the stream
+                        self.rst(frame.stream_id, H2StreamError::WindowUpdateOverflow)
+                            .await?;
+                        return Ok(());
+                    }
 
                     debug!(old_capacity = %outgoing.capacity, %new_capacity, "stream window update");
                     outgoing.capacity = new_capacity;
@@ -1388,8 +1411,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 };
 
                 let incoming = StreamIncoming {
-                    // FIXME: handle negative window size, cf. https://httpwg.org/specs/rfc9113.html#InitialWindowSize
-                    capacity: self.state.self_settings.initial_window_size,
+                    capacity: self.state.self_settings.initial_window_size as _,
                     tx: piece_tx,
                 };
                 let outgoing: StreamOutgoing = self.state.mk_stream_outgoing();

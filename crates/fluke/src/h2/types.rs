@@ -30,8 +30,8 @@ pub(crate) struct ConnState {
     pub(crate) send_data_maybe: Notify,
     pub(crate) streams_with_pending_data: HashSet<StreamId>,
 
-    pub(crate) incoming_capacity: u32,
-    pub(crate) outgoing_capacity: u32,
+    pub(crate) incoming_capacity: i64,
+    pub(crate) outgoing_capacity: i64,
 }
 
 impl Default for ConnState {
@@ -49,8 +49,8 @@ impl Default for ConnState {
             incoming_capacity: 0,
             outgoing_capacity: 0,
         };
-        s.incoming_capacity = s.self_settings.initial_window_size;
-        s.outgoing_capacity = s.peer_settings.initial_window_size;
+        s.incoming_capacity = s.self_settings.initial_window_size as _;
+        s.outgoing_capacity = s.peer_settings.initial_window_size as _;
 
         s
     }
@@ -62,7 +62,7 @@ impl ConnState {
         StreamOutgoing {
             headers: HeadersOutgoing::WaitingForHeaders,
             body: BodyOutgoing::StillReceiving(Default::default()),
-            capacity: self.peer_settings.initial_window_size,
+            capacity: self.peer_settings.initial_window_size as _,
         }
     }
 }
@@ -177,7 +177,7 @@ pub(crate) struct StreamOutgoing {
 
     // window size of the stream, ie. how many bytes
     // we can send to the receiver before waiting.
-    pub(crate) capacity: u32,
+    pub(crate) capacity: i64,
 }
 
 #[derive(Default)]
@@ -411,6 +411,12 @@ pub(crate) enum H2ConnectionError {
     #[error("received window update that made the window size overflow")]
     WindowUpdateOverflow,
 
+    #[error("received initial window size settings update that made the connection window size overflow")]
+    ConnectionWindowSizeOverflowDueToSettings,
+
+    #[error("received initial window size settings update that made the connection window size overflow")]
+    StreamWindowSizeOverflowDueToSettings { stream_id: StreamId },
+
     #[error("received window update frame with invalid length {len}")]
     WindowUpdateInvalidLength { len: usize },
 }
@@ -427,6 +433,12 @@ impl H2ConnectionError {
             H2ConnectionError::WindowUpdateInvalidLength { .. } => KnownErrorCode::FrameSizeError,
             // flow control errors
             H2ConnectionError::WindowUpdateOverflow => KnownErrorCode::FlowControlError,
+            H2ConnectionError::ConnectionWindowSizeOverflowDueToSettings => {
+                KnownErrorCode::FlowControlError
+            }
+            H2ConnectionError::StreamWindowSizeOverflowDueToSettings { .. } => {
+                KnownErrorCode::FlowControlError
+            }
             // compression errors
             H2ConnectionError::CompressionError(_) => KnownErrorCode::CompressionError,
             // stream closed error
