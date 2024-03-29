@@ -31,7 +31,7 @@ use crate::{
             HeadersFlags, PingFlags, PrioritySpec, Settings, SettingsFlags, StreamId,
         },
         types::{
-            ConnState, H2ConnectionError, H2Event, H2EventPayload, H2StreamError,
+            BodyOutgoing, ConnState, H2ConnectionError, H2Event, H2EventPayload, H2StreamError,
             HeadersOrTrailers, HeadersOutgoing, StreamOutgoing, StreamState,
         },
     },
@@ -144,8 +144,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 FrameType::Settings(Default::default()),
                 StreamId::CONNECTION,
             );
-            self.write_frame(frame, PieceList::default().followed_by(payload))
-                .await?;
+            self.write_frame(frame, PieceList::single(payload)).await?;
         }
 
         let mut goaway_err: Option<H2ConnectionError> = None;
@@ -223,8 +222,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     })?;
 
             let frame = Frame::new(FrameType::GoAway, StreamId::CONNECTION);
-            self.write_frame(frame, PieceList::default().followed_by(payload))
-                .await?;
+            self.write_frame(frame, PieceList::single(payload)).await?;
         }
 
         Ok(())
@@ -375,16 +373,19 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
     async fn send_data_maybe(&mut self) -> Result<(), H2ConnectionError> {
         let mut not_pending: HashSet<StreamId> = Default::default();
 
+        // this vec exists for borrow-checker reasons: we can't
+        // borrow self mutably twice in 'each_stream
+        // TODO: merge those frames! do a single writev_all call!
+        let mut frames: Vec<(Frame, PieceList)> = vec![];
+
+        let max_fram = self.state.peer_settings.max_frame_size as usize;
+
         let streams_with_pending_data: HashSet<_> = self
             .state
             .streams_with_pending_data
             .iter()
             .copied()
             .collect();
-
-        // this vec exists for borrow-checker reasons: we can't
-        // borrow self mutably twice in 'each_stream
-        let mut frames = vec![];
 
         'each_stream: for id in streams_with_pending_data {
             if self.state.outgoing_capacity == 0 {
@@ -399,7 +400,6 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 .and_then(|ss| ss.outgoing_mut())
                 .expect("stream should not be in streams_with_pending_data if it's already closed / not in an outgoing state");
 
-            let max_fram = self.state.peer_settings.max_frame_size as usize;
             debug!(conn_cap = %self.state.outgoing_capacity, strm_cap = %outgoing.capacity, %max_fram, "ready to write");
 
             let capacity = self.state.outgoing_capacity.min(outgoing.capacity) as usize;
@@ -431,17 +431,23 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
                         let frame = Frame::new(frame_type, id);
                         total_bytes_written += written.len();
-                        frames.push((frame, written));
+                        frames.push((frame, PieceList::single(written)));
                     } else {
                         let frame_type = if is_continuation {
                             FrameType::Continuation(
-                                Default::default() | ContinuationFlags::EndHeaders,
+                                BitFlags::<ContinuationFlags>::default()
+                                    | ContinuationFlags::EndHeaders,
                             )
                         } else {
-                            FrameType::Headers(Default::default() | HeadersFlags::EndHeaders)
+                            FrameType::Headers(
+                                BitFlags::<HeadersFlags>::default() | HeadersFlags::EndHeaders,
+                            )
                         };
 
+                        let frame = Frame::new(frame_type, id);
                         total_bytes_written += piece_len;
+                        frames.push((frame, PieceList::single(piece)));
+
                         break 'queue_header_frames;
                     }
                 }
@@ -466,16 +472,19 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         debug!(%piece_len, "popped a piece");
 
                         let fram_size_if_full_piece = frame_len + piece_len;
-                        if fram_size_if_full_piece > max_fram {
+
+                        let cap_left = capacity - total_bytes_written;
+                        let max_this_fram = max_fram.min(cap_left);
+
+                        if fram_size_if_full_piece > max_this_fram {
                             // we can't fit this piece in the current frame, so
                             // we have to split it
-                            let write_size = max_fram - frame_len;
-                            frame_len += write_size;
-                            let (written, requeued) = piece.split_at(write_size);
+                            frame_len += max_this_fram;
+                            let (written, requeued) = piece.split_at(max_this_fram);
                             debug!(written_len = %written.len(), requeued_len = %requeued.len(), "splitting piece");
 
                             plist.push_back(written);
-                            outgoing.pieces.push_front(requeued);
+                            outgoing.body.push_front(requeued);
 
                             break 'build_frame;
                         } else {
@@ -488,14 +497,15 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     }
 
                     let mut flags: BitFlags<DataFlags> = Default::default();
-                    let is_eof = outgoing.has_more_body();
-                    if is_eof {
-                        flags |= DataFlags::EndStream;
-                    } else {
+                    if outgoing.body.might_receive_more() {
                         if frame_len == 0 {
-                            // we've sent all the data we can for this stream
+                            // the only time we want to send a zero-length frame
+                            // is if we have to send END_STREAM separately from
+                            // the last chunk.
                             break 'queue_body_frames;
                         }
+                    } else {
+                        flags |= DataFlags::EndStream;
                     }
 
                     let frame = Frame::new(FrameType::Data(flags.into()), id);
@@ -503,13 +513,11 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     frames.push((frame, plist));
                     total_bytes_written += frame_len;
 
-                    if is_eof {
+                    if flags.contains(DataFlags::EndStream) {
                         break 'queue_body_frames;
                     }
                 }
             }
-
-            not_pending.insert(id);
         }
 
         for (frame, plist) in frames {
@@ -542,20 +550,19 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     Some(outgoing) => outgoing,
                 };
 
-                if outgoing.end_stream {
-                    unreachable!("got headers after the body end event!")
+                if !matches!(&outgoing.body, BodyOutgoing::StillReceiving(_)) {
+                    unreachable!("got headers too late")
                 }
-
-                let flags = HeadersFlags::EndHeaders;
-                let frame = Frame::new(FrameType::Headers(flags.into()), ev.stream_id);
 
                 // TODO: don't allocate so much for headers. all `encode_into`
                 // wants is an `IntoIter`, we can definitely have a custom iterator
                 // that operates on all this instead of using a `Vec`.
 
-                // TODO: limit header size
+                // TODO: enforce max header size
                 let mut headers: Vec<(&[u8], &[u8])> = vec![];
+                // TODO: prevent overwriting pseudo-headers, especially :status?
                 headers.push((b":status", res.status.as_str().as_bytes()));
+
                 for (name, value) in res.headers.iter() {
                     if name == http::header::TRANSFER_ENCODING {
                         // do not set transfer-encoding: chunked when doing HTTP/2
@@ -570,8 +577,12 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     .map_err(H2ConnectionError::WriteError)?;
                 let payload = self.out_scratch.take_all();
 
-                self.write_frame(frame, PieceList::default().followed_by(payload))
-                    .await?;
+                outgoing.headers = HeadersOutgoing::WroteNone(payload.into());
+                self.state.streams_with_pending_data.insert(ev.stream_id);
+                if self.state.outgoing_capacity > 0 && outgoing.capacity > 0 {
+                    // worth revisiting then!
+                    self.state.send_data_maybe.notify_one();
+                }
             }
             H2EventPayload::BodyChunk(chunk) => {
                 let outgoing = match self
@@ -590,14 +601,9 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     Some(outgoing) => outgoing,
                 };
 
-                if outgoing.end_stream {
-                    unreachable!("got a body chunk after the body end event!")
-                }
-
                 // FIXME: this isn't great, because, due to biased polling, body pieces can pile up.
                 // when we've collected enough pieces for max frame size, we should really send them.
                 outgoing.body.push_back(Piece::Full { core: chunk });
-                debug!(stream_id = %ev.stream_id, pending_chunks = %outgoing.pieces.len(), "got a body chunk");
 
                 self.state.streams_with_pending_data.insert(ev.stream_id);
                 if self.state.outgoing_capacity > 0 && outgoing.capacity > 0 {
@@ -616,16 +622,23 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     Some(outgoing) => outgoing,
                 };
 
-                if outgoing.end_stream {
-                    panic!("got a body end event after the body end event!")
+                match &mut outgoing.body {
+                    BodyOutgoing::StillReceiving(pieces) => {
+                        let pieces = std::mem::take(pieces);
+                        if pieces.len() > 0 {
+                            // we'll need to send a zero-length data frame
+                            self.state.send_data_maybe.notify_one();
+                        }
+                        outgoing.body = BodyOutgoing::DoneReceiving(pieces);
+                        debug!(stream_id = %ev.stream_id, outgoing_body = ?outgoing.body, "got body end");
+                    }
+                    BodyOutgoing::DoneReceiving(_) => {
+                        unreachable!("got body end twice")
+                    }
+                    BodyOutgoing::DoneSending => {
+                        unreachable!("got body end after we sent everything")
+                    }
                 }
-
-                debug!(stream_id = %ev.stream_id, pending_chunks = %outgoing.body.len(), "got body end");
-                outgoing.end_stream = true;
-
-                // we'll need to send a zero-length data frame
-                // TODO: maybe we don't always need to notify here
-                self.state.send_data_maybe.notify_one();
             }
         }
 
@@ -1012,8 +1025,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         FrameType::Settings(SettingsFlags::Ack.into()),
                         StreamId::CONNECTION,
                     );
-                    self.write_frame(frame, PieceList::default().followed_by(Roll::empty()))
-                        .await?;
+                    self.write_frame(frame, PieceList::default()).await?;
                     debug!("Acknowledged peer settings");
                 }
             }
@@ -1154,8 +1166,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
         let frame = Frame::new(FrameType::RstStream, stream_id)
             .with_len((payload.len()).try_into().unwrap());
-        self.write_frame(frame, PieceList::default().followed_by(payload))
-            .await?;
+        self.write_frame(frame, PieceList::single(payload)).await?;
 
         Ok(())
     }

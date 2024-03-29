@@ -197,8 +197,9 @@ pub(crate) enum HeadersOutgoing {
 }
 
 impl HeadersOutgoing {
+    /// It's still possible that we might receive more headers from the user.
     #[inline(always)]
-    pub(crate) fn will_receive_more(&self) -> bool {
+    pub(crate) fn might_receive_more(&self) -> bool {
         match self {
             HeadersOutgoing::WaitingForHeaders => true,
             HeadersOutgoing::WroteNone(_) => true,
@@ -238,9 +239,26 @@ pub(crate) enum BodyOutgoing {
     DoneSending,
 }
 
+impl fmt::Debug for BodyOutgoing {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BodyOutgoing::StillReceiving(pieces) => f
+                .debug_tuple("BodyOutgoing::StillReceiving")
+                .field(&pieces.len())
+                .finish(),
+            BodyOutgoing::DoneReceiving(pieces) => f
+                .debug_tuple("BodyOutgoing::DoneReceiving")
+                .field(&pieces.len())
+                .finish(),
+            BodyOutgoing::DoneSending => f.debug_tuple("BodyOutgoing::DoneSending").finish(),
+        }
+    }
+}
+
 impl BodyOutgoing {
+    /// It's still possible for the user to send more data
     #[inline(always)]
-    pub(crate) fn will_receive_more(&self) -> bool {
+    pub(crate) fn might_receive_more(&self) -> bool {
         match self {
             BodyOutgoing::StillReceiving(_) => true,
             BodyOutgoing::DoneReceiving(_) => true,
@@ -254,6 +272,43 @@ impl BodyOutgoing {
             BodyOutgoing::StillReceiving(_) => true,
             BodyOutgoing::DoneReceiving(_) => true,
             BodyOutgoing::DoneSending => false,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn pop_front(&mut self) -> Option<Piece> {
+        match self {
+            BodyOutgoing::StillReceiving(pieces) => pieces.pop_front(),
+            BodyOutgoing::DoneReceiving(pieces) => {
+                let piece = pieces.pop_front();
+                if pieces.is_empty() {
+                    *self = BodyOutgoing::DoneSending;
+                }
+                piece
+            }
+            BodyOutgoing::DoneSending => None,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn push_front(&mut self, piece: Piece) {
+        match self {
+            BodyOutgoing::StillReceiving(pieces) => pieces.push_front(piece),
+            BodyOutgoing::DoneReceiving(pieces) => pieces.push_front(piece),
+            BodyOutgoing::DoneSending => {
+                *self = BodyOutgoing::DoneReceiving([piece].into());
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn push_back(&mut self, piece: Piece) {
+        match self {
+            BodyOutgoing::StillReceiving(pieces) => pieces.push_back(piece),
+            BodyOutgoing::DoneReceiving(pieces) => pieces.push_back(piece),
+            BodyOutgoing::DoneSending => {
+                unreachable!("received a piece after we were done sending")
+            }
         }
     }
 }

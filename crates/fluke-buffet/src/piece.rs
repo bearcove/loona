@@ -263,6 +263,13 @@ pub struct PieceList {
 }
 
 impl PieceList {
+    /// Create a new piece list with a single chunk
+    pub fn single(piece: impl Into<Piece>) -> Self {
+        Self {
+            pieces: [piece.into()].into(),
+        }
+    }
+
     /// Add a single chunk to the back of the list
     pub fn push_back(&mut self, chunk: impl Into<Piece>) {
         self.pieces.push_back(chunk.into());
