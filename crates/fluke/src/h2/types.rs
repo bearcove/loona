@@ -134,33 +134,6 @@ pub(crate) enum StreamState {
 }
 
 impl StreamState {
-    /// Get the inner `StreamIncoming` if the state is `Open` or `HalfClosedLocal`.
-    pub(crate) fn incoming_ref(&self) -> Option<&StreamIncoming> {
-        match self {
-            StreamState::Open { incoming, .. } => Some(incoming),
-            StreamState::HalfClosedLocal { incoming, .. } => Some(incoming),
-            _ => None,
-        }
-    }
-
-    /// Get the inner `StreamIncoming` if the state is `Open` or `HalfClosedLocal`.
-    pub(crate) fn incoming_mut(&mut self) -> Option<&mut StreamIncoming> {
-        match self {
-            StreamState::Open { incoming, .. } => Some(incoming),
-            StreamState::HalfClosedLocal { incoming, .. } => Some(incoming),
-            _ => None,
-        }
-    }
-
-    /// Get the inner `StreamOutgoing` if the state is `Open` or `HalfClosedRemote`.
-    pub(crate) fn outgoing_ref(&self) -> Option<&StreamOutgoing> {
-        match self {
-            StreamState::Open { outgoing, .. } => Some(outgoing),
-            StreamState::HalfClosedRemote { outgoing, .. } => Some(outgoing),
-            _ => None,
-        }
-    }
-
     /// Get the inner `StreamOutgoing` if the state is `Open` or `HalfClosedRemote`.
     pub(crate) fn outgoing_mut(&mut self) -> Option<&mut StreamOutgoing> {
         match self {
@@ -197,17 +170,6 @@ pub(crate) enum HeadersOutgoing {
 }
 
 impl HeadersOutgoing {
-    /// It's still possible that we might receive more headers from the user.
-    #[inline(always)]
-    pub(crate) fn might_receive_more(&self) -> bool {
-        match self {
-            HeadersOutgoing::WaitingForHeaders => true,
-            HeadersOutgoing::WroteNone(_) => true,
-            HeadersOutgoing::WroteSome(_) => true,
-            HeadersOutgoing::WroteAll => false,
-        }
-    }
-
     #[inline(always)]
     pub(crate) fn has_more_to_write(&self) -> bool {
         match self {
