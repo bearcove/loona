@@ -1256,7 +1256,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     Some(authority) => Some(authority),
                     None => headers
                         .get(header::HOST)
-                        .map(|host| host.as_str().unwrap().parse().unwrap()),
+                        .map(|host| std::str::from_utf8(host).unwrap().parse().unwrap()),
                 };
 
                 let mut uri_parts: http::uri::Parts = Default::default();

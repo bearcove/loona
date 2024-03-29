@@ -48,7 +48,7 @@ impl fmt::Debug for Request {
             .finish()?;
 
         for (name, value) in &self.headers {
-            debug!(%name, value = ?value.as_str(), "header");
+            debug!(%name, value = ?std::str::from_utf8(value), "header");
         }
 
         Ok(())
@@ -82,7 +82,7 @@ impl Response {
     pub(crate) fn debug_print(&self) {
         debug!(code = %self.status, version = ?self.version, "got response");
         for (name, value) in &self.headers {
-            debug!(%name, value = ?value.as_str(), "got header");
+            debug!(%name, value = ?std::str::from_utf8(value), "got header");
         }
     }
 

@@ -21,6 +21,7 @@ test *args:
 	RUST_BACKTRACE=1 cargo nextest run {{args}}
 
 curl-tests *args:
+	just build-testbed
 	RUST_BACKTRACE=1 cargo nextest run --no-capture --manifest-path test-crates/fluke-curl-tests/Cargo.toml {{args}}
 
 build-testbed:
