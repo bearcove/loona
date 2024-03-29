@@ -182,8 +182,14 @@ pub(crate) struct StreamOutgoing {
 }
 
 impl StreamOutgoing {
+    #[inline(always)]
     pub(crate) fn is_empty(&self) -> bool {
         self.pieces.is_empty()
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_eof(&self) -> bool {
+        self.eof && self.is_empty()
     }
 }
 

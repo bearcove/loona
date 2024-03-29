@@ -1,6 +1,6 @@
 //! Types for performing vectored I/O.
 
-use std::{fmt, ops::Deref, rc::Rc, str::Utf8Error};
+use std::{collections::VecDeque, fmt, ops::Deref, rc::Rc, str::Utf8Error};
 
 use fluke_maybe_uring::buf::IoBuf;
 use http::header::HeaderName;
@@ -250,18 +250,29 @@ pub struct PieceList {
     // ownership of it.
     //
     // we could however do our own memory pooling.
-    pieces: Vec<Piece>,
+    pieces: VecDeque<Piece>,
 }
 
 impl PieceList {
-    /// Add a single chunk to the list
-    pub fn push(&mut self, chunk: impl Into<Piece>) {
-        self.pieces.push(chunk.into());
+    /// Add a single chunk to the back of the list
+    pub fn push_back(&mut self, chunk: impl Into<Piece>) {
+        self.pieces.push_back(chunk.into());
     }
 
-    /// Add a single chunk to the list and return self
-    pub fn with(mut self, chunk: impl Into<Piece>) -> Self {
-        self.push(chunk);
+    /// Add a single chunk to the back list and return self
+    pub fn followed_by(mut self, chunk: impl Into<Piece>) -> Self {
+        self.push_back(chunk);
+        self
+    }
+
+    /// Add a single chunk to the front of the list
+    pub fn push_front(&mut self, chunk: impl Into<Piece>) {
+        self.pieces.push_front(chunk.into());
+    }
+
+    /// Add a single chunk to the front of the list and return self
+    pub fn preceded_by(mut self, chunk: impl Into<Piece>) -> Self {
+        self.push_front(chunk);
         self
     }
 
@@ -282,18 +293,18 @@ impl PieceList {
         self.pieces.clear();
     }
 
-    pub fn into_vec(self) -> Vec<Piece> {
+    pub fn into_vec_deque(self) -> VecDeque<Piece> {
         self.pieces
     }
 }
 
-impl From<Vec<Piece>> for PieceList {
-    fn from(chunks: Vec<Piece>) -> Self {
+impl From<VecDeque<Piece>> for PieceList {
+    fn from(chunks: VecDeque<Piece>) -> Self {
         Self { pieces: chunks }
     }
 }
 
-impl From<PieceList> for Vec<Piece> {
+impl From<PieceList> for VecDeque<Piece> {
     fn from(list: PieceList) -> Self {
         list.pieces
     }

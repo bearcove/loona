@@ -166,7 +166,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 FrameType::Settings(Default::default()),
                 StreamId::CONNECTION,
             );
-            self.write_frame(frame, payload).await?;
+            self.write_frame(frame, PieceList::default().followed_by(payload)).await?;
         }
 
         let mut goaway_err: Option<H2ConnectionError> = None;
@@ -244,7 +244,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     })?;
 
             let frame = Frame::new(FrameType::GoAway, StreamId::CONNECTION);
-            self.write_frame(frame, payload).await?;
+            self.write_frame(frame, PieceList::default().followed_by(payload)).await?;
         }
 
         Ok(())
@@ -397,7 +397,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         for id in eof_streams {
             let flags = DataFlags::EndStream;
             let frame = Frame::new(FrameType::Data(flags.into()), id);
-            self.write_frame(frame, Roll::empty()).await?;
+            self.write_frame(frame, PieceList::default()).await?;
         }
 
         if self.state.outgoing_capacity == 0 {
@@ -427,43 +427,69 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 continue;
             }
 
-            // how much data do we have available?
-            let outg_len: u32 = outgoing
-                .pieces
-                .iter()
-                .map(|p| p.len())
-                .sum::<usize>()
-                .try_into()
-                .unwrap_or(u32::MAX);
+            let max_fram = self.state.peer_settings.max_frame_size as usize;
+            debug!(conn_cap = %self.state.outgoing_capacity, strm_cap = %outgoing.capacity, %max_fram, "ready to write");
 
-            // how much data are we allowed to write?
-            let conn_cap = self.state.outgoing_capacity;
-            let strm_cap = outgoing.capacity;
-            let max_fram = self.state.peer_settings.max_frame_size;
+            let capacity = self.state.outgoing_capacity.min(outgoing.capacity) as usize;
+            // bytes written this turn, possibly over multiple frames
+            let mut total_bytes_written = 0;
 
-            let write_size = conn_cap.min(strm_cap).min(max_fram).min(outg_len);
+            while total_bytes_written < capacity {
+                // send as much data as we can, respecting max frame size and
+                // connection / stream capacity
+                let mut plist = PieceList::default();
+                let mut plist_byte_len = 0;
 
-            debug!(%outg_len, %conn_cap, %strm_cap, %max_fram, %write_size, "ready to write");
-            if outg_len == write_size {
-                // yay we can just send everything
-                // TODO: send a PieceList and do a single write instead
-                // TODO: actually respect max frame size
-
-                let mut pieces = std::mem::take(&mut outgoing.pieces);
-                let eof = outgoing.eof;
-                let num_pieces = pieces.len();
-
-                for (i, piece) in pieces.drain(..).enumerate() {
-                    let flags: BitFlags<DataFlags> = if eof && i == num_pieces - 1 {
-                        DataFlags::EndStream.into()
-                    } else {
-                        Default::default()
+                'pop_pieces: loop {
+                    let piece = match outgoing.pieces.pop_front() {
+                        None => break 'pop_pieces,
+                        Some(piece) => piece,
                     };
-                    let frame = Frame::new(FrameType::Data(flags.into()), id);
-                    self.write_frame(frame, piece).await?;
+
+                    // do we need to split the piece because we don't have
+                    // enough capacity left / we hit the max frame size?
+                    let piece_byte_len = piece.len();
+
+                    enum Outcome {
+                        Done,
+                        KeepAccumulating,
+                    }
+
+                    let outcome: Outcome;
+                    let write_size: usize;
+
+                    let fram_size_if_full_piece = plist_byte_len + piece_byte_len;
+                    if fram_size_if_full_piece > max_fram {
+                        // we can't fit this piece in the current frame, so
+                        // we have to split it
+                        write_size = max_fram - plist_byte_len;
+                        let (written, requeued) = piece.split_at(write_size);
+                        outcome = Outcome::Done;
+
+                        plist.push_back(written);
+                        outgoing.pieces.push_front(requeued); // thx johann
+                    } else {
+                        // we can write the full piece
+                        write_size = piece_byte_len;
+                        outcome = Outcome::KeepAccumulating;
+
+                        plist.push_back(piece);
+                    }
+
+                    total_bytes_written += write_size;
+                    plist_byte_len += write_size;
+
+                    if let Outcome::Done = outcome {
+                        break 'pop_pieces;
+                    }
                 }
-            } else {
-                todo!("handle partial writes")
+
+                let mut flags: BitFlags<DataFlags> = Default::default();
+                if outgoing.is_eof() {
+                    flags |= DataFlags::EndStream;
+                }
+                let frame = Frame::new(FrameType::Data(flags.into()), id);
+                self.write_frame(frame, plist);
             }
         }
 
@@ -565,10 +591,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
     async fn write_frame(
         &mut self,
         mut frame: Frame,
-        payload: impl Into<Piece>,
+        mut payload: PieceList,
     ) -> Result<(), H2ConnectionError> {
-        let payload = payload.into();
-
         match &frame.frame_type {
             FrameType::Data(flags) => {
                 let mut ss = match self.state.streams.entry(frame.stream_id) {
@@ -662,7 +686,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         } else {
             trace!("Writing frame with payload");
             self.transport_w
-                .writev_all(PieceList::default().with(frame_roll).with(payload))
+                .writev_all(payload.preceded_by(frame_roll))
                 .await
                 .map_err(H2ConnectionError::WriteError)?;
         }
@@ -928,7 +952,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         FrameType::Settings(SettingsFlags::Ack.into()),
                         StreamId::CONNECTION,
                     );
-                    self.write_frame(frame, Roll::empty()).await?;
+                    self.write_frame(frame, PieceList::default().(Roll::empty()))
+                        .await?;
                     debug!("Acknowledged peer settings");
                 }
             }
@@ -955,7 +980,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 let flags = PingFlags::Ack.into();
                 let frame = Frame::new(FrameType::Ping(flags), StreamId::CONNECTION)
                     .with_len(payload.len() as u32);
-                self.write_frame(frame, payload).await?;
+                self.write_frame(frame, PieceList::default().followed_by(payload))
+                    .await?;
             }
             FrameType::GoAway => {
                 if frame.stream_id != StreamId::CONNECTION {
@@ -1068,7 +1094,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
         let frame = Frame::new(FrameType::RstStream, stream_id)
             .with_len((payload.len()).try_into().unwrap());
-        self.write_frame(frame, payload).await?;
+        self.write_frame(frame, PieceList::default().followed_by(payload))
+            .await?;
 
         Ok(())
     }

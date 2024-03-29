@@ -274,9 +274,9 @@ pub(crate) async fn write_h1_body_chunk(
             transport
                 .writev_all(
                     PieceList::default()
-                        .with(format!("{:x}\r\n", chunk.len()).into_bytes())
-                        .with(chunk)
-                        .with("\r\n"),
+                        .followed_by(format!("{:x}\r\n", chunk.len()).into_bytes())
+                        .followed_by(chunk)
+                        .followed_by("\r\n"),
                 )
                 .await?;
         }
