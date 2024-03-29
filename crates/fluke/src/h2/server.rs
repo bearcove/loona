@@ -32,7 +32,7 @@ use crate::{
         },
         types::{
             ConnState, H2ConnectionError, H2Event, H2EventPayload, H2StreamError,
-            HeadersOrTrailers, StreamOutgoing, StreamState,
+            HeadersOrTrailers, HeadersOutgoing, StreamOutgoing, StreamState,
         },
     },
     util::read_and_parse,
@@ -85,28 +85,6 @@ pub(crate) struct ServerContext<D: ServerDriver + 'static, W: WriteOwned> {
 
     ev_tx: mpsc::Sender<H2Event>,
     ev_rx: mpsc::Receiver<H2Event>,
-}
-
-impl ConnState {
-    fn eof_streams(&self) -> HashSet<StreamId> {
-        self.streams_with_pending_data
-            .iter()
-            .copied()
-            .filter_map(|id| {
-                self.streams
-                    .get(&id)
-                    .and_then(|ss| ss.outgoing_ref())
-                    .map(|og| (id, og))
-            })
-            .filter_map(|(id, outgoing)| {
-                if outgoing.eof && outgoing.is_empty() {
-                    Some(id)
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
 }
 
 impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
@@ -395,18 +373,6 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
     }
 
     async fn send_data_maybe(&mut self) -> Result<(), H2ConnectionError> {
-        let eof_streams: HashSet<StreamId> = self.state.eof_streams();
-        for id in eof_streams {
-            let flags = DataFlags::EndStream;
-            let frame = Frame::new(FrameType::Data(flags.into()), id);
-            self.write_frame(frame, PieceList::default()).await?;
-        }
-
-        if self.state.outgoing_capacity == 0 {
-            // that's all we can do
-            return Ok(());
-        }
-
         let mut not_pending: HashSet<StreamId> = Default::default();
 
         let streams_with_pending_data: HashSet<_> = self
@@ -421,17 +387,17 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         let mut frames = vec![];
 
         'each_stream: for id in streams_with_pending_data {
+            if self.state.outgoing_capacity == 0 {
+                // that's all we can do
+                break 'each_stream;
+            }
+
             let outgoing = self
                 .state
                 .streams
                 .get_mut(&id)
                 .and_then(|ss| ss.outgoing_mut())
                 .expect("stream should not be in streams_with_pending_data if it's already closed / not in an outgoing state");
-
-            if outgoing.is_empty() {
-                not_pending.insert(id);
-                continue 'each_stream;
-            }
 
             let max_fram = self.state.peer_settings.max_frame_size as usize;
             debug!(conn_cap = %self.state.outgoing_capacity, strm_cap = %outgoing.capacity, %max_fram, "ready to write");
@@ -440,63 +406,106 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
             // bytes written this turn, possibly over multiple frames
             let mut total_bytes_written = 0;
 
-            'queue_frames: while total_bytes_written < capacity {
-                // send as much data as we can, respecting max frame size and
-                // connection / stream capacity
-                let mut plist = PieceList::default();
-                let mut frame_len = 0;
+            if outgoing.headers.has_more_to_write() {
+                if matches!(&outgoing.headers, HeadersOutgoing::WaitingForHeaders) {
+                    // shouldn't be pending then should it?
+                    not_pending.insert(id);
+                    continue 'each_stream;
+                }
 
-                'build_frame: loop {
-                    let piece = match outgoing.pieces.pop_front() {
-                        None => break 'build_frame,
-                        Some(piece) => piece,
-                    };
-
-                    // do we need to split the piece because we don't have
-                    // enough capacity left / we hit the max frame size?
+                'queue_header_frames: while total_bytes_written < capacity {
+                    let is_continuation =
+                        matches!(&outgoing.headers, HeadersOutgoing::WroteSome(_));
+                    let piece = outgoing.headers.take_piece();
                     let piece_len = piece.len();
-                    debug!(%piece_len, "popped a piece");
 
-                    let fram_size_if_full_piece = frame_len + piece_len;
-                    if fram_size_if_full_piece > max_fram {
-                        // we can't fit this piece in the current frame, so
-                        // we have to split it
-                        let write_size = max_fram - frame_len;
-                        frame_len += write_size;
-                        let (written, requeued) = piece.split_at(write_size);
-                        debug!(written_len = %written.len(), requeued_len = %requeued.len(), "splitting piece");
+                    if piece_len > max_fram {
+                        let (written, requeued) = piece.split_at(max_fram);
+                        debug!(written_len = %written.len(), requeued_len = %requeued.len(), "splitting headers");
+                        let frame_type = if is_continuation {
+                            FrameType::Continuation(Default::default())
+                        } else {
+                            FrameType::Headers(Default::default())
+                        };
+                        outgoing.headers = HeadersOutgoing::WroteSome(requeued);
 
-                        plist.push_back(written);
-                        outgoing.pieces.push_front(requeued);
-
-                        break 'build_frame;
+                        let frame = Frame::new(frame_type, id);
+                        total_bytes_written += written.len();
+                        frames.push((frame, written));
                     } else {
-                        // we can write the full piece
-                        let write_size = piece_len;
-                        frame_len += write_size;
+                        let frame_type = if is_continuation {
+                            FrameType::Continuation(
+                                Default::default() | ContinuationFlags::EndHeaders,
+                            )
+                        } else {
+                            FrameType::Headers(Default::default() | HeadersFlags::EndHeaders)
+                        };
 
-                        plist.push_back(piece);
+                        total_bytes_written += piece_len;
+                        break 'queue_header_frames;
                     }
                 }
+            }
 
-                let mut flags: BitFlags<DataFlags> = Default::default();
-                let is_eof = outgoing.is_eof();
-                if is_eof {
-                    flags |= DataFlags::EndStream;
-                } else {
-                    if frame_len == 0 {
-                        // we've sent all the data we can for this stream
-                        break 'queue_frames;
+            if outgoing.body.has_more_to_write() {
+                'queue_body_frames: while total_bytes_written < capacity {
+                    // send as much body data as we can, respecting max frame size and
+                    // connection / stream capacity
+                    let mut plist = PieceList::default();
+                    let mut frame_len = 0;
+
+                    'build_frame: loop {
+                        let piece = match outgoing.body.pop_front() {
+                            None => break 'build_frame,
+                            Some(piece) => piece,
+                        };
+
+                        // do we need to split the piece because we don't have
+                        // enough capacity left / we hit the max frame size?
+                        let piece_len = piece.len();
+                        debug!(%piece_len, "popped a piece");
+
+                        let fram_size_if_full_piece = frame_len + piece_len;
+                        if fram_size_if_full_piece > max_fram {
+                            // we can't fit this piece in the current frame, so
+                            // we have to split it
+                            let write_size = max_fram - frame_len;
+                            frame_len += write_size;
+                            let (written, requeued) = piece.split_at(write_size);
+                            debug!(written_len = %written.len(), requeued_len = %requeued.len(), "splitting piece");
+
+                            plist.push_back(written);
+                            outgoing.pieces.push_front(requeued);
+
+                            break 'build_frame;
+                        } else {
+                            // we can write the full piece
+                            let write_size = piece_len;
+                            frame_len += write_size;
+
+                            plist.push_back(piece);
+                        }
                     }
-                }
 
-                let frame = Frame::new(FrameType::Data(flags.into()), id);
-                debug!(?frame, %frame_len, "queuing");
-                frames.push((frame, plist));
-                total_bytes_written += frame_len;
+                    let mut flags: BitFlags<DataFlags> = Default::default();
+                    let is_eof = outgoing.has_more_body();
+                    if is_eof {
+                        flags |= DataFlags::EndStream;
+                    } else {
+                        if frame_len == 0 {
+                            // we've sent all the data we can for this stream
+                            break 'queue_body_frames;
+                        }
+                    }
 
-                if is_eof {
-                    break 'queue_frames;
+                    let frame = Frame::new(FrameType::Data(flags.into()), id);
+                    debug!(?frame, %frame_len, "queuing");
+                    frames.push((frame, plist));
+                    total_bytes_written += frame_len;
+
+                    if is_eof {
+                        break 'queue_body_frames;
+                    }
                 }
             }
 
@@ -517,6 +526,26 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
     async fn handle_event(&mut self, ev: H2Event) -> Result<(), H2ConnectionError> {
         match ev.payload {
             H2EventPayload::Headers(res) => {
+                let outgoing = match self
+                    .state
+                    .streams
+                    .get_mut(&ev.stream_id)
+                    .and_then(|s| s.outgoing_mut())
+                {
+                    None => {
+                        // ignore the event then, but at this point we should
+                        // tell the sender to stop sending chunks, which is not
+                        // possible if they all share the same ev_tx
+                        // TODO: make it possible to propagate errors to the sender
+                        return Ok(());
+                    }
+                    Some(outgoing) => outgoing,
+                };
+
+                if outgoing.end_stream {
+                    unreachable!("got headers after the body end event!")
+                }
+
                 let flags = HeadersFlags::EndHeaders;
                 let frame = Frame::new(FrameType::Headers(flags.into()), ev.stream_id);
 
@@ -561,13 +590,13 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     Some(outgoing) => outgoing,
                 };
 
-                if outgoing.eof {
+                if outgoing.end_stream {
                     unreachable!("got a body chunk after the body end event!")
                 }
 
                 // FIXME: this isn't great, because, due to biased polling, body pieces can pile up.
                 // when we've collected enough pieces for max frame size, we should really send them.
-                outgoing.pieces.push_back(Piece::Full { core: chunk });
+                outgoing.body.push_back(Piece::Full { core: chunk });
                 debug!(stream_id = %ev.stream_id, pending_chunks = %outgoing.pieces.len(), "got a body chunk");
 
                 self.state.streams_with_pending_data.insert(ev.stream_id);
@@ -587,16 +616,16 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     Some(outgoing) => outgoing,
                 };
 
-                if outgoing.eof {
+                if outgoing.end_stream {
                     panic!("got a body end event after the body end event!")
                 }
 
-                debug!(stream_id = %ev.stream_id, pending_chunks = %outgoing.pieces.len(), "got body end");
-                outgoing.eof = true;
-                if outgoing.is_empty() {
-                    // we'll need to send a zero-length data frame
-                    self.state.send_data_maybe.notify_one();
-                }
+                debug!(stream_id = %ev.stream_id, pending_chunks = %outgoing.body.len(), "got body end");
+                outgoing.end_stream = true;
+
+                // we'll need to send a zero-length data frame
+                // TODO: maybe we don't always need to notify here
+                self.state.send_data_maybe.notify_one();
             }
         }
 
@@ -1359,16 +1388,12 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     tx: piece_tx,
                 };
                 let outgoing: StreamOutgoing = self.state.mk_stream_outgoing();
-
                 self.state.streams.insert(
                     stream_id,
                     if end_stream {
                         StreamState::HalfClosedRemote { outgoing }
                     } else {
-                        StreamState::Open {
-                            incoming,
-                            outgoing: self.state.mk_stream_outgoing(),
-                        }
+                        StreamState::Open { incoming, outgoing }
                     },
                 );
                 debug!(

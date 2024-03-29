@@ -24,6 +24,9 @@ pub(crate) struct ConnState {
     /// - an H2Body has been written to, AND
     /// - the corresponding stream has available capacity
     /// - the connection has available capacity
+    ///
+    /// FIXME: we don't need Notify at all, it uses atomic operations
+    /// but all we're doing is single-threaded.
     pub(crate) send_data_maybe: Notify,
     pub(crate) streams_with_pending_data: HashSet<StreamId>,
 
@@ -57,9 +60,9 @@ impl ConnState {
     /// create a new [StreamOutgoing] based on our current settings
     pub(crate) fn mk_stream_outgoing(&self) -> StreamOutgoing {
         StreamOutgoing {
-            pieces: Default::default(),
+            headers: HeadersOutgoing::WaitingForHeaders,
+            body: BodyOutgoing::StillReceiving(Default::default()),
             capacity: self.peer_settings.initial_window_size,
-            eof: false,
         }
     }
 }
@@ -169,27 +172,89 @@ impl StreamState {
 }
 
 pub(crate) struct StreamOutgoing {
-    // list of pieces we need to send out
-    pub(crate) pieces: VecDeque<Piece>,
+    pub(crate) headers: HeadersOutgoing,
+    pub(crate) body: BodyOutgoing,
 
     // window size of the stream, ie. how many bytes
     // we can send to the receiver before waiting.
     pub(crate) capacity: u32,
-
-    // true if the stream has been closed (ie. all the pieces
-    // have been sent and the receiver has been notified)
-    pub(crate) eof: bool,
 }
 
-impl StreamOutgoing {
+#[derive(Default)]
+pub(crate) enum HeadersOutgoing {
+    // We have not yet sent any headers, and are waiting for the user to send them
+    WaitingForHeaders,
+
+    // The user gave us headers to send, but we haven't started yet
+    WroteNone(Piece),
+
+    // We have sent some headers, but not all (we're still sending CONTINUATION frames)
+    WroteSome(Piece),
+
+    // We've sent everything
+    #[default]
+    WroteAll,
+}
+
+impl HeadersOutgoing {
     #[inline(always)]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.pieces.is_empty()
+    pub(crate) fn will_receive_more(&self) -> bool {
+        match self {
+            HeadersOutgoing::WaitingForHeaders => true,
+            HeadersOutgoing::WroteNone(_) => true,
+            HeadersOutgoing::WroteSome(_) => true,
+            HeadersOutgoing::WroteAll => false,
+        }
     }
 
     #[inline(always)]
-    pub(crate) fn is_eof(&self) -> bool {
-        self.eof && self.is_empty()
+    pub(crate) fn has_more_to_write(&self) -> bool {
+        match self {
+            HeadersOutgoing::WaitingForHeaders => true,
+            HeadersOutgoing::WroteNone(_) => true,
+            HeadersOutgoing::WroteSome(_) => true,
+            HeadersOutgoing::WroteAll => false,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn take_piece(&mut self) -> Piece {
+        match std::mem::take(self) {
+            Self::WroteNone(piece) => piece,
+            Self::WroteSome(piece) => piece,
+            _ => Piece::empty(),
+        }
+    }
+}
+
+pub(crate) enum BodyOutgoing {
+    /// We are still receiving body pieces from the user
+    StillReceiving(VecDeque<Piece>),
+
+    /// We have received all body pieces from the user
+    DoneReceiving(VecDeque<Piece>),
+
+    /// We have sent all data to the peer
+    DoneSending,
+}
+
+impl BodyOutgoing {
+    #[inline(always)]
+    pub(crate) fn will_receive_more(&self) -> bool {
+        match self {
+            BodyOutgoing::StillReceiving(_) => true,
+            BodyOutgoing::DoneReceiving(_) => true,
+            BodyOutgoing::DoneSending => false,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn has_more_to_write(&self) -> bool {
+        match self {
+            BodyOutgoing::StillReceiving(_) => true,
+            BodyOutgoing::DoneReceiving(_) => true,
+            BodyOutgoing::DoneSending => false,
+        }
     }
 }
 

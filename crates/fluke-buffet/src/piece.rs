@@ -21,6 +21,15 @@ pub enum Piece {
     },
 }
 
+impl Piece {
+    /// Returns an empty piece
+    pub fn empty() -> Self {
+        Self::Full {
+            core: PieceCore::Static(&[]),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum PieceCore {
     Static(&'static [u8]),
