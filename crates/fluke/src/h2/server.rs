@@ -1017,25 +1017,30 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     self.hpack_enc
                         .set_max_table_size(settings.header_table_size as usize);
 
-                    debug!("Peer sent us {settings:#?}");
                     let initial_window_size_delta = (settings.initial_window_size as i64)
                         - (self.state.peer_settings.initial_window_size as i64);
-                    // apply that delta to the connection and all streams
-                    self.state.outgoing_capacity += initial_window_size_delta;
-                    if self.state.outgoing_capacity > MAX_WINDOW_SIZE {
-                        return Err(H2ConnectionError::ConnectionWindowSizeOverflowDueToSettings);
-                    }
+                    debug!(%initial_window_size_delta, "Peer sent us {settings:#?}");
 
+                    let mut maybe_send_data = false;
+
+                    // apply that delta to all streams
                     for (id, stream) in self.state.streams.iter_mut() {
                         if let Some(outgoing) = stream.outgoing_mut() {
-                            outgoing.capacity += initial_window_size_delta;
-                            if outgoing.capacity > MAX_WINDOW_SIZE {
+                            let next_cap = outgoing.capacity + initial_window_size_delta;
+                            if next_cap > MAX_WINDOW_SIZE {
                                 return Err(
                                     H2ConnectionError::StreamWindowSizeOverflowDueToSettings {
                                         stream_id: *id,
                                     },
                                 );
                             }
+                            // if capacity was negative or zero, and is now greater than zero,
+                            // we need to maybe send data
+                            if next_cap > 0 && outgoing.capacity <= 0 {
+                                debug!(?id, %next_cap, "stream capacity was <= 0, now > 0");
+                                maybe_send_data = true;
+                            }
+                            outgoing.capacity = next_cap;
                         }
                     }
 
@@ -1047,6 +1052,10 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     );
                     self.write_frame(frame, PieceList::default()).await?;
                     debug!("Acknowledged peer settings");
+
+                    if maybe_send_data {
+                        self.state.send_data_maybe.notify_one();
+                    }
                 }
             }
             FrameType::PushPromise => {
@@ -1135,15 +1144,21 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         return Ok(());
                     }
 
-                    debug!(old_capacity = %outgoing.capacity, %new_capacity, "stream window update");
+                    let old_capacity = outgoing.capacity;
+                    debug!(stream_id = %frame.stream_id, %old_capacity, %new_capacity, "stream window update");
                     outgoing.capacity = new_capacity;
-                    if self.state.outgoing_capacity > 0
-                        && self
-                            .state
-                            .streams_with_pending_data
-                            .contains(&frame.stream_id)
-                    {
-                        self.state.send_data_maybe.notify_one();
+
+                    // insert into streams_with_pending_data if the old capacity was <= zero
+                    // and the new capacity is > zero
+                    if old_capacity <= 0 && new_capacity > 0 {
+                        debug!(conn_capacity = %self.state.outgoing_capacity, "stream capacity is newly positive, inserting in streams_with_pending_data");
+                        self.state.streams_with_pending_data.insert(frame.stream_id);
+
+                        // if the connection has capacity, notify!
+                        if self.state.outgoing_capacity > 0 {
+                            debug!(stream_id = ?frame.stream_id, "stream window update, maybe send data");
+                            self.state.send_data_maybe.notify_one();
+                        }
                     }
                 }
             }
