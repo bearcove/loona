@@ -3,7 +3,7 @@ use std::fmt;
 use tracing::debug;
 
 use crate::{util::read_and_parse, Body, BodyChunk, BodyErrorReason};
-use fluke_buffet::{Piece, PieceList, RollMut};
+use fluke_buffet::{PieceCore, PieceList, RollMut};
 use fluke_maybe_uring::io::{ReadOwned, WriteOwned};
 
 /// An HTTP/1.1 body, either chunked or content-length.
@@ -266,7 +266,7 @@ pub(crate) async fn write_h1_body(
 
 pub(crate) async fn write_h1_body_chunk(
     transport: &mut impl WriteOwned,
-    chunk: Piece,
+    chunk: PieceCore,
     mode: BodyWriteMode,
 ) -> eyre::Result<()> {
     match mode {

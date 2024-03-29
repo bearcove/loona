@@ -74,15 +74,15 @@ impl From<HeaderName> for PieceCore {
     }
 }
 
-impl Deref for Piece {
+impl Deref for PieceCore {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
-        self.core().deref()
+        self.as_ref()
     }
 }
 
-impl Deref for PieceCore {
+impl Deref for Piece {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {

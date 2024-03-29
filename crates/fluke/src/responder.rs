@@ -1,7 +1,7 @@
 use http::header;
 
 use crate::{h1::body::BodyWriteMode, Body, BodyChunk, Headers, HeadersExt, Response};
-use fluke_buffet::Piece;
+use fluke_buffet::PieceCore;
 
 pub trait ResponseState {}
 
@@ -118,7 +118,7 @@ where
 {
     /// Send a response body chunk. Errors out if sending more than the
     /// announced content-length.
-    pub async fn write_chunk(&mut self, chunk: Piece) -> eyre::Result<()> {
+    pub async fn write_chunk(&mut self, chunk: PieceCore) -> eyre::Result<()> {
         self.encoder.write_body_chunk(chunk, self.state.mode).await
     }
 
@@ -158,7 +158,8 @@ where
 #[allow(async_fn_in_trait)] // we never require Send
 pub trait Encoder {
     async fn write_response(&mut self, res: Response) -> eyre::Result<()>;
-    async fn write_body_chunk(&mut self, chunk: Piece, mode: BodyWriteMode) -> eyre::Result<()>;
+    async fn write_body_chunk(&mut self, chunk: PieceCore, mode: BodyWriteMode)
+        -> eyre::Result<()>;
     async fn write_body_end(&mut self, mode: BodyWriteMode) -> eyre::Result<()>;
     async fn write_trailers(&mut self, trailers: Box<Headers>) -> eyre::Result<()>;
 }

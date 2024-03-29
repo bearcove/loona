@@ -3,7 +3,7 @@ mod helpers;
 use bytes::BytesMut;
 use curl::easy::{Easy, HttpVersion, List};
 use fluke::{
-    buffet::{Piece, RollMut},
+    buffet::{Piece, PieceCore, RollMut},
     h1, h2,
     maybe_uring::io::{ChanRead, ChanWrite, IntoHalves},
     Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, HeadersExt, Method, Request,
@@ -974,7 +974,9 @@ impl Body for SampleBody {
     async fn next_chunk(&mut self) -> eyre::Result<BodyChunk> {
         let c = match self.chunks_remain {
             0 => BodyChunk::Done { trailers: None },
-            _ => BodyChunk::Chunk(Piece::Vec(b"this is a big chunk".to_vec().repeat(256))),
+            _ => BodyChunk::Chunk(PieceCore::Vec(Rc::new(
+                b"this is a big chunk".to_vec().repeat(256),
+            ))),
         };
 
         if let Some(remain) = self.chunks_remain.checked_sub(1) {

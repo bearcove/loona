@@ -7,7 +7,7 @@ use crate::{
     types::{Headers, Request, Response},
     Encoder,
 };
-use fluke_buffet::{Piece, PieceList, RollMut};
+use fluke_buffet::{PieceCore, PieceList, RollMut};
 use fluke_maybe_uring::io::WriteOwned;
 
 use super::body::{write_h1_body_chunk, write_h1_body_end, BodyWriteMode};
@@ -168,7 +168,11 @@ where
     }
 
     // TODO: move `mode` into `H1Encoder`? we don't need it for h2
-    async fn write_body_chunk(&mut self, chunk: Piece, mode: BodyWriteMode) -> eyre::Result<()> {
+    async fn write_body_chunk(
+        &mut self,
+        chunk: PieceCore,
+        mode: BodyWriteMode,
+    ) -> eyre::Result<()> {
         // TODO: inline
         write_h1_body_chunk(&mut self.transport_w, chunk, mode).await
     }

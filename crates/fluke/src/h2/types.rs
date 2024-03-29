@@ -3,7 +3,7 @@ use std::{
     fmt,
 };
 
-use fluke_buffet::Piece;
+use fluke_buffet::{Piece, PieceCore};
 use tokio::sync::Notify;
 
 use crate::Response;
@@ -378,7 +378,7 @@ pub(crate) struct H2Event {
 
 pub(crate) enum H2EventPayload {
     Headers(Response),
-    BodyChunk(Piece),
+    BodyChunk(PieceCore),
     BodyEnd,
 }
 

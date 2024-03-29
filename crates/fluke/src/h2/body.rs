@@ -1,10 +1,10 @@
 use tokio::sync::mpsc;
 
 use crate::{Body, BodyChunk, Headers};
-use fluke_buffet::Piece;
+use fluke_buffet::PieceCore;
 
 pub(crate) enum PieceOrTrailers {
-    Piece(Piece),
+    Piece(PieceCore),
     Trailers(Box<Headers>),
 }
 

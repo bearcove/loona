@@ -526,7 +526,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
                 // FIXME: this isn't great, because, due to biased polling, body pieces can pile up.
                 // when we've collected enough pieces for max frame size, we should really send them.
-                outgoing.pieces.push_back(chunk);
+                outgoing.pieces.push_back(Piece::Full { core: chunk });
                 debug!(stream_id = %ev.stream_id, pending_chunks = %outgoing.pieces.len(), "got a body chunk");
 
                 self.state.streams_with_pending_data.insert(ev.stream_id);

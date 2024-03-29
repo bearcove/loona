@@ -51,7 +51,7 @@ impl Encoder for H2Encoder {
     // TODO: BodyWriteMode is not relevant for h2
     async fn write_body_chunk(
         &mut self,
-        chunk: fluke_buffet::Piece,
+        chunk: fluke_buffet::PieceCore,
         _mode: BodyWriteMode,
     ) -> eyre::Result<()> {
         assert!(matches!(self.state, EncoderState::ExpectResponseBody));
