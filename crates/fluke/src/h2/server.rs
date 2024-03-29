@@ -407,21 +407,31 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
             let mut total_bytes_written = 0;
 
             if outgoing.headers.has_more_to_write() {
+                debug!("writing headers...");
+
                 if matches!(&outgoing.headers, HeadersOutgoing::WaitingForHeaders) {
+                    debug!("waiting for headers...");
+
                     // shouldn't be pending then should it?
                     not_pending.insert(id);
                     continue 'each_stream;
                 }
 
                 'queue_header_frames: while total_bytes_written < capacity {
+                    debug!(total_bytes_written, capacity, "writing headers...");
+
                     let is_continuation =
                         matches!(&outgoing.headers, HeadersOutgoing::WroteSome(_));
                     let piece = outgoing.headers.take_piece();
                     let piece_len = piece.len();
 
-                    if piece_len > max_fram {
-                        let (written, requeued) = piece.split_at(max_fram);
-                        debug!(written_len = %written.len(), requeued_len = %requeued.len(), "splitting headers");
+                    let cap_left = capacity - total_bytes_written;
+                    let max_this_fram = max_fram.min(cap_left);
+
+                    if piece_len > max_this_fram {
+                        let write_size = max_this_fram;
+                        let (written, requeued) = piece.split_at(write_size);
+                        debug!(%write_size, requeued_len = %requeued.len(), "splitting headers");
                         let frame_type = if is_continuation {
                             FrameType::Continuation(Default::default())
                         } else {
@@ -430,7 +440,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         outgoing.headers = HeadersOutgoing::WroteSome(requeued);
 
                         let frame = Frame::new(frame_type, id);
-                        total_bytes_written += written.len();
+                        total_bytes_written += write_size;
                         frames.push((frame, PieceList::single(written)));
                     } else {
                         let frame_type = if is_continuation {
@@ -479,8 +489,9 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         if fram_size_if_full_piece > max_this_fram {
                             // we can't fit this piece in the current frame, so
                             // we have to split it
-                            frame_len += max_this_fram;
-                            let (written, requeued) = piece.split_at(max_this_fram);
+                            let write_size = max_this_fram - frame_len;
+                            let (written, requeued) = piece.split_at(write_size);
+                            frame_len += write_size;
                             debug!(written_len = %written.len(), requeued_len = %requeued.len(), "splitting piece");
 
                             plist.push_back(written);
@@ -521,6 +532,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         }
 
         for (frame, plist) in frames {
+            debug!(?frame, plist_len = %plist.len(), "writing");
             self.write_frame(frame, plist).await?;
         }
 
@@ -693,7 +705,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     outgoing.capacity = next_cap;
                 } else {
                     unreachable!(
-                        "should never write a frame that makes the stream capacity negative"
+                        "should never write a frame that makes the stream capacity negative: outgoing.capacity = {}, payload_len = {}",
+                        outgoing.capacity, payload.len()
                     )
                 }
             }
