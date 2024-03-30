@@ -7,7 +7,25 @@ _default:
 ci-test:
 	#!/bin/bash -eux
 	just build-testbed
-	just cov
+
+    export RUSTUP_TOOLCHAIN=nightly
+    rustup component add llvm-tools
+    cargo llvm-cov --version
+
+    cargo llvm-cov show-env --branch --export-prefix > /tmp/llvm-cov-env
+    echo "======= LLVM cov env ======="
+    cat /tmp/llvm-cov-env
+    echo "============================"
+    source /tmp/llvm-cov-env
+
+    cargo llvm-cov clean --workspace
+
+    cargo nextest run --verbose --release --profile ci --manifest-path crates/fluke-hpack/Cargo.toml --features interop-tests --release
+    cargo nextest run --verbose --release --profile ci --manifest-path crates/fluke/Cargo.toml
+    cargo nextest run --verbose --release --profile ci --manifest-path test-crates/fluke-curl-tests/Cargo.toml
+
+    cargo llvm-cov report --release --lcov --output-path coverage.lcov
+    cargo llvm-cov report --release --html
 
 cov:
 	scripts/cov.sh
