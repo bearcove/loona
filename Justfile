@@ -5,8 +5,8 @@ _default:
 
 # Run all tests with nextest and cargo-llvm-cov
 ci-test:
-	#!/bin/bash -eux
-	just build-testbed
+    #!/bin/bash -eux
+    just build-testbed
 
     export RUSTUP_TOOLCHAIN=nightly
     rustup component add llvm-tools
@@ -23,6 +23,16 @@ ci-test:
     cargo nextest run --verbose --release --profile ci --manifest-path crates/fluke-hpack/Cargo.toml --features interop-tests --release
     cargo nextest run --verbose --release --profile ci --manifest-path crates/fluke/Cargo.toml
     cargo nextest run --verbose --release --profile ci --manifest-path test-crates/fluke-curl-tests/Cargo.toml
+
+    cargo build --release --manifest-path test-crates/fluke-h2spec/Cargo.toml
+    # skip if SKIP_H2SPEC is set to 1
+    if [[ "${SKIP_H2SPEC:-0}" == "1" ]]; then
+    echo "Skipping h2spec suites"
+    else
+        for suite in generic hpack http2; do
+            "${CARGO_TARGET_DIR}"/release/fluke-h2spec "${suite}" -j "target/h2spec-${suite}.xml"
+        done
+    fi
 
     cargo llvm-cov report --release --lcov --output-path coverage.lcov
     cargo llvm-cov report --release --html
