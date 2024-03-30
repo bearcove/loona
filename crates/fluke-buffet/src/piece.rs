@@ -349,7 +349,7 @@ impl Deref for PieceStr {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
-        unsafe { std::str::from_utf8_unchecked(&self.piece.as_ref()) }
+        unsafe { std::str::from_utf8_unchecked(&self.piece) }
     }
 }
 

@@ -516,7 +516,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         flags |= DataFlags::EndStream;
                     }
 
-                    let frame = Frame::new(FrameType::Data(flags.into()), id);
+                    let frame = Frame::new(FrameType::Data(flags), id);
                     debug!(?frame, %frame_len, "queuing");
                     frames.push((frame, plist));
                     total_bytes_written += frame_len;
@@ -634,7 +634,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 match &mut outgoing.body {
                     BodyOutgoing::StillReceiving(pieces) => {
                         let pieces = std::mem::take(pieces);
-                        if pieces.len() > 0 {
+                        if pieces.is_empty() {
                             // we'll need to send a zero-length data frame
                             self.state.send_data_maybe.notify_one();
                         }

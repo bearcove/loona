@@ -1,6 +1,5 @@
 use std::{
-    net::{Shutdown, SocketAddr},
-    rc::Rc,
+    collections::VecDeque, net::{Shutdown, SocketAddr}, rc::Rc
 };
 
 use crate::{
@@ -51,12 +50,13 @@ impl WriteOwned for TcpWriteHalf {
         (res, b.0)
     }
 
-    async fn writev<B: IoBuf>(&mut self, list: Vec<B>) -> BufResult<usize, Vec<B>> {
-        use bytemuck::allocation::TransparentWrapperAlloc;
+    async fn writev<B: IoBuf>(&mut self, list: VecDeque<B>) -> BufResult<usize, VecDeque<B>> {
+        // TODO: use bytemuck::allcation::TransparentWrapperAlloc again,
+        // with wrap_vec and peel_vec
 
-        let list = BufCompat::wrap_vec(list);
+        let list: Vec<BufCompat<B>> = list.into_iter().map(BufCompat).collect();
         let (res, list) = self.0.writev(list).await;
-        let list: Vec<B> = BufCompat::peel_vec(list);
+        let list: VecDeque<B> = list.into_iter().map(|b| b.0).collect();
         (res, list)
     }
 

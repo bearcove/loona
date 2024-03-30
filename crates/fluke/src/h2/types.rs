@@ -374,9 +374,6 @@ pub(crate) enum H2ConnectionError {
     WindowUpdateOverflow,
 
     #[error("received initial window size settings update that made the connection window size overflow")]
-    ConnectionWindowSizeOverflowDueToSettings,
-
-    #[error("received initial window size settings update that made the connection window size overflow")]
     StreamWindowSizeOverflowDueToSettings { stream_id: StreamId },
 
     #[error("received window update frame with invalid length {len}")]
@@ -395,9 +392,6 @@ impl H2ConnectionError {
             H2ConnectionError::WindowUpdateInvalidLength { .. } => KnownErrorCode::FrameSizeError,
             // flow control errors
             H2ConnectionError::WindowUpdateOverflow => KnownErrorCode::FlowControlError,
-            H2ConnectionError::ConnectionWindowSizeOverflowDueToSettings => {
-                KnownErrorCode::FlowControlError
-            }
             H2ConnectionError::StreamWindowSizeOverflowDueToSettings { .. } => {
                 KnownErrorCode::FlowControlError
             }
