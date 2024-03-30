@@ -3,7 +3,7 @@ mod helpers;
 use bytes::BytesMut;
 use curl::easy::{Easy, HttpVersion, List};
 use fluke::{
-    buffet::{Piece, RollMut},
+    buffet::{PieceCore, RollMut},
     h1, h2,
     maybe_uring::io::{ChanRead, ChanWrite, IntoHalves},
     Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, HeadersExt, Method, Request,
@@ -370,8 +370,6 @@ fn proxy_echo_body_content_len() {
 
 #[test]
 fn proxy_echo_body_chunked() {
-    eyre::set_hook(Box::new(|e| eyre::DefaultHandler::default_with(e))).unwrap();
-
     #[allow(drop_bounds)]
     async fn client(ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
         let socket = TcpStream::connect(ln_addr).await?;
@@ -531,8 +529,6 @@ fn curl_echo_body_chunked() {
 }
 
 fn curl_echo_body(typ: BodyType) {
-    eyre::set_hook(Box::new(|e| eyre::DefaultHandler::default_with(e))).unwrap();
-
     #[allow(drop_bounds)]
     fn client(typ: BodyType, ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
         let req_body = "Please return to sender".as_bytes();
@@ -615,8 +611,6 @@ fn curl_echo_body_noproxy_chunked() {
 }
 
 fn curl_echo_body_noproxy(typ: BodyType) {
-    eyre::set_hook(Box::new(|e| eyre::DefaultHandler::default_with(e))).unwrap();
-
     #[allow(drop_bounds)]
     fn client(typ: BodyType, ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
         let req_body = "Please return to sender".as_bytes();
@@ -788,8 +782,6 @@ fn curl_echo_body_noproxy(typ: BodyType) {
 
 #[test]
 fn h2_basic_post() {
-    eyre::set_hook(Box::new(|e| eyre::DefaultHandler::default_with(e))).unwrap();
-
     #[allow(drop_bounds)]
     fn client(ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
         let req_body = "Please return to sender".as_bytes();
@@ -982,7 +974,9 @@ impl Body for SampleBody {
     async fn next_chunk(&mut self) -> eyre::Result<BodyChunk> {
         let c = match self.chunks_remain {
             0 => BodyChunk::Done { trailers: None },
-            _ => BodyChunk::Chunk(Piece::Vec(b"this is a big chunk".to_vec().repeat(256))),
+            _ => BodyChunk::Chunk(PieceCore::Vec(Rc::new(
+                b"this is a big chunk".to_vec().repeat(256),
+            ))),
         };
 
         if let Some(remain) = self.chunks_remain.checked_sub(1) {
@@ -995,8 +989,6 @@ impl Body for SampleBody {
 // TODO: dedup with h2_basic_post
 #[test]
 fn h2_basic_get() {
-    eyre::set_hook(Box::new(|e| eyre::DefaultHandler::default_with(e))).unwrap();
-
     #[allow(drop_bounds)]
     fn client(ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
         let mut res_body = Vec::new();

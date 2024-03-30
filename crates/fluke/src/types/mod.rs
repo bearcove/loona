@@ -3,7 +3,7 @@ use std::fmt::{self, Debug};
 use http::{StatusCode, Uri, Version};
 use tracing::debug;
 
-use fluke_buffet::Piece;
+use fluke_buffet::PieceCore;
 
 mod headers;
 pub use headers::*;
@@ -48,7 +48,7 @@ impl fmt::Debug for Request {
             .finish()?;
 
         for (name, value) in &self.headers {
-            debug!(%name, value = ?value.as_str(), "header");
+            debug!(%name, value = ?std::str::from_utf8(value), "header");
         }
 
         Ok(())
@@ -82,7 +82,7 @@ impl Response {
     pub(crate) fn debug_print(&self) {
         debug!(code = %self.status, version = ?self.version, "got response");
         for (name, value) in &self.headers {
-            debug!(%name, value = ?value.as_str(), "got header");
+            debug!(%name, value = ?std::str::from_utf8(value), "got header");
         }
     }
 
@@ -97,7 +97,7 @@ impl Response {
 
 /// A body chunk
 pub enum BodyChunk {
-    Chunk(Piece),
+    Chunk(PieceCore),
 
     /// The body finished, and it matched the announced content-length,
     /// or we were using a framed protocol

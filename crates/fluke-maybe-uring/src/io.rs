@@ -1,4 +1,4 @@
-use std::net::Shutdown;
+use std::{collections::VecDeque, net::Shutdown};
 
 use crate::{
     buf::{IoBuf, IoBufMut},
@@ -45,15 +45,15 @@ pub trait WriteOwned {
 
     /// Write a list of buffers, taking ownership for the duration of the write.
     /// Might perform a partial write, see [WriteOwned::writev_all]
-    async fn writev<B: IoBuf>(&mut self, list: Vec<B>) -> BufResult<usize, Vec<B>> {
-        let mut out_list = Vec::with_capacity(list.len());
+    async fn writev<B: IoBuf>(&mut self, list: VecDeque<B>) -> BufResult<usize, VecDeque<B>> {
+        let mut out_list = VecDeque::with_capacity(list.len());
         let mut list = list.into_iter();
         let mut total = 0;
 
         while let Some(buf) = list.next() {
             let buf_len = buf.bytes_init();
             let (res, buf) = self.write(buf).await;
-            out_list.push(buf);
+            out_list.push_back(buf);
 
             match res {
                 Ok(0) => {
@@ -86,10 +86,12 @@ pub trait WriteOwned {
     }
 
     /// Write a list of buffers, re-trying the write if the kernel does a partial write.
-    async fn writev_all<B: IoBuf>(&mut self, list: impl Into<Vec<B>>) -> std::io::Result<()> {
-        // FIXME: converting into a `Vec` and _then_ into an iterator is silly,
+    async fn writev_all<B: IoBuf>(&mut self, list: impl Into<VecDeque<B>>) -> std::io::Result<()> {
+        // FIXME: converting into a `VecDeque` and _then_ into an iterator is silly,
         // we can probably find a better function signature here.
-        let mut list: Vec<_> = list.into().into_iter().map(BufOrSlice::Buf).collect();
+        let mut list: VecDeque<_> = list.into().into_iter().map(BufOrSlice::Buf).collect();
+        // TODO: figure out if `Piece::Slice` is redundant with `BufOrSlice`. Probably is,
+        // but they're different abstraction levels, so.
 
         while !list.is_empty() {
             let res;

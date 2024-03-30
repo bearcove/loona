@@ -1,6 +1,6 @@
 //! Types for performing vectored I/O.
 
-use std::{fmt, ops::Deref, str::Utf8Error};
+use std::{collections::VecDeque, fmt, ops::Deref, rc::Rc, str::Utf8Error};
 
 use fluke_maybe_uring::buf::IoBuf;
 use http::header::HeaderName;
@@ -11,33 +11,63 @@ use crate::{Roll, RollStr};
 /// passing to the kernel (io_uring writes).
 #[derive(Clone)]
 pub enum Piece {
+    Full {
+        core: PieceCore,
+    },
+    Slice {
+        core: PieceCore,
+        start: usize,
+        len: usize,
+    },
+}
+
+impl Piece {
+    /// Returns an empty piece
+    pub fn empty() -> Self {
+        Self::Full {
+            core: PieceCore::Static(&[]),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum PieceCore {
     Static(&'static [u8]),
-    Vec(Vec<u8>),
+    Vec(Rc<Vec<u8>>),
     Roll(Roll),
     HeaderName(HeaderName),
 }
 
-impl From<&'static [u8]> for Piece {
+impl<T> From<T> for Piece
+where
+    T: Into<PieceCore>,
+{
+    fn from(t: T) -> Self {
+        Piece::Full { core: t.into() }
+    }
+}
+
+impl From<&'static [u8]> for PieceCore {
     fn from(slice: &'static [u8]) -> Self {
-        Piece::Static(slice)
+        PieceCore::Static(slice)
     }
 }
 
-impl From<&'static str> for Piece {
+impl From<&'static str> for PieceCore {
     fn from(slice: &'static str) -> Self {
-        Piece::Static(slice.as_bytes())
+        PieceCore::Static(slice.as_bytes())
     }
 }
 
-impl From<Vec<u8>> for Piece {
+impl From<Vec<u8>> for PieceCore {
     fn from(vec: Vec<u8>) -> Self {
-        Piece::Vec(vec)
+        PieceCore::Vec(Rc::new(vec))
     }
 }
 
-impl From<Roll> for Piece {
+impl From<Roll> for PieceCore {
     fn from(roll: Roll) -> Self {
-        Piece::Roll(roll)
+        PieceCore::Roll(roll)
     }
 }
 
@@ -47,9 +77,17 @@ impl From<PieceStr> for Piece {
     }
 }
 
-impl From<HeaderName> for Piece {
+impl From<HeaderName> for PieceCore {
     fn from(name: HeaderName) -> Self {
-        Piece::HeaderName(name)
+        PieceCore::HeaderName(name)
+    }
+}
+
+impl Deref for PieceCore {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
     }
 }
 
@@ -61,26 +99,83 @@ impl Deref for Piece {
     }
 }
 
-impl AsRef<[u8]> for Piece {
+impl AsRef<[u8]> for PieceCore {
     fn as_ref(&self) -> &[u8] {
         match self {
-            Piece::Static(slice) => slice,
-            Piece::Vec(vec) => vec.as_ref(),
-            Piece::Roll(roll) => roll.as_ref(),
-            Piece::HeaderName(name) => name.as_str().as_bytes(),
+            PieceCore::Static(slice) => slice,
+            PieceCore::Vec(vec) => vec.as_ref(),
+            PieceCore::Roll(roll) => roll.as_ref(),
+            PieceCore::HeaderName(name) => name.as_str().as_bytes(),
         }
     }
 }
 
 impl Piece {
-    /// Decode as utf-8 (borrowed)
-    pub fn as_str(&self) -> Result<&str, Utf8Error> {
-        std::str::from_utf8(self.as_ref())
+    fn start(&self) -> usize {
+        match self {
+            Piece::Full { .. } => 0,
+            Piece::Slice { start, .. } => *start,
+        }
     }
 
-    /// Decode as utf-8 (owned)
+    fn core(&self) -> &PieceCore {
+        match self {
+            Piece::Full { core } => core,
+            Piece::Slice { core, .. } => core,
+        }
+    }
+
+    /// Split the piece into two at the given index.
+    /// The original piece will be consumed.
+    /// Returns a tuple of the two pieces.
+    pub fn split_at(self, middle: usize) -> (Self, Self) {
+        let len = self.len();
+        assert!(middle <= len);
+
+        match self {
+            Piece::Full { core } => (
+                Self::Slice {
+                    core: core.clone(),
+                    start: 0,
+                    len: middle,
+                },
+                Self::Slice {
+                    core,
+                    start: middle,
+                    len: len - middle,
+                },
+            ),
+            Piece::Slice { core, start, len } => (
+                Self::Slice {
+                    core: core.clone(),
+                    start,
+                    len: middle,
+                },
+                Self::Slice {
+                    core,
+                    start: start + middle,
+                    len: len - middle,
+                },
+            ),
+        }
+    }
+}
+
+impl AsRef<[u8]> for Piece {
+    fn as_ref(&self) -> &[u8] {
+        let ptr = self.core().as_ref();
+        if let Piece::Slice { start, len, .. } = self {
+            &ptr[*start..][..*len]
+        } else {
+            ptr
+        }
+    }
+}
+
+impl Piece {
+    // Decode as utf-8 (owned)
     pub fn to_str(self) -> Result<PieceStr, Utf8Error> {
-        _ = std::str::from_utf8(&self)?;
+        _ = std::str::from_utf8(&self[..])?;
         Ok(PieceStr { piece: self })
     }
 
@@ -93,33 +188,54 @@ impl Piece {
     }
 }
 
-unsafe impl IoBuf for Piece {
+unsafe impl IoBuf for PieceCore {
     #[inline(always)]
     fn stable_ptr(&self) -> *const u8 {
         match self {
-            Piece::Static(s) => IoBuf::stable_ptr(s),
-            Piece::Vec(s) => IoBuf::stable_ptr(s),
-            Piece::Roll(s) => IoBuf::stable_ptr(s),
-            Piece::HeaderName(s) => s.as_str().as_ptr(),
+            PieceCore::Static(s) => IoBuf::stable_ptr(s),
+            PieceCore::Vec(s) => IoBuf::stable_ptr(s.as_ref()),
+            PieceCore::Roll(s) => IoBuf::stable_ptr(s),
+            PieceCore::HeaderName(s) => s.as_str().as_ptr(),
         }
     }
 
     fn bytes_init(&self) -> usize {
         match self {
-            Piece::Static(s) => IoBuf::bytes_init(s),
-            Piece::Vec(s) => IoBuf::bytes_init(s),
-            Piece::Roll(s) => IoBuf::bytes_init(s),
-            Piece::HeaderName(s) => s.as_str().len(),
+            PieceCore::Static(s) => IoBuf::bytes_init(s),
+            PieceCore::Vec(s) => IoBuf::bytes_init(s.as_ref()),
+            PieceCore::Roll(s) => IoBuf::bytes_init(s),
+            PieceCore::HeaderName(s) => s.as_str().len(),
         }
     }
 
     fn bytes_total(&self) -> usize {
         match self {
-            Piece::Static(s) => IoBuf::bytes_total(s),
-            Piece::Vec(s) => IoBuf::bytes_total(s),
-            Piece::Roll(s) => IoBuf::bytes_total(s),
-            Piece::HeaderName(s) => s.as_str().len(),
+            PieceCore::Static(s) => IoBuf::bytes_total(s),
+            PieceCore::Vec(s) => IoBuf::bytes_total(s.as_ref()),
+            PieceCore::Roll(s) => IoBuf::bytes_total(s),
+            PieceCore::HeaderName(s) => s.as_str().len(),
         }
+    }
+}
+
+unsafe impl IoBuf for Piece {
+    #[inline(always)]
+    fn stable_ptr(&self) -> *const u8 {
+        unsafe { self.core().stable_ptr().byte_add(self.start()) }
+    }
+
+    #[inline(always)]
+    fn bytes_init(&self) -> usize {
+        match self {
+            Piece::Full { core } => core.bytes_init(),
+            // TODO: triple-check
+            Piece::Slice { len, .. } => *len,
+        }
+    }
+
+    #[inline(always)]
+    fn bytes_total(&self) -> usize {
+        todo!()
     }
 }
 
@@ -138,18 +254,41 @@ impl Piece {
 /// A list of [Piece], suitable for issuing vectored writes via io_uring.
 #[derive(Default)]
 pub struct PieceList {
-    pieces: Vec<Piece>,
+    // note: we can't use smallvec here, because the address of
+    // the piece list must be stable for the kernel to take
+    // ownership of it.
+    //
+    // we could however do our own memory pooling.
+    pieces: VecDeque<Piece>,
 }
 
 impl PieceList {
-    /// Add a single chunk to the list
-    pub fn push(&mut self, chunk: impl Into<Piece>) {
-        self.pieces.push(chunk.into());
+    /// Create a new piece list with a single chunk
+    pub fn single(piece: impl Into<Piece>) -> Self {
+        Self {
+            pieces: [piece.into()].into(),
+        }
     }
 
-    /// Add a single chunk to the list and return self
-    pub fn with(mut self, chunk: impl Into<Piece>) -> Self {
-        self.push(chunk);
+    /// Add a single chunk to the back of the list
+    pub fn push_back(&mut self, chunk: impl Into<Piece>) {
+        self.pieces.push_back(chunk.into());
+    }
+
+    /// Add a single chunk to the back list and return self
+    pub fn followed_by(mut self, chunk: impl Into<Piece>) -> Self {
+        self.push_back(chunk);
+        self
+    }
+
+    /// Add a single chunk to the front of the list
+    pub fn push_front(&mut self, chunk: impl Into<Piece>) {
+        self.pieces.push_front(chunk.into());
+    }
+
+    /// Add a single chunk to the front of the list and return self
+    pub fn preceded_by(mut self, chunk: impl Into<Piece>) -> Self {
+        self.push_front(chunk);
         self
     }
 
@@ -170,18 +309,18 @@ impl PieceList {
         self.pieces.clear();
     }
 
-    pub fn into_vec(self) -> Vec<Piece> {
+    pub fn into_vec_deque(self) -> VecDeque<Piece> {
         self.pieces
     }
 }
 
-impl From<Vec<Piece>> for PieceList {
-    fn from(chunks: Vec<Piece>) -> Self {
+impl From<VecDeque<Piece>> for PieceList {
+    fn from(chunks: VecDeque<Piece>) -> Self {
         Self { pieces: chunks }
     }
 }
 
-impl From<PieceList> for Vec<Piece> {
+impl From<PieceList> for VecDeque<Piece> {
     fn from(list: PieceList) -> Self {
         list.pieces
     }
@@ -235,7 +374,7 @@ impl PieceStr {
 impl From<&'static str> for PieceStr {
     fn from(s: &'static str) -> Self {
         PieceStr {
-            piece: Piece::Static(s.as_bytes()),
+            piece: PieceCore::Static(s.as_bytes()).into(),
         }
     }
 }
@@ -243,7 +382,7 @@ impl From<&'static str> for PieceStr {
 impl From<String> for PieceStr {
     fn from(s: String) -> Self {
         PieceStr {
-            piece: Piece::Vec(s.into_bytes()),
+            piece: PieceCore::Vec(Rc::new(s.into_bytes())).into(),
         }
     }
 }
@@ -251,7 +390,41 @@ impl From<String> for PieceStr {
 impl From<RollStr> for PieceStr {
     fn from(s: RollStr) -> Self {
         PieceStr {
-            piece: Piece::Roll(s.into_inner()),
+            piece: PieceCore::Roll(s.into_inner()).into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Piece, PieceCore};
+
+    #[test]
+    fn test_slice() {
+        // test that slicing works correctly for a
+        // piece made from a &'static u8
+        let piece: Piece = PieceCore::Static("französisch".as_bytes()).into();
+        // split so that "l" is "franz"
+        let (first_name, last_name) = piece.split_at(5);
+        assert_eq!(&first_name[..], "franz".as_bytes());
+        assert_eq!(&last_name[..], "ösisch".as_bytes());
+
+        // test edge cases, zero-length left
+        let piece: Piece = PieceCore::Static("französisch".as_bytes()).into();
+        let (first_name, last_name) = piece.split_at(0);
+        assert_eq!(&first_name[..], "".as_bytes());
+        assert_eq!(&last_name[..], "französisch".as_bytes());
+
+        // test edge cases, zero-length right
+        let piece: Piece = PieceCore::Static("französisch".as_bytes()).into();
+        let (first_name, last_name) = piece.split_at(12);
+        assert_eq!(&first_name[..], "französisch".as_bytes());
+        assert_eq!(&last_name[..], "".as_bytes());
+
+        // edge case: empty piece being split into two
+        let piece: Piece = PieceCore::Static(b"").into();
+        let (first_name, last_name) = piece.split_at(0);
+        assert_eq!(&first_name[..], "".as_bytes());
+        assert_eq!(&last_name[..], "".as_bytes());
     }
 }

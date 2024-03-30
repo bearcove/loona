@@ -68,7 +68,7 @@
       };
       devShells.default = mkShell {
         inputsFrom = [ bin ];
-        packages = with pkgs; [ just nixpkgs-fmt ];
+        packages = with pkgs; [ just nixpkgs-fmt cargo-nextest ];
       };
     }
     );

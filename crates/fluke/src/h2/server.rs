@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    collections::HashSet,
     io::Write,
     net::Shutdown,
     rc::Rc,
@@ -23,20 +24,22 @@ use tracing::{debug, trace};
 
 use crate::{
     h2::{
-        body::{H2Body, H2BodyItem, PieceOrTrailers},
+        body::{H2Body, PieceOrTrailers, StreamIncoming, StreamIncomingItem},
         encode::{EncoderState, H2Encoder},
         parse::{
             self, parse_reserved_and_u31, ContinuationFlags, DataFlags, Frame, FrameType,
             HeadersFlags, PingFlags, PrioritySpec, Settings, SettingsFlags, StreamId,
         },
         types::{
-            ConnState, H2ConnectionError, H2Event, H2EventPayload, H2StreamError,
-            HeadersOrTrailers, StreamState,
+            BodyOutgoing, ConnState, H2ConnectionError, H2Event, H2EventPayload, H2StreamError,
+            HeadersOrTrailers, HeadersOutgoing, StreamOutgoing, StreamState,
         },
     },
     util::read_and_parse,
     ExpectResponseHeaders, Headers, Method, Request, Responder, ServerDriver,
 };
+
+pub const MAX_WINDOW_SIZE: i64 = u32::MAX as i64;
 
 /// HTTP/2 server configuration
 pub struct ServerConf {
@@ -70,6 +73,7 @@ pub async fn serve(
 pub(crate) struct ServerContext<D: ServerDriver + 'static, W: WriteOwned> {
     driver: Rc<D>,
     state: ConnState,
+
     hpack_dec: fluke_hpack::Decoder<'static>,
     hpack_enc: fluke_hpack::Encoder<'static>,
     out_scratch: RollMut,
@@ -142,7 +146,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 FrameType::Settings(Default::default()),
                 StreamId::CONNECTION,
             );
-            self.write_frame(frame, payload).await?;
+            self.write_frame(frame, PieceList::single(payload)).await?;
         }
 
         let mut goaway_err: Option<H2ConnectionError> = None;
@@ -220,7 +224,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     })?;
 
             let frame = Frame::new(FrameType::GoAway, StreamId::CONNECTION);
-            self.write_frame(frame, payload).await?;
+            self.write_frame(frame, PieceList::single(payload)).await?;
         }
 
         Ok(())
@@ -357,8 +361,180 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         Some(ev) => self.handle_event(ev).await?,
                         None => unreachable!("the context owns a copy of the sender, and this method has &mut self, so the sender can't be dropped while this method is running"),
                     }
-                },
+                }
+
+                _ = self.state.send_data_maybe.notified() => {
+                    self.send_data_maybe().await?;
+                }
             }
+        }
+
+        Ok(())
+    }
+
+    async fn send_data_maybe(&mut self) -> Result<(), H2ConnectionError> {
+        let mut not_pending: HashSet<StreamId> = Default::default();
+
+        // this vec exists for borrow-checker reasons: we can't
+        // borrow self mutably twice in 'each_stream
+        // TODO: merge those frames! do a single writev_all call!
+        let mut frames: Vec<(Frame, PieceList)> = vec![];
+
+        let max_fram = self.state.peer_settings.max_frame_size as usize;
+
+        let streams_with_pending_data: HashSet<_> = self
+            .state
+            .streams_with_pending_data
+            .iter()
+            .copied()
+            .collect();
+
+        'each_stream: for id in streams_with_pending_data {
+            if self.state.outgoing_capacity <= 0 {
+                // that's all we can do
+                break 'each_stream;
+            }
+
+            let outgoing = self
+                .state
+                .streams
+                .get_mut(&id)
+                .and_then(|ss| ss.outgoing_mut())
+                .expect("stream should not be in streams_with_pending_data if it's already closed / not in an outgoing state");
+
+            debug!(conn_cap = %self.state.outgoing_capacity, strm_cap = %outgoing.capacity, %max_fram, "ready to write");
+
+            if outgoing.headers.has_more_to_write() {
+                debug!("writing headers...");
+
+                if matches!(&outgoing.headers, HeadersOutgoing::WaitingForHeaders) {
+                    debug!("waiting for headers...");
+
+                    // shouldn't be pending then should it?
+                    not_pending.insert(id);
+                    continue 'each_stream;
+                }
+
+                'queue_header_frames: loop {
+                    debug!("writing headers...");
+
+                    let is_continuation =
+                        matches!(&outgoing.headers, HeadersOutgoing::WroteSome(_));
+                    let piece = outgoing.headers.take_piece();
+                    let piece_len = piece.len();
+
+                    if piece_len > max_fram {
+                        let write_size = max_fram;
+                        let (written, requeued) = piece.split_at(write_size);
+                        debug!(%write_size, requeued_len = %requeued.len(), "splitting headers");
+                        let frame_type = if is_continuation {
+                            FrameType::Continuation(Default::default())
+                        } else {
+                            FrameType::Headers(Default::default())
+                        };
+                        outgoing.headers = HeadersOutgoing::WroteSome(requeued);
+
+                        let frame = Frame::new(frame_type, id);
+                        frames.push((frame, PieceList::single(written)));
+                    } else {
+                        let frame_type = if is_continuation {
+                            FrameType::Continuation(
+                                BitFlags::<ContinuationFlags>::default()
+                                    | ContinuationFlags::EndHeaders,
+                            )
+                        } else {
+                            FrameType::Headers(
+                                BitFlags::<HeadersFlags>::default() | HeadersFlags::EndHeaders,
+                            )
+                        };
+
+                        let frame = Frame::new(frame_type, id);
+                        frames.push((frame, PieceList::single(piece)));
+
+                        break 'queue_header_frames;
+                    }
+                }
+            }
+
+            let capacity = self.state.outgoing_capacity.min(outgoing.capacity) as usize;
+            // bytes written this turn, possibly over multiple frames
+            let mut total_bytes_written = 0;
+
+            if outgoing.body.has_more_to_write() {
+                'queue_body_frames: while total_bytes_written < capacity {
+                    // send as much body data as we can, respecting max frame size and
+                    // connection / stream capacity
+                    let mut plist = PieceList::default();
+                    let mut frame_len = 0;
+
+                    'build_frame: loop {
+                        let piece = match outgoing.body.pop_front() {
+                            None => break 'build_frame,
+                            Some(piece) => piece,
+                        };
+
+                        // do we need to split the piece because we don't have
+                        // enough capacity left / we hit the max frame size?
+                        let piece_len = piece.len();
+                        debug!(%piece_len, "popped a piece");
+
+                        let fram_size_if_full_piece = frame_len + piece_len;
+
+                        let cap_left = capacity - total_bytes_written;
+                        let max_this_fram = max_fram.min(cap_left);
+
+                        if fram_size_if_full_piece > max_this_fram {
+                            // we can't fit this piece in the current frame, so
+                            // we have to split it
+                            let write_size = max_this_fram - frame_len;
+                            let (written, requeued) = piece.split_at(write_size);
+                            frame_len += write_size;
+                            debug!(written_len = %written.len(), requeued_len = %requeued.len(), "splitting piece");
+
+                            plist.push_back(written);
+                            outgoing.body.push_front(requeued);
+
+                            break 'build_frame;
+                        } else {
+                            // we can write the full piece
+                            let write_size = piece_len;
+                            frame_len += write_size;
+
+                            plist.push_back(piece);
+                        }
+                    }
+
+                    let mut flags: BitFlags<DataFlags> = Default::default();
+                    if outgoing.body.might_receive_more() {
+                        if frame_len == 0 {
+                            // the only time we want to send a zero-length frame
+                            // is if we have to send END_STREAM separately from
+                            // the last chunk.
+                            break 'queue_body_frames;
+                        }
+                    } else {
+                        flags |= DataFlags::EndStream;
+                    }
+
+                    let frame = Frame::new(FrameType::Data(flags), id);
+                    debug!(?frame, %frame_len, "queuing");
+                    frames.push((frame, plist));
+                    total_bytes_written += frame_len;
+
+                    if flags.contains(DataFlags::EndStream) {
+                        break 'queue_body_frames;
+                    }
+                }
+            }
+        }
+
+        for (frame, plist) in frames {
+            debug!(?frame, plist_len = %plist.len(), "writing");
+            self.write_frame(frame, plist).await?;
+        }
+
+        for id in not_pending {
+            self.state.streams_with_pending_data.remove(&id);
         }
 
         Ok(())
@@ -367,16 +543,35 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
     async fn handle_event(&mut self, ev: H2Event) -> Result<(), H2ConnectionError> {
         match ev.payload {
             H2EventPayload::Headers(res) => {
-                let flags = HeadersFlags::EndHeaders;
-                let frame = Frame::new(FrameType::Headers(flags.into()), ev.stream_id);
+                let outgoing = match self
+                    .state
+                    .streams
+                    .get_mut(&ev.stream_id)
+                    .and_then(|s| s.outgoing_mut())
+                {
+                    None => {
+                        // ignore the event then, but at this point we should
+                        // tell the sender to stop sending chunks, which is not
+                        // possible if they all share the same ev_tx
+                        // TODO: make it possible to propagate errors to the sender
+                        return Ok(());
+                    }
+                    Some(outgoing) => outgoing,
+                };
+
+                if !matches!(&outgoing.body, BodyOutgoing::StillReceiving(_)) {
+                    unreachable!("got headers too late")
+                }
 
                 // TODO: don't allocate so much for headers. all `encode_into`
                 // wants is an `IntoIter`, we can definitely have a custom iterator
                 // that operates on all this instead of using a `Vec`.
 
-                // TODO: limit header size
+                // TODO: enforce max header size
                 let mut headers: Vec<(&[u8], &[u8])> = vec![];
+                // TODO: prevent overwriting pseudo-headers, especially :status?
                 headers.push((b":status", res.status.as_str().as_bytes()));
+
                 for (name, value) in res.headers.iter() {
                     if name == http::header::TRANSFER_ENCODING {
                         // do not set transfer-encoding: chunked when doing HTTP/2
@@ -391,23 +586,68 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     .map_err(H2ConnectionError::WriteError)?;
                 let payload = self.out_scratch.take_all();
 
-                self.write_frame(frame, payload).await?;
+                outgoing.headers = HeadersOutgoing::WroteNone(payload.into());
+                self.state.streams_with_pending_data.insert(ev.stream_id);
+                if self.state.outgoing_capacity > 0 && outgoing.capacity > 0 {
+                    // worth revisiting then!
+                    self.state.send_data_maybe.notify_one();
+                }
             }
             H2EventPayload::BodyChunk(chunk) => {
-                let flags = BitFlags::<DataFlags>::default();
-                let frame = Frame::new(FrameType::Data(flags), ev.stream_id);
+                let outgoing = match self
+                    .state
+                    .streams
+                    .get_mut(&ev.stream_id)
+                    .and_then(|s| s.outgoing_mut())
+                {
+                    None => {
+                        // ignore the event then, but at this point we should
+                        // tell the sender to stop sending chunks, which is not
+                        // possible if they all share the same ev_tx
+                        // TODO: make it possible to propagate errors to the sender
+                        return Ok(());
+                    }
+                    Some(outgoing) => outgoing,
+                };
 
-                self.write_frame(frame, chunk).await?;
+                // FIXME: this isn't great, because, due to biased polling, body pieces can pile up.
+                // when we've collected enough pieces for max frame size, we should really send them.
+                outgoing.body.push_back(Piece::Full { core: chunk });
+
+                self.state.streams_with_pending_data.insert(ev.stream_id);
+                if self.state.outgoing_capacity > 0 && outgoing.capacity > 0 {
+                    // worth revisiting then!
+                    self.state.send_data_maybe.notify_one();
+                }
             }
             H2EventPayload::BodyEnd => {
-                // FIXME: this should transition the stream to `Closed`
-                // state (or at the very least `HalfClosedLocal`).
-                // Either way, whoever owns the stream state should know
-                // about it, cf. https://github.com/bearcove/fluke/issues/123
+                let outgoing = match self
+                    .state
+                    .streams
+                    .get_mut(&ev.stream_id)
+                    .and_then(|s| s.outgoing_mut())
+                {
+                    None => return Ok(()),
+                    Some(outgoing) => outgoing,
+                };
 
-                let flags = DataFlags::EndStream;
-                let frame = Frame::new(FrameType::Data(flags.into()), ev.stream_id);
-                self.write_frame(frame, Roll::empty()).await?;
+                match &mut outgoing.body {
+                    BodyOutgoing::StillReceiving(pieces) => {
+                        let pieces = std::mem::take(pieces);
+                        if pieces.is_empty() {
+                            // we'll need to send a zero-length data frame
+                            self.state.send_data_maybe.notify_one();
+                        }
+                        outgoing.body = BodyOutgoing::DoneReceiving(pieces);
+                        debug!(stream_id = %ev.stream_id, outgoing_body = ?outgoing.body, "got body end");
+                    }
+                    BodyOutgoing::DoneReceiving(_) => {
+                        unreachable!("got body end twice")
+                    }
+                    BodyOutgoing::DoneSending => {
+                        unreachable!("got body end after we sent everything")
+                    }
+                }
             }
         }
 
@@ -417,40 +657,74 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
     async fn write_frame(
         &mut self,
         mut frame: Frame,
-        payload: impl Into<Piece>,
+        payload: PieceList,
     ) -> Result<(), H2ConnectionError> {
-        debug!(?frame, ">");
-        let payload = payload.into();
-
         match &frame.frame_type {
-            FrameType::Data(headers) => {
-                if headers.contains(DataFlags::EndStream) {
-                    // if the stream is open, this transitions to HalfClosedLocal.
-                    if let Some(ss) = self.state.streams.get_mut(&frame.stream_id) {
-                        match ss {
-                            StreamState::Open(_) => {
-                                // transition through StreamState::HalfClosedRemote
-                                // so we don't have to remove/re-insert.
-                                let mut entry = StreamState::HalfClosedRemote;
-                                std::mem::swap(&mut entry, ss);
+            FrameType::Data(flags) => {
+                let mut ss = match self.state.streams.entry(frame.stream_id) {
+                    std::collections::hash_map::Entry::Occupied(entry) => entry,
+                    std::collections::hash_map::Entry::Vacant(_) => unreachable!(
+                        "writing DATA frame for non-existent stream, this should never happen"
+                    ),
+                };
 
-                                let body_tx = match entry {
-                                    StreamState::Open(body_tx) => body_tx,
-                                    _ => unreachable!(),
-                                };
+                // update stream flow control window
+                {
+                    let outgoing = match ss.get_mut().outgoing_mut() {
+                        Some(og) => og,
+                        None => {
+                            unreachable!("writing DATA frame for stream in the wrong state")
+                        }
+                    };
+                    let payload_len: u32 = payload.len().try_into().unwrap();
+                    let next_cap = outgoing.capacity - payload_len as i64;
 
-                                *ss = StreamState::HalfClosedLocal(body_tx);
-                            }
-                            _ => {
-                                // transition to closed
-                                if self.state.streams.remove(&frame.stream_id).is_some() {
-                                    debug!(
-                                        "Closed stream {} (wrote data w/EndStream), now have {} streams",
-                                        frame.stream_id,
-                                        self.state.streams.len()
-                                    );
-                                }
-                            }
+                    if next_cap < 0 {
+                        unreachable!(
+                            "should never write a frame that makes the stream capacity negative: outgoing.capacity = {}, payload_len = {}",
+                            outgoing.capacity, payload.len()
+                        )
+                    }
+                    outgoing.capacity = next_cap;
+                }
+
+                // now update connection flow control window
+                {
+                    let payload_len: u32 = payload.len().try_into().unwrap();
+                    let next_cap = self.state.outgoing_capacity - payload_len as i64;
+
+                    if next_cap < 0 {
+                        unreachable!(
+                            "should never write a frame that makes the connection capacity negative: outgoing_capacity = {}, payload_len = {}",
+                            self.state.outgoing_capacity, payload.len()
+                        )
+                    }
+                    self.state.outgoing_capacity = next_cap;
+                }
+
+                if flags.contains(DataFlags::EndStream) {
+                    // we won't be sending any more data on this stream
+                    self.state
+                        .streams_with_pending_data
+                        .remove(&frame.stream_id);
+
+                    match ss.get_mut() {
+                        StreamState::Open { .. } => {
+                            let incoming = match std::mem::take(ss.get_mut()) {
+                                StreamState::Open { incoming, .. } => incoming,
+                                _ => unreachable!(),
+                            };
+                            // this avoid having to re-insert the stream in the map
+                            *ss.get_mut() = StreamState::HalfClosedLocal { incoming };
+                        }
+                        _ => {
+                            // transition to closed
+                            ss.remove();
+                            debug!(
+                                "Closed stream {} (wrote data w/EndStream), now have {} streams",
+                                frame.stream_id,
+                                self.state.streams.len()
+                            );
                         }
                     }
                 }
@@ -461,7 +735,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
             _ => {
                 // muffin.
             }
-        }
+        };
 
         // TODO: enforce max_frame_size from the peer settings, not just u32::max
         frame.len = payload
@@ -472,6 +746,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 frame_size: payload.len() as _,
                 max_frame_size: u32::MAX,
             })?;
+        debug!(?frame, ">");
         let frame_roll = frame.into_roll(&mut self.out_scratch)?;
 
         if payload.is_empty() {
@@ -483,7 +758,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         } else {
             trace!("Writing frame with payload");
             self.transport_w
-                .writev_all(PieceList::default().with(frame_roll).with(payload))
+                .writev_all(payload.preceded_by(frame_roll))
                 .await
                 .map_err(H2ConnectionError::WriteError)?;
         }
@@ -506,8 +781,10 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 )?;
 
                 match ss {
-                    StreamState::Open(body_tx) | StreamState::HalfClosedLocal(body_tx) => {
-                        if body_tx
+                    StreamState::Open { incoming, .. }
+                    | StreamState::HalfClosedLocal { incoming } => {
+                        if incoming
+                            .tx
                             .send(Ok(PieceOrTrailers::Piece(payload.into())))
                             .await
                             .is_err()
@@ -516,10 +793,12 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         }
 
                         if flags.contains(DataFlags::EndStream) {
-                            // if we're HalfClosedLocal, this transitions to Closed
-                            // otherwise, it transitions to HalfClosedRemote
-                            if matches!(ss, StreamState::Open(_)) {
-                                *ss = StreamState::HalfClosedRemote;
+                            if let StreamState::Open { .. } = ss {
+                                let outgoing = match std::mem::take(ss) {
+                                    StreamState::Open { outgoing, .. } => outgoing,
+                                    _ => unreachable!(),
+                                };
+                                *ss = StreamState::HalfClosedRemote { outgoing };
                             } else if self.state.streams.remove(&frame.stream_id).is_some() {
                                 debug!(
                                     "Closed stream (read data w/EndStream) {}, now have {} streams",
@@ -529,7 +808,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                             }
                         }
                     }
-                    StreamState::HalfClosedRemote => {
+                    StreamState::HalfClosedRemote { .. } => {
                         debug!(
                             stream_id = %frame.stream_id,
                             "Received data for closed stream"
@@ -537,6 +816,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         self.rst(frame.stream_id, H2StreamError::StreamClosed)
                             .await?;
                     }
+                    StreamState::Transition => unreachable!(),
                 }
             }
             FrameType::Headers(flags) => {
@@ -610,7 +890,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                             }
                         }
                     }
-                    Some(StreamState::Open(_) | StreamState::HalfClosedLocal(_)) => {
+                    Some(StreamState::Open { .. } | StreamState::HalfClosedLocal { .. }) => {
                         headers_or_trailers = HeadersOrTrailers::Trailers;
                         debug!("Receiving trailers for stream {}", frame.stream_id);
 
@@ -625,11 +905,12 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                                 .await?;
                         }
                     }
-                    Some(StreamState::HalfClosedRemote) => {
+                    Some(StreamState::HalfClosedRemote { .. }) => {
                         return Err(H2ConnectionError::StreamClosed {
                             stream_id: frame.stream_id,
                         });
                     }
+                    Some(StreamState::Transition) => unreachable!(),
                 }
 
                 self.read_headers(
@@ -693,14 +974,17 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                             self.state.streams.len()
                         );
                         match ss {
-                            StreamState::Open(body_tx) | StreamState::HalfClosedLocal(body_tx) => {
-                                _ = body_tx
+                            StreamState::Open { incoming, .. }
+                            | StreamState::HalfClosedLocal { incoming, .. } => {
+                                _ = incoming
+                                    .tx
                                     .send(Err(H2StreamError::ReceivedRstStream.into()))
                                     .await;
                             }
-                            StreamState::HalfClosedRemote => {
+                            StreamState::HalfClosedRemote { .. } => {
                                 // good
                             }
+                            StreamState::Transition => unreachable!(),
                         }
                     }
                 }
@@ -733,15 +1017,45 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     self.hpack_enc
                         .set_max_table_size(settings.header_table_size as usize);
 
-                    debug!("Peer sent us {settings:#?}");
+                    let initial_window_size_delta = (settings.initial_window_size as i64)
+                        - (self.state.peer_settings.initial_window_size as i64);
+                    debug!(%initial_window_size_delta, "Peer sent us {settings:#?}");
+
+                    let mut maybe_send_data = false;
+
+                    // apply that delta to all streams
+                    for (id, stream) in self.state.streams.iter_mut() {
+                        if let Some(outgoing) = stream.outgoing_mut() {
+                            let next_cap = outgoing.capacity + initial_window_size_delta;
+                            if next_cap > MAX_WINDOW_SIZE {
+                                return Err(
+                                    H2ConnectionError::StreamWindowSizeOverflowDueToSettings {
+                                        stream_id: *id,
+                                    },
+                                );
+                            }
+                            // if capacity was negative or zero, and is now greater than zero,
+                            // we need to maybe send data
+                            if next_cap > 0 && outgoing.capacity <= 0 {
+                                debug!(?id, %next_cap, "stream capacity was <= 0, now > 0");
+                                maybe_send_data = true;
+                            }
+                            outgoing.capacity = next_cap;
+                        }
+                    }
+
                     self.state.peer_settings = settings;
 
                     let frame = Frame::new(
                         FrameType::Settings(SettingsFlags::Ack.into()),
                         StreamId::CONNECTION,
                     );
-                    self.write_frame(frame, Roll::empty()).await?;
+                    self.write_frame(frame, PieceList::default()).await?;
                     debug!("Acknowledged peer settings");
+
+                    if maybe_send_data {
+                        self.state.send_data_maybe.notify_one();
+                    }
                 }
             }
             FrameType::PushPromise => {
@@ -767,7 +1081,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 let flags = PingFlags::Ack.into();
                 let frame = Frame::new(FrameType::Ping(flags), StreamId::CONNECTION)
                     .with_len(payload.len() as u32);
-                self.write_frame(frame, payload).await?;
+                self.write_frame(frame, PieceList::default().followed_by(payload))
+                    .await?;
             }
             FrameType::GoAway => {
                 if frame.stream_id != StreamId::CONNECTION {
@@ -798,16 +1113,51 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 }
 
                 if frame.stream_id == StreamId::CONNECTION {
-                    debug!("TODO: ignoring connection-wide window update");
+                    let new_capacity = self.state.outgoing_capacity + increment as i64;
+                    if new_capacity > MAX_WINDOW_SIZE {
+                        return Err(H2ConnectionError::WindowUpdateOverflow);
+                    };
+
+                    debug!(old_capacity = %self.state.outgoing_capacity, %new_capacity, "connection window update");
+                    self.state.outgoing_capacity = new_capacity;
+                    self.state.send_data_maybe.notify_one();
                 } else {
-                    match self.state.streams.get_mut(&frame.stream_id) {
+                    let outgoing = match self
+                        .state
+                        .streams
+                        .get_mut(&frame.stream_id)
+                        .and_then(|ss| ss.outgoing_mut())
+                    {
+                        Some(ss) => ss,
                         None => {
-                            return Err(H2ConnectionError::WindowUpdateForUnknownStream {
+                            return Err(H2ConnectionError::WindowUpdateForUnknownOrClosedStream {
                                 stream_id: frame.stream_id,
                             });
                         }
-                        Some(_ss) => {
-                            debug!("TODO: handle window update for stream {}", frame.stream_id)
+                    };
+
+                    let new_capacity = outgoing.capacity + increment as i64;
+                    if new_capacity > MAX_WINDOW_SIZE {
+                        // reset the stream
+                        self.rst(frame.stream_id, H2StreamError::WindowUpdateOverflow)
+                            .await?;
+                        return Ok(());
+                    }
+
+                    let old_capacity = outgoing.capacity;
+                    debug!(stream_id = %frame.stream_id, %old_capacity, %new_capacity, "stream window update");
+                    outgoing.capacity = new_capacity;
+
+                    // insert into streams_with_pending_data if the old capacity was <= zero
+                    // and the new capacity is > zero
+                    if old_capacity <= 0 && new_capacity > 0 {
+                        debug!(conn_capacity = %self.state.outgoing_capacity, "stream capacity is newly positive, inserting in streams_with_pending_data");
+                        self.state.streams_with_pending_data.insert(frame.stream_id);
+
+                        // if the connection has capacity, notify!
+                        if self.state.outgoing_capacity > 0 {
+                            debug!(stream_id = ?frame.stream_id, "stream window update, maybe send data");
+                            self.state.send_data_maybe.notify_one();
                         }
                     }
                 }
@@ -848,7 +1198,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
         let frame = Frame::new(FrameType::RstStream, stream_id)
             .with_len((payload.len()).try_into().unwrap());
-        self.write_frame(frame, payload).await?;
+        self.write_frame(frame, PieceList::single(payload)).await?;
 
         Ok(())
     }
@@ -1036,7 +1386,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     Some(authority) => Some(authority),
                     None => headers
                         .get(header::HOST)
-                        .map(|host| host.as_str().unwrap().parse().unwrap()),
+                        .map(|host| std::str::from_utf8(host).unwrap().parse().unwrap()),
                 };
 
                 let mut uri_parts: http::uri::Parts = Default::default();
@@ -1065,7 +1415,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     state: ExpectResponseHeaders,
                 };
 
-                let (piece_tx, piece_rx) = mpsc::channel::<H2BodyItem>(1); // TODO: is 1 a sensible value here?
+                let (piece_tx, piece_rx) = mpsc::channel::<StreamIncomingItem>(1); // TODO: is 1 a sensible value here?
 
                 let req_body = H2Body {
                     // FIXME: that's not right. h2 requests can still specify
@@ -1075,12 +1425,17 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     rx: piece_rx,
                 };
 
+                let incoming = StreamIncoming {
+                    capacity: self.state.self_settings.initial_window_size as _,
+                    tx: piece_tx,
+                };
+                let outgoing: StreamOutgoing = self.state.mk_stream_outgoing();
                 self.state.streams.insert(
                     stream_id,
                     if end_stream {
-                        StreamState::HalfClosedRemote
+                        StreamState::HalfClosedRemote { outgoing }
                     } else {
-                        StreamState::Open(piece_tx)
+                        StreamState::Open { incoming, outgoing }
                     },
                 );
                 debug!(
@@ -1088,6 +1443,12 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     self.state.streams.len()
                 );
 
+                // FIXME: don't spawn, just add to an unordered futures
+                // instead and poll it in our main loop, to do intra-task
+                // concurrency.
+                //
+                // this lets us freeze the entire http2 server and explore
+                // its entire state.
                 fluke_maybe_uring::spawn({
                     let driver = self.driver.clone();
                     async move {
@@ -1108,8 +1469,9 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
             }
             HeadersOrTrailers::Trailers => {
                 match self.state.streams.get_mut(&stream_id) {
-                    Some(StreamState::Open(body_tx)) => {
-                        if body_tx
+                    Some(StreamState::Open { incoming, .. }) => {
+                        if incoming
+                            .tx
                             .send(Ok(PieceOrTrailers::Trailers(Box::new(headers))))
                             .await
                             .is_err()

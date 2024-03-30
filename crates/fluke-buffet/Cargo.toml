@@ -20,7 +20,9 @@ miri = []
 [dependencies]
 eyre = "0.6.12"
 http = "1.1.0"
-fluke-maybe-uring = { version = "0.1.1", path = "../fluke-maybe-uring" }
+fluke-maybe-uring = { version = "0.1.1", path = "../fluke-maybe-uring", features = [
+    "net",
+] }
 memchr = "2.7.1"
 memmap2 = { version = "0.9.4", default-features = false }
 nom = "7.1.3"

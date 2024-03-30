@@ -7,7 +7,7 @@ use crate::{
     types::{Headers, Request, Response},
     Encoder,
 };
-use fluke_buffet::{Piece, PieceList, RollMut};
+use fluke_buffet::{PieceCore, PieceList, RollMut};
 use fluke_maybe_uring::io::WriteOwned;
 
 use super::body::{write_h1_body_chunk, write_h1_body_end, BodyWriteMode};
@@ -17,39 +17,39 @@ pub(crate) fn encode_request(
     list: &mut PieceList,
     out_scratch: &mut RollMut,
 ) -> eyre::Result<()> {
-    list.push(req.method.into_chunk());
-    list.push(" ");
+    list.push_back(req.method.into_chunk());
+    list.push_back(" ");
 
     assert_eq!(out_scratch.len(), 0);
     out_scratch.write_all(req.uri.path().as_bytes())?;
-    list.push(out_scratch.take_all());
+    list.push_back(out_scratch.take_all());
 
     match req.version {
-        Version::HTTP_10 => list.push(" HTTP/1.0\r\n"),
-        Version::HTTP_11 => list.push(" HTTP/1.1\r\n"),
+        Version::HTTP_10 => list.push_back(" HTTP/1.0\r\n"),
+        Version::HTTP_11 => list.push_back(" HTTP/1.1\r\n"),
         _ => return Err(eyre::eyre!("unsupported HTTP version {:?}", req.version)),
     }
 
     // TODO: if `host` isn't set, set from request uri? which should
     // take precedence here?
     encode_headers(req.headers, list)?;
-    list.push("\r\n");
+    list.push_back("\r\n");
     Ok(())
 }
 
 fn encode_response(res: Response, list: &mut PieceList) -> eyre::Result<()> {
     match res.version {
-        Version::HTTP_10 => list.push(&b"HTTP/1.0 "[..]),
-        Version::HTTP_11 => list.push(&b"HTTP/1.1 "[..]),
+        Version::HTTP_10 => list.push_back(&b"HTTP/1.0 "[..]),
+        Version::HTTP_11 => list.push_back(&b"HTTP/1.1 "[..]),
         _ => return Err(eyre::eyre!("unsupported HTTP version {:?}", res.version)),
     }
 
-    list.push(encode_status_code(res.status));
-    list.push(" ");
-    list.push(res.status.canonical_reason().unwrap_or("Unknown"));
-    list.push("\r\n");
+    list.push_back(encode_status_code(res.status));
+    list.push_back(" ");
+    list.push_back(res.status.canonical_reason().unwrap_or("Unknown"));
+    list.push_back("\r\n");
     encode_headers(res.headers, list)?;
-    list.push("\r\n");
+    list.push_back("\r\n");
     Ok(())
 }
 
@@ -59,19 +59,19 @@ pub(crate) fn encode_headers(headers: Headers, list: &mut PieceList) -> eyre::Re
         match name {
             Some(name) => {
                 last_header_name = Some(name.clone());
-                list.push(name);
+                list.push_back(name);
             }
             None => {
                 let name = match last_header_name {
                     Some(ref name) => name.clone(),
                     None => unreachable!("HeaderMap's IntoIter violated its contract"),
                 };
-                list.push(name);
+                list.push_back(name);
             }
         }
-        list.push(": ");
-        list.push(value);
-        list.push("\r\n");
+        list.push_back(": ");
+        list.push_back(value);
+        list.push_back("\r\n");
     }
 
     Ok(())
@@ -168,7 +168,11 @@ where
     }
 
     // TODO: move `mode` into `H1Encoder`? we don't need it for h2
-    async fn write_body_chunk(&mut self, chunk: Piece, mode: BodyWriteMode) -> eyre::Result<()> {
+    async fn write_body_chunk(
+        &mut self,
+        chunk: PieceCore,
+        mode: BodyWriteMode,
+    ) -> eyre::Result<()> {
         // TODO: inline
         write_h1_body_chunk(&mut self.transport_w, chunk, mode).await
     }
