@@ -22,7 +22,9 @@ test *args:
 
 curl-tests *args:
 	just build-testbed
-	RUST_BACKTRACE=1 cargo nextest run --no-capture -p fluke-curl-tests {{args}}
+	export RUST_LOG="${RUST_LOG:-fluke=debug,fluke_hpack=info}"
+	export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
+	cargo nextest run --no-capture -p fluke-curl-tests {{args}}
 
 build-testbed:
 	cargo build --release -p fluke-hyper-testbed
