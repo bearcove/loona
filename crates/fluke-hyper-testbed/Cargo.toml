@@ -17,6 +17,3 @@ hyper = { version = "0.14.28", features = [
 tokio = { version = "1.36.0", features = ["full"] }
 tokio-stream = "0.1.14"
 tracing = "0.1.40"
-
-[profile.dev.package."*"]
-opt-level = 2
