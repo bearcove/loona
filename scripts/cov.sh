@@ -26,9 +26,9 @@ LLVM_COV="${LLVM_TOOLS_PATH}/llvm-cov"
 
 cargo nextest run --release --verbose --profile ci --manifest-path crates/fluke-hpack/Cargo.toml --features interop-tests
 cargo nextest run --release --verbose --profile ci --manifest-path crates/fluke/Cargo.toml
-cargo nextest run --release --verbose --profile ci --manifest-path test-crates/fluke-curl-tests/Cargo.toml
+cargo nextest run --release --verbose --profile ci --manifest-path crates/fluke-curl-tests/Cargo.toml
 
-cargo build --release --manifest-path test-crates/fluke-h2spec/Cargo.toml
+cargo build --release --manifest-path crates/fluke-h2spec/Cargo.toml
 # skip if SKIP_H2SPEC is set to 1
 if [[ "${SKIP_H2SPEC:-0}" == "1" ]]; then
   echo "Skipping h2spec suites"
@@ -44,7 +44,7 @@ fi
 # build llvm-cov argument list
 cover_args=()
 cover_args+=(--instr-profile "${COVERAGE_DIR}/fluke.profdata")
-cover_args+=(--ignore-filename-regex "rustc|.cargo|test-crates|non_uring")
+cover_args+=(--ignore-filename-regex "rustc|.cargo|non_uring")
 cover_args+=("${CARGO_TARGET_DIR}"/release/fluke-h2spec)
 
 objects=("${CARGO_TARGET_DIR}"/release/deps/*)
