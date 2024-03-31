@@ -21,7 +21,7 @@ pub async fn start() -> eyre::Result<(SocketAddr, impl Any)> {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let manifest_dir = PathBuf::from(manifest_dir);
     let project_dir = manifest_dir.parent().unwrap().parent().unwrap();
-    let crates_dir = project_dir.join("test-crates");
+    let crates_dir = project_dir.join("crates");
 
     let exe_name = format!("fluke-hyper-testbed{EXE_FILE_EXT}");
     let testbed_dir = crates_dir.join("fluke-hyper-testbed");
