@@ -783,6 +783,15 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 match ss {
                     StreamState::Open { incoming, .. }
                     | StreamState::HalfClosedLocal { incoming } => {
+                        let next_cap = incoming.capacity - payload.len() as i64;
+                        if next_cap < 0 {
+                            return Err(H2ConnectionError::WindowUnderflow {
+                                stream_id: frame.stream_id,
+                            });
+                        }
+                        incoming.capacity = next_cap;
+                        // TODO: give back capacity to peer at some point
+
                         if incoming
                             .tx
                             .send(Ok(PieceOrTrailers::Piece(payload.into())))
