@@ -147,7 +147,7 @@ pub(crate) async fn spawn_server(addr: SocketAddr) -> color_eyre::Result<SocketA
 pub(crate) async fn run_server(ln: TcpListener) -> color_eyre::Result<()> {
     loop {
         let (stream, addr) = ln.accept().await?;
-        tracing::info!(%addr, "Accepted connection from");
+        tracing::debug!(%addr, "Accepted connection from");
         let conf = Rc::new(fluke::h2::ServerConf::default());
         let client_buf = RollMut::alloc()?;
         let driver = Rc::new(SDriver);

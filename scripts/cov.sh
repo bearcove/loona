@@ -1,9 +1,12 @@
 #!/bin/bash -eux
 
-export RUSTFLAGS='-C instrument-coverage --cfg=coverage --cfg=trybuild_no_target'
+export RUSTUP_TOOLCHAIN=nightly
+export RUSTFLAGS='-C instrument-coverage -Z coverage-options=branch --cfg=coverage --cfg=trybuild_no_target'
 
 export CARGO_INCREMENTAL=0
 export CARGO_TARGET_DIR="${PWD}/target-cov"
+
+rustup component add llvm-tools
 
 export COVERAGE_DIR="${PWD}/coverage"
 rm -rf "${COVERAGE_DIR}"
@@ -21,18 +24,18 @@ LLVM_PROFDATA="${LLVM_TOOLS_PATH}/llvm-profdata"
 LLVM_COV="${LLVM_TOOLS_PATH}/llvm-cov"
 "${LLVM_COV}" --version
 
-cargo nextest run --verbose --profile ci --manifest-path crates/fluke-hpack/Cargo.toml --features interop-tests --release
-cargo nextest run --verbose --profile ci --manifest-path crates/fluke/Cargo.toml
-cargo nextest run --verbose --profile ci --manifest-path test-crates/fluke-curl-tests/Cargo.toml
+cargo nextest run --release --verbose --profile ci --manifest-path crates/fluke-hpack/Cargo.toml --features interop-tests
+cargo nextest run --release --verbose --profile ci --manifest-path crates/fluke/Cargo.toml
+cargo nextest run --release --verbose --profile ci --manifest-path test-crates/fluke-curl-tests/Cargo.toml
 
-cargo build --manifest-path test-crates/fluke-h2spec/Cargo.toml
+cargo build --release --manifest-path test-crates/fluke-h2spec/Cargo.toml
 # skip if SKIP_H2SPEC is set to 1
 if [[ "${SKIP_H2SPEC:-0}" == "1" ]]; then
   echo "Skipping h2spec suites"
 else
-	for suite in generic hpack http2; do
-		"${CARGO_TARGET_DIR}"/debug/fluke-h2spec "${suite}" -j "target/h2spec-${suite}.xml"
-	done
+  for suite in generic hpack http2; do
+    "${CARGO_TARGET_DIR}"/release/fluke-h2spec "${suite}" -j "target/h2spec-${suite}.xml"
+  done
 fi
 
 # merge all profiles
@@ -42,19 +45,20 @@ fi
 cover_args=()
 cover_args+=(--instr-profile "${COVERAGE_DIR}/fluke.profdata")
 cover_args+=(--ignore-filename-regex "rustc|.cargo|test-crates|non_uring")
-cover_args+=("${CARGO_TARGET_DIR}"/debug/fluke-h2spec)
+cover_args+=("${CARGO_TARGET_DIR}"/release/fluke-h2spec)
 
-# pass *all* binaries/libraries to llvm-cov, including release ones
-# because the fluke-hpack conformance tests are too slow in debug.
-objects=("${CARGO_TARGET_DIR}"/debug/deps/* "${CARGO_TARGET_DIR}"/release/deps/*)
+objects=("${CARGO_TARGET_DIR}"/release/deps/*)
 for object in "${objects[@]}"; do
+  # skip directories
+  [[ -d $object ]] && continue
+
   # skip debug files '.d'
-	[[ $object =~ \.d$ ]] && continue
+  [[ $object =~ \.d$ ]] && continue
 
-	# skip rust metadata files '.rmeta'
-	[[ $object =~ \.rmeta$ ]] && continue
+  # skip rust metadata files '.rmeta'
+  [[ $object =~ \.rmeta$ ]] && continue
 
-	cover_args+=(-object "$object")
+  cover_args+=(-object "$object")
 done
 
 "${LLVM_COV}" export --format=lcov "${cover_args[@]}" > coverage/lcov.info

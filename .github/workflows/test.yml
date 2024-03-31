@@ -72,7 +72,7 @@ jobs:
         run: sccache --start-server
       - uses: taiki-e/install-action@v2
         with:
-          tool: just,cargo-llvm-cov,cargo-nextest
+          tool: just,cargo-nextest
       - name: Run unit tests and h2spec
         run: |
           cd ${{ github.workspace }}
@@ -92,6 +92,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
+          file: coverage/lcov.info
       - name: Upload h2spec Report
         uses: actions/upload-artifact@v3
         if: always() # always run even if the previous step fails

@@ -67,8 +67,7 @@
         default = bin;
       };
       devShells.default = mkShell {
-        inputsFrom = [ bin ];
-        packages = with pkgs; [ just nixpkgs-fmt cargo-nextest ];
+        packages = with pkgs; [ clang mold curl just nixpkgs-fmt cargo-nextest libiconv ];
       };
     }
     );
