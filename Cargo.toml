@@ -1,11 +1,6 @@
 [workspace]
 resolver = "2"
-members = [
-	"crates/*"
-]
-exclude = [
-	"test-crates"
-]
+members = ["crates/*"]
 
 [profile.dev.package."*"]
 opt-level = 2

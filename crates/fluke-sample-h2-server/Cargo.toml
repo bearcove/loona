@@ -1,7 +1,8 @@
 [package]
-name = "sample-h2-server"
+name = "fluke-sample-h2-server"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

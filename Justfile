@@ -22,10 +22,10 @@ test *args:
 
 curl-tests *args:
 	just build-testbed
-	RUST_BACKTRACE=1 cargo nextest run --no-capture --manifest-path test-crates/fluke-curl-tests/Cargo.toml {{args}}
+	RUST_BACKTRACE=1 cargo nextest run --no-capture -p fluke-curl-tests {{args}}
 
 build-testbed:
-	cargo build --release --manifest-path test-crates/hyper-testbed/Cargo.toml
+	cargo build --release -p fluke-hyper-testbed
 
 single-test *args:
 	just test --no-capture {{args}}
@@ -37,24 +37,11 @@ h2spec *args:
 	#!/bin/bash -eux
 	export RUST_LOG="${RUST_LOG:-fluke=debug,fluke_hpack=info}"
 	export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
-	cargo run --manifest-path test-crates/fluke-h2spec/Cargo.toml -- {{args}}
+	cargo run -p fluke-h2spec -- {{args}}
 
 check:
 	#!/bin/bash -eu
-		echo "Checking fluke"
 	cargo clippy --all-targets --all-features
 
-	# also for all subfolders of `test-crates/`
-	for d in test-crates/*; do
-		# if the Cargo.toml exists
-		if [ -f "$d/Cargo.toml" ]; then
-			echo "Checking $(basename "$d")"
-
-		 pushd "$d" > /dev/null
-		 cargo clippy --all-targets --all-features
-		 popd > /dev/null
-		fi
-	done
-
-ktls-sample:
-	cargo run --manifest-path test-crates/fluke-tls-sample/Cargo.toml
+tls-sample:
+	cargo run -p fluke-tls-sample

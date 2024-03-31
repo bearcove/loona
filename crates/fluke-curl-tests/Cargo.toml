@@ -2,21 +2,36 @@
 name = "fluke-curl-tests"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 
 [dev-dependencies]
-fluke = { version = "0.1.0", path = "../../crates/fluke", features = ["maybe-uring-net"] }
+fluke = { version = "0.1.0", path = "../../crates/fluke", features = [
+    "maybe-uring-net",
+] }
 curl = { version = "0.4.46", default-features = false, features = ["http2"] }
 bytes = { version = "1.5.0", default-features = false }
-pretty_assertions = { version = "1.4.0", default-features = false, features = ["std"] }
+pretty_assertions = { version = "1.4.0", default-features = false, features = [
+    "std",
+] }
 tokio-stream = { version = "0.1.14", default-features = false }
-tracing-subscriber = { version = "0.3.18", default-features = false, features = ["std", "fmt", "ansi"] }
+tracing-subscriber = { version = "0.3.18", default-features = false, features = [
+    "std",
+    "fmt",
+    "ansi",
+] }
 httparse = { version = "1.8.0", default-features = false, features = ["std"] }
-tokio = { version = "1.36.0", default-features = false, features = ["io-util", "process", "time"] }
-futures-util = { version = "0.3.30", default-features = false, features = ["std"] }
+tokio = { version = "1.36.0", default-features = false, features = [
+    "io-util",
+    "process",
+    "time",
+] }
+futures-util = { version = "0.3.30", default-features = false, features = [
+    "std",
+] }
 libc = "0.2.153"
 eyre = { version = "0.6.12", default-features = false }
 tracing = "0.1.40"
