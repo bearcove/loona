@@ -13,7 +13,7 @@ Nothing in this repo is final yet, look around, but please do not use.
 
 Thanks to these companies for contracting work on rc-zip:
 
-[![Shopify](./static/shopify.svg)](https://shopify.github.io/) [![fly.io](./static/flyio.svg)](https://fly.io/docs/about/open-source/)
+[![Shopify](./static/shopify-b.svg)](https://shopify.github.io/) [![fly.io](./static/flyio-b.svg)](https://fly.io/docs/about/open-source/)
 
 And thanks to all my [individual sponsors](https://fasterthanli.me/donate).
 
