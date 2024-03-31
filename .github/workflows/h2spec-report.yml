@@ -11,39 +11,17 @@ permissions:
 jobs:
   h2spec-report:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        suite: [h2spec-generic, h2spec-hpack, h2spec-http2]
     steps:
-      - name: Download h2spec Report
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          name: h2spec-results
-          workflow: ${{ github.event.workflow.id }}
-          run_id: ${{ github.event.workflow_run.id }}
       - name: Stub Git repo for test-reporter
         run: |
           git init
       - name: Publish h2spec-generic report
-        if: success() || failure()
+        if: always()
         uses: dorny/test-reporter@v1
         with:
-          name: h2spec-generic
-          path: h2spec-generic.xml
+          name: "${{ matrix.suite }}"
+          artifact: "${{ matrix.suite }}"
           reporter: java-junit
-      - name: Publish h2spec-hpack report
-        if: success() || failure()
-        uses: dorny/test-reporter@v1
-        with:
-          name: h2spec-hpack
-          path: h2spec-hpack.xml
-          reporter: java-junit
-      - name: Publish h2spec-http2 report
-        uses: dorny/test-reporter@v1
-        if: success() || failure()
-        with:
-          name: h2spec-http2
-          path: h2spec-http2.xml
-          reporter: java-junit
-      - name: Report h2spec regressions
-        if: success() || failure()
-        uses: bearcove/report-h2spec-regressions@22403fe3e79edebe2b39068606b4cb40cf016cf7
-        with:
-          suites: "h2spec-generic,h2spec-hpack,h2spec-http2"
