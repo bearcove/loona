@@ -24,4 +24,5 @@ jobs:
         with:
           name: "${{ matrix.suite }}"
           artifact: "${{ matrix.suite }}"
+          path: "target/${{ matrix.suite }}.xml"
           reporter: java-junit
