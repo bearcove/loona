@@ -29,9 +29,9 @@ jobs:
             ./target-cov
             ~/.cargo/git
             ~/.cargo/registry
+            ~/.rustup
       - name: Install Rust specified toolchain
         run: |
-          rm -rf ~/.rustup
           rustup show
       - uses: taiki-e/install-action@v2
         with:
