@@ -47,6 +47,7 @@ cover_args+=(--instr-profile "${COVERAGE_DIR}/fluke.profdata")
 cover_args+=(--ignore-filename-regex "rustc|.cargo|non_uring")
 cover_args+=("${CARGO_TARGET_DIR}"/release/fluke-h2spec)
 
+set +x
 objects=("${CARGO_TARGET_DIR}"/release/deps/*)
 for object in "${objects[@]}"; do
   # skip directories
