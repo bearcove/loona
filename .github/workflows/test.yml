@@ -27,6 +27,9 @@ jobs:
           path: |
             ./target
             ./target-cov
+            ~/.cargo/bin
+            ~/.cargo/git
+            ~/.cargo/registry
       - name: Install Rust specified toolchain
         run: |
           rm -rf ~/.rustup
