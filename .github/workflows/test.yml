@@ -8,6 +8,38 @@ on:
   merge_group:
 
 jobs:
+  test-macos:
+    env:
+      CARGO_TERM_COLOR: always
+    runs-on:
+      - nscloud-macos-sonoma-arm64-12x28-with-cache
+      - nscloud-cache-size-20gb
+      - nscloud-cache-tag-fluke-macos
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Setup cargo cache
+        uses: namespacelabs/nscloud-cache-action@v1
+        with:
+          path: |
+            ./target
+            ./target-cov
+            ~/.cargo/git
+            ~/.cargo/registry
+            ~/.rustup
+      - name: Install Rust specified toolchain
+        run: |
+          rustc --version
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-nextest
+      - name: Run tests
+        run: |
+          cd ${{ github.workspace }}
+          just test
+          just curl-tests
   test-linux:
     env:
       CARGO_TERM_COLOR: always
