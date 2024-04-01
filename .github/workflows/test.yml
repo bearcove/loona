@@ -36,10 +36,6 @@ jobs:
           save-always: true
       - name: Install Rust specified toolchain
         run: rustup show
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.4
-      - name: Set up sccache (part 2)
-        run: sccache --start-server
       - uses: taiki-e/install-action@v2
         with:
           tool: just,cargo-nextest
@@ -54,7 +50,6 @@ jobs:
           # https://github.com/fasterthanlime/h2spec/commit/72a6b9b2b01133d292bd74e019fde86c3638094a
           (pushd tools && curl -fL https://github.com/bearcove/h2spec-binaries/releases/download/72a6b9b/h2spec -o h2spec && chmod +x h2spec && popd)
           just ci-test
-          sccache --show-stats
       - name: Upload coverage information
         uses: codecov/codecov-action@v4
         with:
