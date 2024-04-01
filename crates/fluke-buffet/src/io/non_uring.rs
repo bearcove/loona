@@ -1,7 +1,7 @@
 use crate::{
     buf::{IoBuf, IoBufMut},
     io::{ReadOwned, WriteOwned},
-    BufResult,
+    BufResult, Piece,
 };
 
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -27,7 +27,7 @@ impl<T> WriteOwned for T
 where
     T: AsyncWrite + Unpin,
 {
-    async fn write<B: IoBuf>(&mut self, buf: B) -> BufResult<usize, B> {
+    async fn write(&mut self, buf: Piece) -> BufResult<usize, Piece> {
         let buf_slice = unsafe { std::slice::from_raw_parts(buf.stable_ptr(), buf.bytes_init()) };
         let res = tokio::io::AsyncWriteExt::write(self, buf_slice).await;
         (res, buf)

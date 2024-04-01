@@ -42,30 +42,35 @@ impl<T> From<T> for Piece
 where
     T: Into<PieceCore>,
 {
+    #[inline(always)]
     fn from(t: T) -> Self {
         Piece::Full { core: t.into() }
     }
 }
 
 impl From<&'static [u8]> for PieceCore {
+    #[inline(always)]
     fn from(slice: &'static [u8]) -> Self {
         PieceCore::Static(slice)
     }
 }
 
 impl From<&'static str> for PieceCore {
+    #[inline(always)]
     fn from(slice: &'static str) -> Self {
         PieceCore::Static(slice.as_bytes())
     }
 }
 
 impl From<Vec<u8>> for PieceCore {
+    #[inline(always)]
     fn from(vec: Vec<u8>) -> Self {
         PieceCore::Vec(Rc::new(vec))
     }
 }
 
 impl From<Roll> for PieceCore {
+    #[inline(always)]
     fn from(roll: Roll) -> Self {
         PieceCore::Roll(roll)
     }
@@ -78,6 +83,7 @@ impl From<PieceStr> for Piece {
 }
 
 impl From<HeaderName> for PieceCore {
+    #[inline(always)]
     fn from(name: HeaderName) -> Self {
         PieceCore::HeaderName(name)
     }
@@ -259,7 +265,7 @@ pub struct PieceList {
     // ownership of it.
     //
     // we could however do our own memory pooling.
-    pieces: VecDeque<Piece>,
+    pub(crate) pieces: VecDeque<Piece>,
 }
 
 impl PieceList {
@@ -315,11 +321,10 @@ impl PieceList {
 }
 
 impl From<VecDeque<Piece>> for PieceList {
-    fn from(chunks: VecDeque<Piece>) -> Self {
-        Self { pieces: chunks }
+    fn from(pieces: VecDeque<Piece>) -> Self {
+        Self { pieces }
     }
 }
-
 impl From<PieceList> for VecDeque<Piece> {
     fn from(list: PieceList) -> Self {
         list.pieces

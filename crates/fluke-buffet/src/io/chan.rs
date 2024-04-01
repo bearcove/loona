@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     buf::{IoBuf, IoBufMut},
     io::WriteOwned,
-    BufResult,
+    BufResult, Piece,
 };
 use tokio::sync::mpsc;
 
@@ -165,7 +165,7 @@ impl ChanWrite {
 }
 
 impl WriteOwned for ChanWrite {
-    async fn write<B: IoBuf>(&mut self, buf: B) -> BufResult<usize, B> {
+    async fn write(&mut self, buf: Piece) -> BufResult<usize, Piece> {
         let slice = unsafe { std::slice::from_raw_parts(buf.stable_ptr(), buf.bytes_init()) };
         match self.tx.send(slice.to_vec()).await {
             Ok(()) => (Ok(buf.bytes_init()), buf),
