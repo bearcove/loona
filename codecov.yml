@@ -3,3 +3,8 @@ ignore:
   - "crates/fluke-tls-sample/**"
   - "crates/fluke-hyper-testbed/**"
   - "crates/fluke-curl-tests/**"
+coverage:
+  status:
+    project: off
+    patch: off
+comment: false
