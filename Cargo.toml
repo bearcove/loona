@@ -7,6 +7,8 @@ opt-level = 2
 
 [profile.ci]
 inherits = "dev"
+opt-level = 1
+lto = "off"
 
 [profile.ci.package."*"]
-opt-level = 0
+opt-level = 2
