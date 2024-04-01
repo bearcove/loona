@@ -12,12 +12,24 @@ permissions:
 jobs:
   release-plz:
     name: Release-plz
-    runs-on: ubuntu-latest
+    runs-on:
+      - nscloud-ubuntu-22.04-amd64-32x64-with-cache
+      - nscloud-cache-size-20gb
+      - nscloud-cache-tag-fluke-release-plz
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Setup cargo cache
+        uses: namespacelabs/nscloud-cache-action@v1
+        with:
+          path: |
+            ./target
+            ./target-cov
+            ~/.cargo/git
+            ~/.cargo/registry
+            ~/.rustup
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Run release-plz
