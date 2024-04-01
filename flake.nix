@@ -67,7 +67,7 @@
         default = bin;
       };
       devShells.default = mkShell {
-        packages = with pkgs; [ clang mold curl just nixpkgs-fmt cargo-nextest libiconv cmake ];
+        packages = with pkgs; [ clang mold curl just nixpkgs-fmt cargo-nextest libiconv cmake pkg-config ];
       };
     }
     );
