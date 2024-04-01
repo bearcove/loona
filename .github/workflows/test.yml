@@ -17,23 +17,16 @@ jobs:
       - nscloud-cache-size-20gb
       - nscloud-cache-tag-fluke
     steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - name: Setup cargo cache
         uses: namespacelabs/nscloud-cache-action@v1
         with:
           path: |
             ./target
             ./target-cov
-      - name: Check out repository code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-      - id: cache-rustup
-        name: Cache Rust toolchain
-        uses: actions/cache@v4
-        with:
-          path: ~/.rustup
-          key: toolchain-
-          save-always: true
       - name: Install Rust specified toolchain
         run: rustup show
       - uses: taiki-e/install-action@v2
