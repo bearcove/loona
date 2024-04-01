@@ -329,7 +329,6 @@ dependencies = [
  "eyre",
  "fluke-buffet",
  "fluke-hpack",
- "fluke-maybe-uring",
  "futures-util",
  "http 1.1.0",
  "httparse",
@@ -350,8 +349,8 @@ dependencies = [
 name = "fluke-buffet"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "eyre",
- "fluke-maybe-uring",
  "http 1.1.0",
  "memchr",
  "memmap2",
@@ -360,6 +359,7 @@ dependencies = [
  "pretty_assertions",
  "thiserror",
  "tokio",
+ "tokio-uring",
  "tracing",
 ]
 
@@ -417,15 +417,6 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
-]
-
-[[package]]
-name = "fluke-maybe-uring"
-version = "0.1.1"
-dependencies = [
- "bytemuck",
- "tokio",
- "tokio-uring",
 ]
 
 [[package]]

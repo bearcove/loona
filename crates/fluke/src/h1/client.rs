@@ -3,8 +3,10 @@ use http::header;
 use tracing::debug;
 
 use crate::{types::Request, util::read_and_parse, Body, HeadersExt, Response};
-use fluke_buffet::{PieceList, RollMut};
-use fluke_maybe_uring::io::{ReadOwned, WriteOwned};
+use fluke_buffet::{
+    io::{ReadOwned, WriteOwned},
+    PieceList, RollMut,
+};
 
 use super::{
     body::{write_h1_body, BodyWriteMode, H1Body, H1BodyKind},

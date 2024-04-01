@@ -3,8 +3,7 @@ use nom::IResult;
 use pretty_hex::PrettyHex;
 use tracing::{debug, trace};
 
-use fluke_buffet::{Roll, RollMut};
-use fluke_maybe_uring::io::ReadOwned;
+use fluke_buffet::{io::ReadOwned, Roll, RollMut};
 
 /// Returns `None` on EOF, error if partially parsed message.
 pub(crate) async fn read_and_parse<Parser, Output>(

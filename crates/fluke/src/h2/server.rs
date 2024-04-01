@@ -10,8 +10,10 @@ use std::{
 use byteorder::{BigEndian, WriteBytesExt};
 use enumflags2::BitFlags;
 use eyre::Context;
-use fluke_buffet::{Piece, PieceList, PieceStr, Roll, RollMut};
-use fluke_maybe_uring::io::{ReadOwned, WriteOwned};
+use fluke_buffet::{
+    io::{ReadOwned, WriteOwned},
+    Piece, PieceList, PieceStr, Roll, RollMut,
+};
 use http::{
     header,
     uri::{Authority, PathAndQuery, Scheme},
@@ -1458,7 +1460,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 //
                 // this lets us freeze the entire http2 server and explore
                 // its entire state.
-                fluke_maybe_uring::spawn({
+                fluke_buffet::spawn({
                     let driver = self.driver.clone();
                     async move {
                         let mut req_body = req_body;

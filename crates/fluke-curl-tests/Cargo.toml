@@ -9,9 +9,7 @@ publish = false
 [dependencies]
 
 [dev-dependencies]
-fluke = { version = "0.1.0", path = "../../crates/fluke", features = [
-    "maybe-uring-net",
-] }
+fluke = { version = "0.1.0", path = "../../crates/fluke", features = ["net"] }
 curl = { version = "0.4.46", default-features = false, features = ["http2"] }
 bytes = { version = "1.5.0", default-features = false }
 pretty_assertions = { version = "1.4.0", default-features = false, features = [

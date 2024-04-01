@@ -1,17 +1,33 @@
+use std::{
+    cell::{RefCell, RefMut},
+    collections::VecDeque,
+    future::Future,
+    marker::PhantomData,
+    ops::{self, Bound, RangeBounds},
+};
+
+use memmap2::MmapMut;
+
 mod roll;
 pub use roll::*;
 
 mod piece;
 pub use piece::*;
 
-use std::{
-    cell::{RefCell, RefMut},
-    collections::VecDeque,
-    marker::PhantomData,
-    ops::{self, Bound, RangeBounds},
-};
+pub mod buf;
 
-use memmap2::MmapMut;
+#[cfg(all(target_os = "linux", feature = "tokio-uring"))]
+pub use tokio_uring;
+
+#[cfg(all(target_os = "linux", feature = "tokio-uring"))]
+mod compat;
+
+#[cfg(feature = "net")]
+pub mod net;
+
+pub mod io;
+
+pub type BufResult<T, B> = (std::io::Result<T>, B);
 
 pub const BUF_SIZE: u16 = 4096;
 
@@ -24,6 +40,40 @@ pub const NUM_BUF: u32 = 64;
 thread_local! {
     static BUF_POOL: BufPool = const { BufPool::new_empty(BUF_SIZE, NUM_BUF) };
     static BUF_POOL_DESTRUCTOR: RefCell<Option<MmapMut>> = const { RefCell::new(None) };
+}
+
+/// Spawns a new asynchronous task, returning a [tokio::task::JoinHandle] for it.
+///
+/// Spawning a task enables the task to execute concurrently to other tasks.
+/// There is no guarantee that a spawned task will execute to completion. When a
+/// runtime is shutdown, all outstanding tasks are dropped, regardless of the
+/// lifecycle of that task.
+///
+/// This function must be called from the context of a `tokio-uring` runtime,
+/// or a tokio local set (at the time of this writing, they're the same thing).
+pub fn spawn<T: Future + 'static>(task: T) -> tokio::task::JoinHandle<T::Output> {
+    tokio::task::spawn_local(task)
+}
+
+/// Equivalent to `tokio_uring::start`
+#[cfg(all(target_os = "linux", feature = "tokio-uring"))]
+pub fn start<F: Future>(task: F) -> F::Output {
+    tokio_uring::start(task)
+}
+
+/// Equivalent to `tokio_uring::start`
+#[cfg(not(all(target_os = "linux", feature = "tokio-uring")))]
+pub fn start<F: Future>(task: F) -> F::Output {
+    use tokio::task::LocalSet;
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async move {
+            let local = LocalSet::new();
+            local.run_until(task).await
+        })
 }
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -276,7 +326,7 @@ impl ops::DerefMut for BufMut {
     }
 }
 
-unsafe impl fluke_maybe_uring::buf::IoBuf for BufMut {
+unsafe impl buf::IoBuf for BufMut {
     fn stable_ptr(&self) -> *const u8 {
         unsafe { BUF_POOL.with(|bp| bp.base_ptr(self.index).add(self.off as _)) as *const u8 }
     }
@@ -296,7 +346,7 @@ unsafe impl fluke_maybe_uring::buf::IoBuf for BufMut {
     }
 }
 
-unsafe impl fluke_maybe_uring::buf::IoBufMut for BufMut {
+unsafe impl buf::IoBufMut for BufMut {
     fn stable_mut_ptr(&mut self) -> *mut u8 {
         unsafe { BUF_POOL.with(|bp| bp.base_ptr(self.index).add(self.off as _)) }
     }
@@ -388,7 +438,7 @@ impl Buf {
     }
 }
 
-unsafe impl fluke_maybe_uring::buf::IoBuf for Buf {
+unsafe impl buf::IoBuf for Buf {
     fn stable_ptr(&self) -> *const u8 {
         unsafe { BUF_POOL.with(|bp| bp.base_ptr(self.index).add(self.off as _)) as *const u8 }
     }

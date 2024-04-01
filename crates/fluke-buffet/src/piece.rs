@@ -2,7 +2,7 @@
 
 use std::{collections::VecDeque, fmt, ops::Deref, rc::Rc, str::Utf8Error};
 
-use fluke_maybe_uring::buf::IoBuf;
+use crate::buf::IoBuf;
 use http::header::HeaderName;
 
 use crate::{Roll, RollStr};

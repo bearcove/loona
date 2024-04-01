@@ -3,10 +3,9 @@ mod helpers;
 use bytes::BytesMut;
 use curl::easy::{Easy, HttpVersion, List};
 use fluke::{
+    buffet::io::{ChanRead, ChanWrite, IntoHalves},
     buffet::{PieceCore, RollMut},
-    h1, h2,
-    maybe_uring::io::{ChanRead, ChanWrite, IntoHalves},
-    Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, HeadersExt, Method, Request,
+    h1, h2, Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, HeadersExt, Method, Request,
     Responder, Response, ResponseDone, ServerDriver,
 };
 use http::{header, StatusCode};
@@ -88,8 +87,7 @@ fn serve_api() {
         let (mut rx, write) = ChanWrite::new();
         let client_buf = RollMut::alloc()?;
         let driver = TestDriver;
-        let serve_fut =
-            fluke::maybe_uring::spawn(h1::serve((read, write), conf, client_buf, driver));
+        let serve_fut = fluke::buffet::spawn(h1::serve((read, write), conf, client_buf, driver));
 
         tx.send("GET / HTTP/1.1\r\n\r\n").await?;
         let mut res_buf = BytesMut::new();
@@ -171,7 +169,7 @@ fn request_api() {
         }
 
         let driver = TestDriver;
-        let request_fut = fluke::maybe_uring::spawn(async {
+        let request_fut = fluke::buffet::spawn(async {
             #[allow(clippy::let_unit_value)]
             let mut body = ();
             h1::request((read, write), req, &mut body, driver).await
@@ -295,7 +293,7 @@ fn proxy_echo_body_content_len() {
 
             Ok::<(), eyre::Report>(())
         };
-        fluke::maybe_uring::spawn(async move {
+        fluke::buffet::spawn(async move {
             if let Err(e) = send_fut.await {
                 panic!("Error sending request: {e}");
             }
@@ -399,7 +397,7 @@ fn proxy_echo_body_chunked() {
 
             Ok::<(), eyre::Report>(())
         };
-        fluke::maybe_uring::spawn(async move {
+        fluke::buffet::spawn(async move {
             if let Err(e) = send_fut.await {
                 panic!("Error sending request: {e}");
             }
@@ -673,7 +671,7 @@ fn curl_echo_body_noproxy(typ: BodyType) {
     )> {
         let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
 
-        let ln = fluke::maybe_uring::net::TcpListener::bind("127.0.0.1:0".parse()?).await?;
+        let ln = fluke::buffet::net::TcpListener::bind("127.0.0.1:0".parse()?).await?;
         let ln_addr = ln.local_addr()?;
 
         struct TestDriver;
@@ -717,7 +715,7 @@ fn curl_echo_body_noproxy(typ: BodyType) {
             let conf = Rc::new(h1::ServerConf::default());
 
             enum Event {
-                Accepted((fluke::maybe_uring::net::TcpStream, SocketAddr)),
+                Accepted((fluke::buffet::net::TcpStream, SocketAddr)),
                 ShuttingDown,
             }
 
@@ -737,7 +735,7 @@ fn curl_echo_body_noproxy(typ: BodyType) {
 
                         let conf = conf.clone();
 
-                        fluke::maybe_uring::spawn(async move {
+                        fluke::buffet::spawn(async move {
                             let driver = TestDriver;
                             h1::serve(
                                 transport.into_halves(),
@@ -847,9 +845,8 @@ fn h2_basic_post() {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or_default();
-        let ln =
-            fluke::maybe_uring::net::TcpListener::bind(format!("127.0.0.1:{listen_port}").parse()?)
-                .await?;
+        let ln = fluke::buffet::net::TcpListener::bind(format!("127.0.0.1:{listen_port}").parse()?)
+            .await?;
         let ln_addr = ln.local_addr()?;
 
         struct TestDriver;
@@ -888,7 +885,7 @@ fn h2_basic_post() {
             let conf = Rc::new(h2::ServerConf::default());
 
             enum Event {
-                Accepted((fluke::maybe_uring::net::TcpStream, SocketAddr)),
+                Accepted((fluke::buffet::net::TcpStream, SocketAddr)),
                 ShuttingDown,
             }
 
@@ -909,7 +906,7 @@ fn h2_basic_post() {
                         let conf = conf.clone();
                         let driver = driver.clone();
 
-                        fluke::maybe_uring::spawn(async move {
+                        fluke::buffet::spawn(async move {
                             h2::serve(
                                 transport.into_halves(),
                                 conf,
@@ -1036,9 +1033,8 @@ fn h2_basic_get() {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or_default();
-        let ln =
-            fluke::maybe_uring::net::TcpListener::bind(format!("127.0.0.1:{listen_port}").parse()?)
-                .await?;
+        let ln = fluke::buffet::net::TcpListener::bind(format!("127.0.0.1:{listen_port}").parse()?)
+            .await?;
         let ln_addr = ln.local_addr()?;
 
         struct TestDriver;
@@ -1077,7 +1073,7 @@ fn h2_basic_get() {
             let conf = Rc::new(h2::ServerConf::default());
 
             enum Event {
-                Accepted((fluke::maybe_uring::net::TcpStream, SocketAddr)),
+                Accepted((fluke::buffet::net::TcpStream, SocketAddr)),
                 ShuttingDown,
             }
 
@@ -1098,7 +1094,7 @@ fn h2_basic_get() {
                         let conf = conf.clone();
                         let driver = driver.clone();
 
-                        fluke::maybe_uring::spawn(async move {
+                        fluke::buffet::spawn(async move {
                             h2::serve(
                                 transport.into_halves(),
                                 conf,
