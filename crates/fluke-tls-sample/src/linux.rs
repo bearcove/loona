@@ -8,10 +8,9 @@ use std::{
 
 use color_eyre::eyre;
 use fluke::{
-    buffet::RollMut,
-    h1, h2,
-    maybe_uring::{io::IntoHalves, tokio_uring::net::TcpStream},
-    Body, Encoder, ExpectResponseHeaders, Method, Request, Responder, ResponseDone, ServerDriver,
+    buffet::{io::IntoHalves, tokio_uring::net::TcpStream, RollMut},
+    h1, h2, Body, Encoder, ExpectResponseHeaders, Method, Request, Responder, ResponseDone,
+    ServerDriver,
 };
 use http::Version;
 use ktls::CorkStream;
