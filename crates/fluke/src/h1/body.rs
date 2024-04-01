@@ -3,8 +3,10 @@ use std::fmt;
 use tracing::debug;
 
 use crate::{util::read_and_parse, Body, BodyChunk, BodyErrorReason};
-use fluke_buffet::{PieceCore, PieceList, RollMut};
-use fluke_maybe_uring::io::{ReadOwned, WriteOwned};
+use fluke_buffet::{
+    io::{ReadOwned, WriteOwned},
+    PieceCore, PieceList, RollMut,
+};
 
 /// An HTTP/1.1 body, either chunked or content-length.
 pub(crate) struct H1Body<T> {

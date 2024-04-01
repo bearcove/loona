@@ -1,12 +1,11 @@
 use fluke::{
-    buffet::RollMut,
-    h1,
-    maybe_uring::{
+    buffet::{
         io::IntoHalves,
         net::{TcpReadHalf, TcpWriteHalf},
+        RollMut,
     },
-    Body, BodyChunk, Encoder, ExpectResponseHeaders, HeadersExt, Responder, Response, ResponseDone,
-    ServerDriver,
+    h1, Body, BodyChunk, Encoder, ExpectResponseHeaders, HeadersExt, Responder, Response,
+    ResponseDone, ServerDriver,
 };
 use http::StatusCode;
 use std::{cell::RefCell, future::Future, net::SocketAddr, rc::Rc};
@@ -45,7 +44,7 @@ impl ServerDriver for ProxyDriver {
             transport
         } else {
             debug!("making new connection to upstream!");
-            fluke::maybe_uring::net::TcpStream::connect(self.upstream_addr)
+            fluke::buffet::net::TcpStream::connect(self.upstream_addr)
                 .await?
                 .into_halves()
         };
@@ -119,7 +118,7 @@ pub async fn start(
 )> {
     let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
 
-    let ln = fluke::maybe_uring::net::TcpListener::bind("127.0.0.1:0".parse()?).await?;
+    let ln = fluke::buffet::net::TcpListener::bind("127.0.0.1:0".parse()?).await?;
     let ln_addr = ln.local_addr()?;
 
     let proxy_fut = async move {
@@ -127,7 +126,7 @@ pub async fn start(
         let pool: TransportPool = Default::default();
 
         enum Event {
-            Accepted((fluke::maybe_uring::net::TcpStream, SocketAddr)),
+            Accepted((fluke::buffet::net::TcpStream, SocketAddr)),
             ShuttingDown,
         }
 
@@ -148,7 +147,7 @@ pub async fn start(
                     let pool = pool.clone();
                     let conf = conf.clone();
 
-                    fluke::maybe_uring::spawn(async move {
+                    fluke::buffet::spawn(async move {
                         let driver = ProxyDriver {
                             upstream_addr,
                             pool,

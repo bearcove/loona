@@ -8,7 +8,7 @@ use std::{
     str::Utf8Error,
 };
 
-use fluke_maybe_uring::{
+use crate::{
     buf::{IoBuf, IoBufMut},
     io::ReadOwned,
 };
@@ -1109,13 +1109,13 @@ mod tests {
     #[test]
     #[cfg(not(feature = "miri"))]
     fn test_roll_readfrom_start() {
-        use fluke_maybe_uring::io::ChanRead;
+        use crate::io::ChanRead;
 
-        fluke_maybe_uring::start(async move {
+        crate::start(async move {
             let mut rm = RollMut::alloc().unwrap();
 
             let (send, mut read) = ChanRead::new();
-            fluke_maybe_uring::spawn(async move {
+            crate::spawn(async move {
                 send.send("123456").await.unwrap();
             });
 
@@ -1242,7 +1242,7 @@ mod tests {
     #[test]
     #[cfg(not(feature = "miri"))]
     fn test_roll_iobuf() {
-        use fluke_maybe_uring::{
+        use crate::{
             io::{IntoHalves, ReadOwned, WriteOwned},
             net::{TcpListener, TcpStream},
         };
@@ -1280,7 +1280,7 @@ mod tests {
             Ok(())
         }
 
-        fluke_maybe_uring::start(async move {
+        crate::start(async move {
             let rm = RollMut::alloc().unwrap();
             test_roll_iobuf_inner(rm).await.unwrap();
 

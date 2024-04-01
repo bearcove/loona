@@ -102,7 +102,7 @@ impl Drop for H2Encoder {
 
         if !evs.is_empty() {
             let tx = self.tx.clone();
-            fluke_maybe_uring::spawn(async move {
+            fluke_buffet::spawn(async move {
                 for ev in evs {
                     if tx.send(ev).await.is_err() {
                         debug!("could not send event to h2 connection handler");

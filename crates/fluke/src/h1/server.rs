@@ -8,8 +8,10 @@ use crate::{
     util::{read_and_parse, SemanticError},
     ExpectResponseHeaders, HeadersExt, Responder, ServerDriver,
 };
-use fluke_buffet::RollMut;
-use fluke_maybe_uring::io::{ReadOwned, WriteOwned};
+use fluke_buffet::{
+    io::{ReadOwned, WriteOwned},
+    RollMut,
+};
 
 use super::encode::H1Encoder;
 

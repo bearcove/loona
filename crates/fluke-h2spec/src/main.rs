@@ -1,9 +1,8 @@
 use std::{collections::VecDeque, path::PathBuf};
 
 use fluke::{
-    buffet::RollMut,
+    buffet::{io::IntoHalves, net::TcpListener, RollMut},
     http::{StatusCode, Version},
-    maybe_uring::{io::IntoHalves, net::TcpListener},
     Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, Request, Responder, Response,
     ResponseDone, ServerDriver,
 };
@@ -34,7 +33,7 @@ fn main() {
         }
     };
 
-    fluke::maybe_uring::start(async move { real_main(h2spec_binary).await.unwrap() });
+    fluke::buffet::start(async move { real_main(h2spec_binary).await.unwrap() });
 }
 
 struct SDriver;

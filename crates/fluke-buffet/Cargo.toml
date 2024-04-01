@@ -10,19 +10,20 @@ description = """
 Buffer management for the `fluke` crate.
 """
 
+rust-version = "1.75.0"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
 default = ["tokio-uring"]
-tokio-uring = ["fluke-maybe-uring/tokio-uring"]
+tokio-uring = ["dep:tokio-uring"]
+net = ["tokio/net"]
 miri = []
 
 [dependencies]
+bytemuck = { version = "1.15.0", features = ["extern_crate_std"] }
 eyre = "0.6.12"
 http = "1.1.0"
-fluke-maybe-uring = { version = "0.1.1", path = "../fluke-maybe-uring", features = [
-    "net",
-] }
 memchr = "2.7.1"
 memmap2 = { version = "0.9.4", default-features = false }
 nom = "7.1.3"
@@ -30,6 +31,9 @@ pretty-hex = "0.4.1"
 thiserror = { version = "1.0.58", default-features = false }
 tokio = { version = "1.36.0", features = ["sync", "macros", "rt", "io-util"] }
 tracing = "0.1.40"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio-uring = { git = "https://github.com/tokio-rs/tokio-uring", rev = "a69d4bf57776a085a6516f4c022e2bf5d1814762", optional = true }
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"
