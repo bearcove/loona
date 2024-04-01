@@ -1,15 +1,12 @@
-use std::{collections::VecDeque, net::Shutdown};
+use std::net::Shutdown;
 
 use crate::{
     buf::{IoBuf, IoBufMut},
-    BufResult,
+    BufResult, Piece, PieceList,
 };
 
 mod chan;
 pub use chan::*;
-
-mod buf_or_slice;
-use buf_or_slice::*;
 
 mod non_uring;
 
@@ -22,15 +19,14 @@ pub trait ReadOwned {
 pub trait WriteOwned {
     /// Write a single buffer, taking ownership for the duration of the write.
     /// Might perform a partial write, see [WriteOwned::write_all]
-    async fn write<B: IoBuf>(&mut self, buf: B) -> BufResult<usize, B>;
+    async fn write(&mut self, buf: Piece) -> BufResult<usize, Piece>;
 
     /// Write a single buffer, re-trying the write if the kernel does a partial write.
-    async fn write_all<B: IoBuf>(&mut self, mut buf: B) -> std::io::Result<()> {
+    async fn write_all(&mut self, mut buf: Piece) -> std::io::Result<()> {
         let mut written = 0;
         let len = buf.bytes_init();
         while written < len {
-            let (res, slice) = self.write(buf.slice(written..len)).await;
-            buf = slice.into_inner();
+            let (res, slice) = self.write(buf).await;
             let n = res?;
             if n == 0 {
                 return Err(std::io::Error::new(
@@ -38,6 +34,7 @@ pub trait WriteOwned {
                     "write zero",
                 ));
             }
+            (_, buf) = slice.split_at(n);
             written += n;
         }
         Ok(())
@@ -45,59 +42,40 @@ pub trait WriteOwned {
 
     /// Write a list of buffers, taking ownership for the duration of the write.
     /// Might perform a partial write, see [WriteOwned::writev_all]
-    async fn writev<B: IoBuf>(&mut self, list: VecDeque<B>) -> BufResult<usize, VecDeque<B>> {
-        let mut out_list = VecDeque::with_capacity(list.len());
-        let mut list = list.into_iter();
+    async fn writev(&mut self, list: &PieceList) -> std::io::Result<usize> {
         let mut total = 0;
 
-        while let Some(buf) = list.next() {
+        for buf in list.pieces.iter().cloned() {
             let buf_len = buf.bytes_init();
-            let (res, buf) = self.write(buf).await;
-            out_list.push_back(buf);
+            let (res, _) = self.write(buf).await;
 
             match res {
                 Ok(0) => {
-                    out_list.extend(list);
-                    return (
-                        Err(std::io::Error::new(
-                            std::io::ErrorKind::WriteZero,
-                            "write zero",
-                        )),
-                        out_list,
-                    );
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::WriteZero,
+                        "write zero",
+                    ));
                 }
                 Ok(n) => {
                     total += n;
                     if n < buf_len {
                         // partial write, return the buffer list so the caller
                         // might choose to try the write again
-                        out_list.extend(list);
-                        return (Ok(total), out_list);
+                        return Ok(total);
                     }
                 }
                 Err(e) => {
-                    out_list.extend(list);
-                    return (Err(e), out_list);
+                    return Err(e);
                 }
             }
         }
-
-        (Ok(total), out_list)
+        Ok(total)
     }
 
     /// Write a list of buffers, re-trying the write if the kernel does a partial write.
-    async fn writev_all<B: IoBuf>(&mut self, list: impl Into<VecDeque<B>>) -> std::io::Result<()> {
-        // FIXME: converting into a `VecDeque` and _then_ into an iterator is silly,
-        // we can probably find a better function signature here.
-        let mut list: VecDeque<_> = list.into().into_iter().map(BufOrSlice::Buf).collect();
-        // TODO: figure out if `Piece::Slice` is redundant with `BufOrSlice`. Probably is,
-        // but they're different abstraction levels, so.
-
+    async fn writev_all(&mut self, mut list: PieceList) -> std::io::Result<()> {
         while !list.is_empty() {
-            let res;
-            (res, list) = self.writev(list).await;
-            let n = res?;
-
+            let n = self.writev(&list).await?;
             if n == 0 {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::WriteZero,
@@ -106,26 +84,24 @@ pub trait WriteOwned {
             }
 
             let mut n = n;
-            list = list
-                .into_iter()
-                .filter_map(|item| {
-                    if n == 0 {
-                        Some(item)
-                    } else {
-                        let item_len = item.len();
+            while n > 0 {
+                // pop and/or split items from the list
+                let next_item = list.pieces.front_mut().unwrap();
+                let next_item_len = next_item.len();
 
-                        if n >= item_len {
-                            n -= item_len;
-                            None
-                        } else {
-                            let item = item.consume(n);
-                            n = 0;
-                            Some(item)
-                        }
-                    }
-                })
-                .collect();
-            assert_eq!(n, 0);
+                if n < next_item_len {
+                    // the number of bytes written falls in the middle of the buffer.
+                    // split the buffer and push the remainder back to the list
+                    let next_item = list.pieces.pop_front().unwrap();
+                    let (l, r) = next_item.split_at(n);
+                    n -= l.len();
+                    list.pieces.push_front(r);
+                } else {
+                    // the whole buffer was written, pop it from the list
+                    list.pieces.pop_front();
+                    n -= next_item_len;
+                }
+            }
         }
 
         Ok(())
@@ -138,7 +114,7 @@ pub trait WriteOwned {
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
-    use crate::{buf::IoBuf, io::WriteOwned, BufResult};
+    use crate::{buf::IoBuf, io::WriteOwned, BufResult, Piece, PieceList};
 
     #[test]
     fn test_write_all() {
@@ -153,7 +129,7 @@ mod tests {
         }
 
         impl WriteOwned for Writer {
-            async fn write<B: IoBuf>(&mut self, buf: B) -> BufResult<usize, B> {
+            async fn write(&mut self, buf: Piece) -> BufResult<usize, Piece> {
                 assert!(buf.bytes_init() > 0, "zero-length writes are forbidden");
 
                 match self.mode {
@@ -181,7 +157,7 @@ mod tests {
                 bytes: Default::default(),
             };
             let buf_a = vec![1, 2, 3, 4, 5];
-            let res = writer.write_all(buf_a).await;
+            let res = writer.write_all(buf_a.into()).await;
             assert!(res.is_err());
 
             let mut writer = Writer {
@@ -190,7 +166,9 @@ mod tests {
             };
             let buf_a = vec![1, 2, 3, 4, 5];
             let buf_b = vec![6, 7, 8, 9, 10];
-            let res = writer.writev_all(vec![buf_a, buf_b]).await;
+            let res = writer
+                .writev_all(PieceList::single(buf_a).followed_by(buf_b))
+                .await;
             assert!(res.is_err());
 
             let mut writer = Writer {
@@ -198,7 +176,7 @@ mod tests {
                 bytes: Default::default(),
             };
             let buf_a = vec![1, 2, 3, 4, 5];
-            writer.write_all(buf_a).await.unwrap();
+            writer.write_all(buf_a.into()).await.unwrap();
             assert_eq!(&writer.bytes.borrow()[..], &[1, 2, 3, 4, 5]);
 
             let mut writer = Writer {
@@ -207,7 +185,10 @@ mod tests {
             };
             let buf_a = vec![1, 2, 3, 4, 5];
             let buf_b = vec![6, 7, 8, 9, 10];
-            writer.writev_all(vec![buf_a, buf_b]).await.unwrap();
+            writer
+                .writev_all(PieceList::single(buf_a).followed_by(buf_b))
+                .await
+                .unwrap();
             assert_eq!(&writer.bytes.borrow()[..], &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         });
     }

@@ -1257,7 +1257,7 @@ mod tests {
             let send_fut = async move {
                 let stream = TcpStream::connect(local_addr).await?;
                 let (_stream_r, mut stream_w) = IntoHalves::into_halves(stream);
-                stream_w.write_all(roll).await?;
+                stream_w.write_all(roll.into()).await?;
                 Ok::<_, eyre::Report>(())
             };
 

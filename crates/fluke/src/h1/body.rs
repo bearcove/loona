@@ -283,7 +283,7 @@ pub(crate) async fn write_h1_body_chunk(
                 .await?;
         }
         BodyWriteMode::ContentLength => {
-            transport.write_all(chunk).await?;
+            transport.write_all(chunk.into()).await?;
         }
         BodyWriteMode::Empty => {
             return Err(BodyErrorReason::CalledWriteBodyChunkWhenNoBodyWasExpected
@@ -301,7 +301,7 @@ pub(crate) async fn write_h1_body_end(
     debug!(?mode, "writing h1 body end");
     match mode {
         BodyWriteMode::Chunked => {
-            transport.write_all("0\r\n\r\n").await?;
+            transport.write_all("0\r\n\r\n".into()).await?;
         }
         BodyWriteMode::ContentLength => {
             // nothing to do

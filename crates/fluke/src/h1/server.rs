@@ -71,7 +71,7 @@ pub async fn serve(
             Err(e) => {
                 if let Some(se) = e.downcast_ref::<SemanticError>() {
                     transport_w
-                        .write_all(se.as_http_response())
+                        .write_all(se.as_http_response().into())
                         .await
                         .wrap_err("writing error response downstream")?;
                 }

@@ -12,9 +12,7 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
     runs-on:
-      - nscloud-ubuntu-22.04-amd64-32x64-with-cache
-      - nscloud-cache-size-20gb
-      - nscloud-cache-tag-fluke
+      - namespace-profile-linux-amd64
     steps:
       - name: Check out repository code
         uses: actions/checkout@v4

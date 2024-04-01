@@ -1,11 +1,12 @@
 use std::{
-    collections::VecDeque, net::{Shutdown, SocketAddr}, rc::Rc
+    net::{Shutdown, SocketAddr},
+    rc::Rc,
 };
 
 use crate::{
-    buf::{tokio_uring_compat::BufCompat, IoBuf, IoBufMut},
+    buf::{tokio_uring_compat::BufCompat, IoBufMut},
     io::{IntoHalves, ReadOwned, WriteOwned},
-    BufResult,
+    BufResult, Piece, PieceList,
 };
 pub use tokio_uring::net::{TcpListener as TokListener, TcpStream as TokStream};
 
@@ -45,19 +46,15 @@ impl ReadOwned for TcpReadHalf {
 pub struct TcpWriteHalf(Rc<TcpStream>);
 
 impl WriteOwned for TcpWriteHalf {
-    async fn write<B: IoBuf>(&mut self, buf: B) -> BufResult<usize, B> {
+    async fn write(&mut self, buf: Piece) -> BufResult<usize, Piece> {
         let (res, b) = self.0.write(BufCompat(buf)).submit().await;
         (res, b.0)
     }
 
-    async fn writev<B: IoBuf>(&mut self, list: VecDeque<B>) -> BufResult<usize, VecDeque<B>> {
-        // TODO: use bytemuck::allcation::TransparentWrapperAlloc again,
-        // with wrap_vec and peel_vec
-
-        let list: Vec<BufCompat<B>> = list.into_iter().map(BufCompat).collect();
-        let (res, list) = self.0.writev(list).await;
-        let list: VecDeque<B> = list.into_iter().map(|b| b.0).collect();
-        (res, list)
+    async fn writev(&mut self, list: &PieceList) -> std::io::Result<usize> {
+        let list: Vec<BufCompat<Piece>> = list.pieces.iter().cloned().map(BufCompat).collect();
+        let (res, _list) = self.0.writev(list).await;
+        res
     }
 
     async fn shutdown(&mut self, how: Shutdown) -> std::io::Result<()> {
