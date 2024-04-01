@@ -16,7 +16,6 @@ rust-version = "1.75"
 [features]
 default = ["tokio-uring"]
 tokio-uring = ["fluke-buffet/tokio-uring"]
-net = ["fluke-buffet/net"]
 
 [dependencies]
 byteorder = "1.5.0"
@@ -40,9 +39,7 @@ tokio = { version = "1.36.0", features = ["macros", "sync"] }
 tracing = { version = "0.1.40", default-features = false }
 
 [dev-dependencies]
-fluke-buffet = { version = "0.1.0", path = "../fluke-buffet", features = [
-    "net",
-] }
+fluke-buffet = { version = "0.1.0", path = "../fluke-buffet" }
 bytes = { version = "1.5.0", default-features = false }
 pretty_assertions = { version = "1.4.0", default-features = false, features = [
     "std",

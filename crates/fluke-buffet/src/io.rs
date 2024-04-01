@@ -93,9 +93,9 @@ pub trait WriteOwned {
                     // the number of bytes written falls in the middle of the buffer.
                     // split the buffer and push the remainder back to the list
                     let next_item = list.pieces.pop_front().unwrap();
-                    let (l, _r) = next_item.split_at(n);
+                    let (l, r) = next_item.split_at(n);
                     n -= l.len();
-                    list.pieces.push_front(l);
+                    list.pieces.push_front(r);
                 } else {
                     // the whole buffer was written, pop it from the list
                     list.pieces.pop_front();

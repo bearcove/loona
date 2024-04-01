@@ -13,9 +13,7 @@ jobs:
   release-plz:
     name: Release-plz
     runs-on:
-      - nscloud-ubuntu-22.04-amd64-32x64-with-cache
-      - nscloud-cache-size-20gb
-      - nscloud-cache-tag-fluke-release-plz
+      - namespace-profile-linux-amd64
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

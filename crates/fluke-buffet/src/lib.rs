@@ -22,7 +22,6 @@ pub use tokio_uring;
 #[cfg(all(target_os = "linux", feature = "tokio-uring"))]
 mod compat;
 
-#[cfg(feature = "net")]
 pub mod net;
 
 pub mod io;

@@ -1,5 +1,7 @@
 use std::{
-    collections::VecDeque, net::{Shutdown, SocketAddr}, rc::Rc
+    collections::VecDeque,
+    net::{Shutdown, SocketAddr},
+    rc::Rc,
 };
 
 use crate::{

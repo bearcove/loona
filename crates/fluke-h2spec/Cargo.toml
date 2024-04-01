@@ -7,9 +7,7 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-fluke = { version = "0.1.0", path = "../../crates/fluke", default-features = false, features = [
-    "net",
-] }
+fluke = { version = "0.1.0", path = "../../crates/fluke" }
 color-eyre = "0.6.2"
 tokio = { version = "1.36.0", features = ["full"] }
 tracing = "0.1.40"

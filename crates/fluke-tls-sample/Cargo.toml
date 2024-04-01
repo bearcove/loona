@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 color-eyre = "0.6.2"
-fluke = { path = "../../crates/fluke", features = ["net"] }
+fluke = { path = "../../crates/fluke" }
 rcgen = "0.10.0"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
