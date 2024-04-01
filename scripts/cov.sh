@@ -15,6 +15,7 @@ mkdir -p "${COVERAGE_DIR}/raw"
 # must be set before building
 export LLVM_PROFILE_FILE="${COVERAGE_DIR}/raw/fluke-%p-%12m.profraw"
 
+set +x
 declare -a RUSTC_TARGETS
 RUSTC_TARGETS=$(rustc --print target-list)
 RUSTC_SYSROOT=$(rustc --print sysroot)
@@ -27,8 +28,8 @@ for target in $RUSTC_TARGETS; do
     break
   fi
 done
+set -x
 
-# extract target triple. this is wrong in case of cross-compilation but ah-well.
 LLVM_TOOLS_PATH=${RUSTC_SYSROOT}/lib/rustlib/${RUSTC_TARGET_TRIPLE}/bin
 LLVM_PROFDATA="${LLVM_TOOLS_PATH}/llvm-profdata"
 "${LLVM_PROFDATA}" --version
