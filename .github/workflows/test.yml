@@ -8,27 +8,6 @@ on:
   merge_group:
 
 jobs:
-  test-macos:
-    env:
-      CARGO_TERM_COLOR: always
-    runs-on:
-      - namespace-profile-macos-arm64
-    steps:
-      - name: Check out repository code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-      - name: Install Rust specified toolchain
-        run: |
-          rustc --version
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: just,cargo-nextest
-      - name: Run tests
-        run: |
-          cd ${{ github.workspace }}
-          just test
-          just curl-tests
   test-linux:
     env:
       CARGO_TERM_COLOR: always
