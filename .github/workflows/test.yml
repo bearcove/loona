@@ -32,7 +32,7 @@ jobs:
             ~/.rustup
       - name: Install Rust specified toolchain
         run: |
-          rustup show
+          rustc --version
       - uses: taiki-e/install-action@v2
         with:
           tool: just,cargo-nextest
