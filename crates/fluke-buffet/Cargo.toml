@@ -46,4 +46,5 @@ tracing = "0.1.40"
 tokio-uring = { git = "https://github.com/tokio-rs/tokio-uring", rev = "a69d4bf57776a085a6516f4c022e2bf5d1814762", optional = true }
 
 [dev-dependencies]
+color-eyre = "0.6.3"
 pretty_assertions = "1.4.0"

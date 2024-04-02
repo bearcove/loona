@@ -50,7 +50,7 @@ impl<C: cqueue::Entry> Drop for Op<C> {
             Lifecycle::Completed(_) => {}
             _ => {
                 drop(guard);
-                tokio::task::spawn_local(async { inner.await });
+                tokio::task::spawn_local(inner);
             }
         }
     }
