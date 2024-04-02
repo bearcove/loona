@@ -6,6 +6,7 @@ use std::{
 
 use fluke_io_uring_async::IoUringAsync;
 use io_uring::opcode::Accept;
+use nix::errno::Errno;
 
 use crate::{
     buf::IoBufMut,
@@ -75,8 +76,10 @@ impl TcpListener {
             .build()
         };
         let res = u.push(e).await;
-        let r = res.result();
-        todo!("handle result: r = {r}");
+        res.ok()?;
+
+        let udata = Box::from_raw(udata);
+        todo!("");
     }
 }
 
@@ -119,6 +122,21 @@ impl IntoHalves for TcpStream {
 impl FromRawFd for TcpStream {
     unsafe fn from_raw_fd(_fd: RawFd) -> Self {
         todo!()
+    }
+}
+
+trait CqueueExt {
+    fn ok(&self) -> Result<(), Errno>;
+}
+
+impl CqueueExt for io_uring::cqueue::Entry {
+    fn ok(&self) -> Result<(), Errno> {
+        let res = self.result();
+        if res < 0 {
+            Err(Errno::from_raw(-res))
+        } else {
+            Ok(())
+        }
     }
 }
 
