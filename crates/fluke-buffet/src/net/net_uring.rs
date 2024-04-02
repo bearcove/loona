@@ -42,6 +42,16 @@ impl TcpStream {
     }
 }
 
+impl Drop for TcpStream {
+    fn drop(&mut self) {
+        // TODO: rethink this.
+        // what about all the in-flight operations?
+        unsafe {
+            libc::close(self.fd);
+        }
+    }
+}
+
 pub struct TcpListener {
     fd: i32,
 }
