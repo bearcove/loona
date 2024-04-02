@@ -1220,12 +1220,12 @@ mod tests {
                 let (mut stream_r, _stream_w) = IntoHalves::into_halves(stream);
                 println!("Accepted connection from {addr}");
 
-                let mut buf = Vec::with_capacity(1024);
+                let mut buf = vec![0u8; 1024];
                 let res;
                 (res, buf) = stream_r.read(buf).await;
-                res?;
+                let n = res?;
 
-                assert_eq!(buf, b"hello");
+                assert_eq!(&buf[..n], b"hello");
 
                 Ok::<_, eyre::Report>(())
             };

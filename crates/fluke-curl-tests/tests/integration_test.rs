@@ -231,7 +231,10 @@ fn proxy_statuses() {
             debug!("Reading response...");
             'read_response: loop {
                 buf.reserve(256);
-                socket.read_buf(&mut buf).await?;
+                let n = socket.read_buf(&mut buf).await?;
+                if n == 0 {
+                    panic!("unexpected EOF");
+                }
                 debug!("After read, got {} bytes", buf.len());
 
                 let mut headers = [EMPTY_HEADER; 16];
@@ -302,7 +305,10 @@ fn proxy_echo_body_content_len() {
         debug!("Reading response...");
         'read_response: loop {
             buf.reserve(256);
-            read.read_buf(&mut buf).await?;
+            let n = read.read_buf(&mut buf).await?;
+            if n == 0 {
+                panic!("unexpected EOF");
+            }
             debug!("After read, got {} bytes", buf.len());
 
             let mut headers = [EMPTY_HEADER; 16];
@@ -406,7 +412,10 @@ fn proxy_echo_body_chunked() {
         debug!("Reading response...");
         'read_response: loop {
             buf.reserve(256);
-            read.read_buf(&mut buf).await?;
+            let n = read.read_buf(&mut buf).await?;
+            if n == 0 {
+                panic!("unexpected EOF");
+            }
             debug!("After read, got {} bytes", buf.len());
 
             let mut headers = [EMPTY_HEADER; 16];

@@ -1,6 +1,7 @@
 use std::{
+    mem::ManuallyDrop,
     net::{Shutdown, SocketAddr},
-    os::fd::{AsFd, AsRawFd, FromRawFd, RawFd},
+    os::fd::{AsRawFd, FromRawFd, RawFd},
     rc::Rc,
 };
 
@@ -14,17 +15,35 @@ use crate::{
 };
 
 pub struct TcpStream {
-    socket: socket2::Socket,
+    fd: i32,
 }
 
 impl TcpStream {
-    pub async fn connect(_addr: SocketAddr) -> std::io::Result<Self> {
-        todo!()
+    // TODO: nodelay
+    pub async fn connect(addr: SocketAddr) -> std::io::Result<Self> {
+        let addr: socket2::SockAddr = addr.into();
+        let socket = ManuallyDrop::new(socket2::Socket::new(
+            addr.domain(),
+            socket2::Type::STREAM,
+            None,
+        )?);
+        let fd = socket.as_raw_fd();
+
+        let u = get_ring();
+
+        let addr = Box::into_raw(Box::new(addr));
+        let sqe = unsafe {
+            io_uring::opcode::Connect::new(io_uring::types::Fd(fd), addr as *const _, (*addr).len())
+        }
+        .build();
+        let cqe = u.push(sqe).await;
+        cqe.error_for_errno()?;
+        Ok(Self { fd })
     }
 }
 
 pub struct TcpListener {
-    socket: socket2::Socket,
+    fd: i32,
 }
 
 impl TcpListener {
@@ -36,17 +55,19 @@ impl TcpListener {
         socket.bind(&addr)?;
         // FIXME: magic values
         socket.listen(16)?;
+        let fd = socket.as_raw_fd();
+        std::mem::forget(socket);
 
-        Ok(Self { socket })
+        Ok(Self { fd })
     }
 
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        Ok(self.socket.local_addr()?.as_socket().unwrap())
+        let socket = ManuallyDrop::new(unsafe { socket2::Socket::from_raw_fd(self.fd) });
+        let addr = socket.local_addr()?;
+        Ok(addr.as_socket().unwrap())
     }
 
     pub async fn accept(&self) -> std::io::Result<(TcpStream, SocketAddr)> {
-        let fd = self.socket.as_fd();
-
         let u = get_ring();
         struct AcceptUserData {
             sockaddr_storage: libc::sockaddr_storage,
@@ -60,21 +81,20 @@ impl TcpListener {
 
         let sqe = unsafe {
             Accept::new(
-                io_uring::types::Fd(fd.as_raw_fd()),
+                io_uring::types::Fd(self.fd),
                 &mut (*udata).sockaddr_storage as *mut _ as *mut _,
                 &mut (*udata).sockaddr_len,
             )
             .build()
         };
         let cqe = u.push(sqe).await;
-        let raw_fd = cqe.error_for_errno()?;
+        let fd = cqe.error_for_errno()?;
 
         let udata = unsafe { Box::from_raw(udata) };
         let addr = unsafe { socket2::SockAddr::new(udata.sockaddr_storage, udata.sockaddr_len) };
         let peer_addr = addr.as_socket().unwrap();
 
-        let socket = unsafe { socket2::Socket::from_raw_fd(raw_fd) };
-        Ok((TcpStream { socket }, peer_addr))
+        Ok((TcpStream { fd }, peer_addr))
     }
 }
 
@@ -85,7 +105,7 @@ pub struct TcpReadHalf(Rc<TcpStream>);
 impl ReadOwned for TcpReadHalf {
     async fn read<B: IoBufMut>(&mut self, mut buf: B) -> BufResult<usize, B> {
         let sqe = Read::new(
-            io_uring::types::Fd(self.0.socket.as_raw_fd()),
+            io_uring::types::Fd(self.0.fd),
             buf.io_buf_mut_stable_mut_ptr(),
             buf.io_buf_mut_capacity() as u32,
         )
@@ -104,7 +124,7 @@ pub struct TcpWriteHalf(Rc<TcpStream>);
 impl WriteOwned for TcpWriteHalf {
     async fn write(&mut self, buf: Piece) -> BufResult<usize, Piece> {
         let sqe = Write::new(
-            io_uring::types::Fd(self.0.socket.as_raw_fd()),
+            io_uring::types::Fd(self.0.fd),
             buf.as_ref().as_ptr(),
             buf.len().try_into().expect("usize -> u32"),
         )
@@ -121,7 +141,7 @@ impl WriteOwned for TcpWriteHalf {
 
     async fn shutdown(&mut self, how: Shutdown) -> std::io::Result<()> {
         let sqe = io_uring::opcode::Shutdown::new(
-            io_uring::types::Fd(self.0.socket.as_raw_fd()),
+            io_uring::types::Fd(self.0.fd),
             match how {
                 Shutdown::Read => libc::SHUT_RD,
                 Shutdown::Write => libc::SHUT_WR,
