@@ -1,0 +1,15 @@
+[package]
+name = "fluke-io-uring-async"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1.2", features = ["rt", "net"] }
+io-uring = { version = "0.6.3" }
+slab = { version = "0.4" }
+
+[dev-dependencies]
+send_wrapper = { version = "0.6.0" }

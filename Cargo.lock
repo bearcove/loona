@@ -351,12 +351,17 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "eyre",
+ "fluke-io-uring-async",
  "http 1.1.0",
+ "io-uring",
+ "libc",
  "memchr",
  "memmap2",
  "nom",
  "pretty-hex",
  "pretty_assertions",
+ "send_wrapper",
+ "socket2 0.5.6",
  "thiserror",
  "tokio",
  "tokio-uring",
@@ -417,6 +422,16 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+]
+
+[[package]]
+name = "fluke-io-uring-async"
+version = "0.1.0"
+dependencies = [
+ "io-uring",
+ "send_wrapper",
+ "slab",
+ "tokio",
 ]
 
 [[package]]
@@ -1296,6 +1311,12 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "send_wrapper"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd0b0ec5f1c1ca621c432a25813d8d60c88abe6d3e08a3eb9cf37d97a0fe3d73"
 
 [[package]]
 name = "serde"
