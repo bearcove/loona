@@ -18,7 +18,8 @@ quick-cov:
 # Run all tests with cargo nextest
 test *args:
 	just build-testbed
-	RUST_BACKTRACE=1 cargo nextest run {{args}}
+	export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
+	cargo nextest run {{args}}
 
 curl-tests *args:
 	just build-testbed

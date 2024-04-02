@@ -29,6 +29,7 @@ pub struct TcpListener {
 // have `uring`, of type `SendWrapper<Rc<IoUringAsync>>`, as a thread-local variable
 thread_local! {
     static URING: Rc<IoUringAsync> = {
+        // FIXME: magic values
         Rc::new(IoUringAsync::new(8).unwrap())
     };
 }
@@ -46,6 +47,8 @@ impl TcpListener {
         let addr: socket2::SockAddr = addr.into();
         let socket = socket2::Socket::new(addr.domain(), socket2::Type::STREAM, None)?;
         socket.bind(&addr)?;
+        // FIXME: magic values
+        socket.listen(16)?;
 
         Ok(Self { socket })
     }
@@ -59,7 +62,7 @@ impl TcpListener {
 
         let u = get_uring();
         struct AcceptUserData {
-            sockaddr_storage: libc::sockaddr,
+            sockaddr_storage: libc::sockaddr_storage,
             sockaddr_len: libc::socklen_t,
         }
         let udata = Box::into_raw(Box::new(AcceptUserData {
@@ -70,7 +73,7 @@ impl TcpListener {
         let e = unsafe {
             Accept::new(
                 io_uring::types::Fd(fd.as_raw_fd()),
-                &mut (*udata).sockaddr_storage,
+                &mut (*udata).sockaddr_storage as *mut _ as *mut _,
                 &mut (*udata).sockaddr_len,
             )
             .build()
@@ -81,9 +84,9 @@ impl TcpListener {
         println!("converted to result ok");
 
         let udata = unsafe { Box::from_raw(udata) };
-        println!("len = {}", udata.sockaddr_len);
-        println!("family = {}", udata.sockaddr_storage.sa_family);
-        println!("port = {}", udata.sockaddr_storage.sa_data[0]);
+        let addr = unsafe { socket2::SockAddr::new(udata.sockaddr_storage, udata.sockaddr_len) };
+        println!("accept addr: {:?}", addr.as_socket());
+
         todo!("handle result of access");
     }
 }
@@ -169,6 +172,20 @@ mod tests {
             let listener = super::TcpListener::bind("127.0.0.1:0".parse().unwrap()).await?;
             let addr = listener.local_addr()?;
             println!("listening on {}", addr);
+
+            std::thread::spawn(move || {
+                use std::io::Write;
+
+                let mut sock = std::net::TcpStream::connect(addr).unwrap();
+                println!(
+                    "connected! local={:?}, remote={:?}",
+                    sock.local_addr(),
+                    sock.peer_addr()
+                );
+
+                sock.write_all(b"hello").unwrap();
+            });
+
             let _res = listener.accept().await?;
             println!("accepted one!");
 
