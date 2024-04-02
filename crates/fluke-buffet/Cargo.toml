@@ -16,14 +16,13 @@ rust-version = "1.75.0"
 
 [features]
 default = ["uring"]
-uring = ["dep:fluke-io-uring-async"]
+uring = ["dep:io-uring", "dep:fluke-io-uring-async"]
 miri = []
 
 [dependencies]
 bytemuck = { version = "1.15.0", features = ["extern_crate_std"] }
 eyre = "0.6.12"
 http = "1.1.0"
-io-uring = "0.6.3"
 libc = "0.2.153"
 memchr = "2.7.1"
 memmap2 = { version = "0.9.4", default-features = false }
@@ -44,6 +43,7 @@ nix = "0.28.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 fluke-io-uring-async = { path = "../fluke-io-uring-async", version = "0.1.0", optional = true }
+io-uring = "0.6.3"
 
 [dev-dependencies]
 color-eyre = "0.6.3"
