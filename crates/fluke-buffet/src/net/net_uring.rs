@@ -76,10 +76,15 @@ impl TcpListener {
             .build()
         };
         let res = u.push(e).await;
+        println!("accept push result: {:?}", res);
         res.ok()?;
+        println!("converted to result ok");
 
-        let udata = Box::from_raw(udata);
-        todo!("");
+        let udata = unsafe { Box::from_raw(udata) };
+        println!("len = {}", udata.sockaddr_len);
+        println!("family = {}", udata.sockaddr_storage.sa_family);
+        println!("port = {}", udata.sockaddr_storage.sa_data[0]);
+        todo!("handle result of access");
     }
 }
 
@@ -164,7 +169,8 @@ mod tests {
             let listener = super::TcpListener::bind("127.0.0.1:0".parse().unwrap()).await?;
             let addr = listener.local_addr()?;
             println!("listening on {}", addr);
-            let _res = listener.accept().await;
+            let _res = listener.accept().await?;
+            println!("accepted one!");
 
             Ok(())
         }
