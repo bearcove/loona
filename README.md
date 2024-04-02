@@ -5,8 +5,7 @@
 [![MIT OR Apache-2.0 licensed](https://img.shields.io/badge/license-MIT+Apache_2.0-blue.svg)](./LICENSE)
 [![Crates.io](https://img.shields.io/crates/v/fluke)](https://crates.io/crates/fluke)
 
-An experimental, HTTP/1.1 and HTTP/2 implementation in Rust on top of
-[tokio-uring](https://github.com/tokio-rs/tokio-uring).
+An experimental, HTTP/1.1 and HTTP/2 implementation in Rust on top of io-uring.
 
 Nothing in this repo is final yet, look around, but please do not use.
 

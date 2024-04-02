@@ -2,8 +2,8 @@ mod helpers;
 
 use bytes::BytesMut;
 use curl::easy::{Easy, HttpVersion, List};
+use fluke::buffet::{ChanRead, ChanWrite, IntoHalves};
 use fluke::{
-    buffet::io::{ChanRead, ChanWrite, IntoHalves},
     buffet::{PieceCore, RollMut},
     h1, h2, Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, HeadersExt, Method, Request,
     Responder, Response, ResponseDone, ServerDriver,

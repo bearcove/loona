@@ -10,10 +10,7 @@ use std::{
 use byteorder::{BigEndian, WriteBytesExt};
 use enumflags2::BitFlags;
 use eyre::Context;
-use fluke_buffet::{
-    io::{ReadOwned, WriteOwned},
-    Piece, PieceList, PieceStr, Roll, RollMut,
-};
+use fluke_buffet::{Piece, PieceList, PieceStr, ReadOwned, Roll, RollMut, WriteOwned};
 use http::{
     header,
     uri::{Authority, PathAndQuery, Scheme},

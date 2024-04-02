@@ -4,14 +4,13 @@ use std::{
     rc::Rc,
 };
 
-use fluke_io_uring_async::IoUringAsync;
-use io_uring::opcode::Accept;
+use io_uring::opcode::{Accept, Read, Write};
 use nix::errno::Errno;
 
 use crate::{
-    buf::IoBufMut,
+    get_ring,
     io::{IntoHalves, ReadOwned, WriteOwned},
-    BufResult, Piece, PieceList,
+    BufResult, IoBufMut, Piece,
 };
 
 pub struct TcpStream {
@@ -26,20 +25,6 @@ impl TcpStream {
 
 pub struct TcpListener {
     socket: socket2::Socket,
-}
-
-// have `uring`, of type `SendWrapper<Rc<IoUringAsync>>`, as a thread-local variable
-thread_local! {
-    static URING: Rc<IoUringAsync> = {
-        // FIXME: magic values
-        Rc::new(IoUringAsync::new(8).unwrap())
-    };
-}
-
-pub fn get_uring() -> Rc<IoUringAsync> {
-    let mut u = None;
-    URING.with(|u_| u = Some(u_.clone()));
-    u.unwrap()
 }
 
 impl TcpListener {
@@ -62,17 +47,18 @@ impl TcpListener {
     pub async fn accept(&self) -> std::io::Result<(TcpStream, SocketAddr)> {
         let fd = self.socket.as_fd();
 
-        let u = get_uring();
+        let u = get_ring();
         struct AcceptUserData {
             sockaddr_storage: libc::sockaddr_storage,
             sockaddr_len: libc::socklen_t,
         }
+        // FIXME: this currently leaks if the future is dropped
         let udata = Box::into_raw(Box::new(AcceptUserData {
             sockaddr_storage: unsafe { std::mem::zeroed() },
             sockaddr_len: std::mem::size_of::<libc::sockaddr>() as libc::socklen_t,
         }));
 
-        let e = unsafe {
+        let sqe = unsafe {
             Accept::new(
                 io_uring::types::Fd(fd.as_raw_fd()),
                 &mut (*udata).sockaddr_storage as *mut _ as *mut _,
@@ -80,7 +66,7 @@ impl TcpListener {
             )
             .build()
         };
-        let cqe = u.push(e).await;
+        let cqe = u.push(sqe).await;
         let raw_fd = cqe.error_for_errno()?;
 
         let udata = unsafe { Box::from_raw(udata) };
@@ -92,29 +78,60 @@ impl TcpListener {
     }
 }
 
-#[allow(dead_code)]
+// TODO: fix about the lifetime of TcpStream, closing
+// the underlying fd, in-flight operations etc.
 pub struct TcpReadHalf(Rc<TcpStream>);
 
 impl ReadOwned for TcpReadHalf {
-    async fn read<B: IoBufMut>(&mut self, _buf: B) -> BufResult<usize, B> {
-        todo!()
+    async fn read<B: IoBufMut>(&mut self, mut buf: B) -> BufResult<usize, B> {
+        let sqe = Read::new(
+            io_uring::types::Fd(self.0.socket.as_raw_fd()),
+            buf.io_buf_mut_stable_mut_ptr(),
+            buf.io_buf_mut_capacity() as u32,
+        )
+        .build();
+        let cqe = get_ring().push(sqe).await;
+        let ret = match cqe.error_for_errno() {
+            Ok(ret) => ret,
+            Err(e) => return (Err(std::io::Error::from(e)), buf),
+        };
+        (Ok(ret as usize), buf)
     }
 }
 
-#[allow(dead_code)]
 pub struct TcpWriteHalf(Rc<TcpStream>);
 
 impl WriteOwned for TcpWriteHalf {
-    async fn write(&mut self, _buf: Piece) -> BufResult<usize, Piece> {
-        todo!()
+    async fn write(&mut self, buf: Piece) -> BufResult<usize, Piece> {
+        let sqe = Write::new(
+            io_uring::types::Fd(self.0.socket.as_raw_fd()),
+            buf.as_ref().as_ptr(),
+            buf.len().try_into().expect("usize -> u32"),
+        )
+        .build();
+        let cqe = get_ring().push(sqe).await;
+        let ret = match cqe.error_for_errno() {
+            Ok(ret) => ret,
+            Err(e) => return (Err(std::io::Error::from(e)), buf),
+        };
+        (Ok(ret as usize), buf)
     }
 
-    async fn writev(&mut self, _list: &PieceList) -> std::io::Result<usize> {
-        todo!()
-    }
+    // TODO: implement writev
 
-    async fn shutdown(&mut self, _how: Shutdown) -> std::io::Result<()> {
-        todo!()
+    async fn shutdown(&mut self, how: Shutdown) -> std::io::Result<()> {
+        let sqe = io_uring::opcode::Shutdown::new(
+            io_uring::types::Fd(self.0.socket.as_raw_fd()),
+            match how {
+                Shutdown::Read => libc::SHUT_RD,
+                Shutdown::Write => libc::SHUT_WR,
+                Shutdown::Both => libc::SHUT_RDWR,
+            },
+        )
+        .build();
+        let cqe = get_ring().push(sqe).await;
+        cqe.error_for_errno()?;
+        Ok(())
     }
 }
 
@@ -151,23 +168,11 @@ impl CqueueExt for io_uring::cqueue::Entry {
 
 #[cfg(test)]
 mod tests {
-    use fluke_io_uring_async::IoUringAsync;
-    use send_wrapper::SendWrapper;
-
-    use super::get_uring;
+    use crate::io::{IntoHalves, ReadOwned, WriteOwned};
 
     #[test]
     fn test_accept() {
         color_eyre::install().unwrap();
-
-        let u = SendWrapper::new(get_uring());
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .on_thread_park(move || {
-                u.submit().unwrap();
-            })
-            .build()
-            .unwrap();
 
         async fn test_accept_inner() -> color_eyre::Result<()> {
             let listener = super::TcpListener::bind("127.0.0.1:0".parse().unwrap()).await?;
@@ -175,34 +180,43 @@ mod tests {
             println!("listening on {}", addr);
 
             std::thread::spawn(move || {
-                use std::io::Write;
+                use std::io::{Read, Write};
 
                 let mut sock = std::net::TcpStream::connect(addr).unwrap();
                 println!(
-                    "connected! local={:?}, remote={:?}",
+                    "[client] connected! local={:?}, remote={:?}",
                     sock.local_addr(),
                     sock.peer_addr()
                 );
 
+                let mut buf = [0u8; 5];
+                sock.read_exact(&mut buf).unwrap();
+                println!("[client] read: {:?}", std::str::from_utf8(&buf).unwrap());
+
                 sock.write_all(b"hello").unwrap();
+                println!("[client] wrote: hello");
             });
 
-            let _res = listener.accept().await?;
-            println!("accepted one!");
+            let (stream, addr) = listener.accept().await?;
+            println!("accepted connection!, addr={addr:?}");
+
+            let (mut r, mut w) = stream.into_halves();
+            // write bye
+            w.write_all("howdy".into()).await?;
+
+            let buf = vec![0u8; 1024];
+            let (res, buf) = r.read(buf).await;
+            let n = res?;
+            let slice = &buf[..n];
+            println!(
+                "read {} bytes: {:?}, as string: {:?}",
+                n,
+                slice,
+                std::str::from_utf8(slice)?
+            );
 
             Ok(())
         }
-
-        rt.block_on(async move {
-            tokio::task::LocalSet::new()
-                .run_until(async {
-                    // Spawn a task that waits for the io_uring to become readable and handles completion
-                    // queue entries accordingly.
-                    tokio::task::spawn_local(IoUringAsync::listen(get_uring()));
-
-                    test_accept_inner().await.unwrap();
-                })
-                .await;
-        });
+        crate::start(async move { test_accept_inner().await.unwrap() });
     }
 }

@@ -1,6 +1,7 @@
 {
 	"rust-analyzer.inlayHints.lifetimeElisionHints.enable": "always",
 	"rust-analyzer.inlayHints.lifetimeElisionHints.useParameterNames": true,
+	"rust-analyzer.cargo.features": ["fluke-buffet/uring"],
 	"coverage-gutters.showLineCoverage": true,
 	"coverage-gutters.showRulerCoverage": true,
 	"coverage-gutters.coverageReportFileName": "coverage/html/index.html"

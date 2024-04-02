@@ -1,10 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::{
-    buf::{IoBuf, IoBufMut},
-    io::WriteOwned,
-    BufResult, Piece,
-};
+use crate::{BufResult, IoBufMut, Piece, WriteOwned};
 use tokio::sync::mpsc;
 
 use super::ReadOwned;
@@ -113,8 +109,12 @@ impl Drop for ChanReadSend {
 
 impl ReadOwned for ChanRead {
     async fn read<B: IoBufMut>(&mut self, mut buf: B) -> BufResult<usize, B> {
-        let out =
-            unsafe { std::slice::from_raw_parts_mut(buf.stable_mut_ptr(), buf.bytes_total()) };
+        let out = unsafe {
+            std::slice::from_raw_parts_mut(
+                buf.io_buf_mut_stable_mut_ptr(),
+                buf.io_buf_mut_capacity(),
+            )
+        };
 
         loop {
             {
@@ -128,10 +128,6 @@ impl ReadOwned for ChanRead {
                     guarded.pos += n;
 
                     self.inner.notify.notify_waiters();
-
-                    unsafe {
-                        buf.set_init(n);
-                    }
                     return (Ok(n), buf);
                 }
 
@@ -166,9 +162,10 @@ impl ChanWrite {
 
 impl WriteOwned for ChanWrite {
     async fn write(&mut self, buf: Piece) -> BufResult<usize, Piece> {
-        let slice = unsafe { std::slice::from_raw_parts(buf.stable_ptr(), buf.bytes_init()) };
-        match self.tx.send(slice.to_vec()).await {
-            Ok(()) => (Ok(buf.bytes_init()), buf),
+        let v = buf[..].to_vec();
+        let v_len = v.len();
+        match self.tx.send(v).await {
+            Ok(()) => (Ok(v_len), buf),
             Err(_) => (Err(std::io::ErrorKind::BrokenPipe.into()), buf),
         }
     }

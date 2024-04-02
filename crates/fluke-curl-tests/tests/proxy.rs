@@ -1,8 +1,7 @@
 use fluke::{
     buffet::{
-        io::IntoHalves,
         net::{TcpReadHalf, TcpWriteHalf},
-        RollMut,
+        IntoHalves, RollMut,
     },
     h1, Body, BodyChunk, Encoder, ExpectResponseHeaders, HeadersExt, Responder, Response,
     ResponseDone, ServerDriver,

@@ -1,7 +1,7 @@
 use std::{collections::VecDeque, path::PathBuf};
 
 use fluke::{
-    buffet::{io::IntoHalves, net::TcpListener, RollMut},
+    buffet::{net::TcpListener, IntoHalves, RollMut},
     http::{StatusCode, Version},
     Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, Request, Responder, Response,
     ResponseDone, ServerDriver,

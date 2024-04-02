@@ -8,7 +8,7 @@ use std::{
 
 use color_eyre::eyre;
 use fluke::{
-    buffet::{io::IntoHalves, net::TcpStream, RollMut},
+    buffet::{net::TcpStream, IntoHalves, RollMut},
     h1, h2, Body, Encoder, ExpectResponseHeaders, Method, Request, Responder, ResponseDone,
     ServerDriver,
 };
