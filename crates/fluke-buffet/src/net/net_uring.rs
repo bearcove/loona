@@ -14,7 +14,9 @@ use crate::{
     BufResult, Piece, PieceList,
 };
 
-pub struct TcpStream {}
+pub struct TcpStream {
+    socket: socket2::Socket,
+}
 
 impl TcpStream {
     pub async fn connect(_addr: SocketAddr) -> std::io::Result<Self> {
@@ -78,16 +80,15 @@ impl TcpListener {
             )
             .build()
         };
-        let res = u.push(e).await;
-        println!("accept push result: {:?}", res);
-        res.ok()?;
-        println!("converted to result ok");
+        let cqe = u.push(e).await;
+        let raw_fd = cqe.error_for_errno()?;
 
         let udata = unsafe { Box::from_raw(udata) };
         let addr = unsafe { socket2::SockAddr::new(udata.sockaddr_storage, udata.sockaddr_len) };
-        println!("accept addr: {:?}", addr.as_socket());
+        let peer_addr = addr.as_socket().unwrap();
 
-        todo!("handle result of access");
+        let socket = unsafe { socket2::Socket::from_raw_fd(raw_fd) };
+        Ok((TcpStream { socket }, peer_addr))
     }
 }
 
@@ -134,16 +135,16 @@ impl FromRawFd for TcpStream {
 }
 
 trait CqueueExt {
-    fn ok(&self) -> Result<(), Errno>;
+    fn error_for_errno(&self) -> Result<i32, Errno>;
 }
 
 impl CqueueExt for io_uring::cqueue::Entry {
-    fn ok(&self) -> Result<(), Errno> {
+    fn error_for_errno(&self) -> Result<i32, Errno> {
         let res = self.result();
         if res < 0 {
             Err(Errno::from_raw(-res))
         } else {
-            Ok(())
+            Ok(res as _)
         }
     }
 }
