@@ -1,7 +1,7 @@
 {
   inputs = {
     flake-utils = { url = "github:numtide/flake-utils"; };
-    nixpkgs = { url = "github:NixOS/nixpkgs/nixos-unstable"; };
+    nixpkgs = { url = "github:NixOS/nixpkgs/nixos-23.11"; };
     rust-overlay =
       {
         url = "github:oxalica/rust-overlay";
@@ -49,10 +49,6 @@
         version = "latest";
         strictDeps = true;
         dontStrip = true;
-        # workaround for https://github.com/NixOS/nixpkgs/issues/166205
-        env = with pkgs; lib.optionalAttrs stdenv.cc.isClang {
-          NIX_LDFLAGS = "-l${stdenv.cc.libcxx.cxxabi.libName}";
-        };
         inherit src buildInputs nativeBuildInputs;
       };
       cargoArtifacts = craneLib.buildDepsOnly commonArgs;
