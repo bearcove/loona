@@ -71,13 +71,8 @@ impl<C: cqueue::Entry> Drop for Op<C> {
                 let cancel_fut = get_ring().push(op);
 
                 tokio::task::spawn_local(async move {
-                    eprintln!("waiting on cancel_fut...");
                     cancel_fut.await;
-                    eprintln!("waiting on cancel_fut... done!");
-
-                    eprintln!("waiting on inner...");
                     inner.await;
-                    eprintln!("waiting on inner... done!");
                 });
             }
         }

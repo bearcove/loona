@@ -47,14 +47,18 @@ pub fn start<F: Future>(task: F) -> F::Output {
         })
         .build()
         .unwrap();
-    rt.block_on(async move {
+    let res = rt.block_on(async move {
         let local = LocalSet::new();
         local.spawn_local(IoUringAsync::listen(get_ring()));
 
         let res = local.run_until(task).await;
-        tokio::time::timeout(std::time::Duration::from_millis(250), local).await;
+        if (tokio::time::timeout(std::time::Duration::from_millis(250), local).await).is_err() {
+            eprintln!("timed out waiting for local set");
+        }
         res
-    })
+    });
+    rt.shutdown_timeout(std::time::Duration::from_millis(250));
+    res
 }
 
 /// Build a new current-thread runtime and runs the provided future on it
