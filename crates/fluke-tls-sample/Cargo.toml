@@ -11,7 +11,7 @@ fluke = { path = "../../crates/fluke" }
 rcgen = "0.10.0"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-rustls = { version = "0.23.1" }
+rustls = { version = "0.23.1", default-features = false }
 tokio = { version = "1.36.0", features = ["full"] }
 tokio-rustls = { git = "https://github.com/rustls/tokio-rustls", rev = "caf4e8267f0e708a2bfc561dec98a842dc960ba6", default-features = false }
 http = "1.1.0"
@@ -20,4 +20,4 @@ socket2 = "0.5.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # branch rustls-0.23
-ktls = { git = "https://github.com/bearcove/ktls", rev = "e60101a5cda5c6a873ee8422463ef347c74643af" }
+ktls = { git = "https://github.com/bearcove/ktls", rev = "e60101a5cda5c6a873ee8422463ef347c74643af", default-features = false, features = ["ring", "tls12"] }

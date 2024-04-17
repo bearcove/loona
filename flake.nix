@@ -37,11 +37,6 @@
         rustToolchain
         clang
         curl
-        libunwind
-        perl
-        ninja
-        nasm
-        go
       ]
       ++ lib.optionals pkgs.stdenv.isLinux [ autoPatchelfHook ]
       ++ lib.optionals pkgs.stdenv.isDarwin
