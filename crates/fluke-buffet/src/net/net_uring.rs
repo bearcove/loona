@@ -1,10 +1,13 @@
 use std::{
+    future::Future,
     mem::ManuallyDrop,
     net::{Shutdown, SocketAddr},
     os::fd::{AsRawFd, FromRawFd, RawFd},
+    pin::Pin,
     rc::Rc,
 };
 
+use fluke_io_uring_async::Op;
 use io_uring::opcode::{Accept, Read, Write};
 use nix::errno::Errno;
 
@@ -36,7 +39,7 @@ impl TcpStream {
             io_uring::opcode::Connect::new(io_uring::types::Fd(fd), addr as *const _, (*addr).len())
         }
         .build();
-        let cqe = u.push(sqe).await;
+        let cqe = WrappedOp("connect", Some(u.push(sqe))).await;
         cqe.error_for_errno()?;
         Ok(Self { fd })
     }
@@ -97,7 +100,7 @@ impl TcpListener {
             )
             .build()
         };
-        let cqe = u.push(sqe).await;
+        let cqe = WrappedOp("accept", Some(u.push(sqe))).await;
         let fd = cqe.error_for_errno()?;
 
         let udata = unsafe { Box::from_raw(udata) };
@@ -120,7 +123,7 @@ impl ReadOwned for TcpReadHalf {
             buf.io_buf_mut_capacity() as u32,
         )
         .build();
-        let cqe = get_ring().push(sqe).await;
+        let cqe = WrappedOp("read", Some(get_ring().push(sqe))).await;
         let ret = match cqe.error_for_errno() {
             Ok(ret) => ret,
             Err(e) => return (Err(std::io::Error::from(e)), buf),
@@ -139,7 +142,7 @@ impl WriteOwned for TcpWriteHalf {
             buf.len().try_into().expect("usize -> u32"),
         )
         .build();
-        let cqe = get_ring().push(sqe).await;
+        let cqe = WrappedOp("write", Some(get_ring().push(sqe))).await;
         let ret = match cqe.error_for_errno() {
             Ok(ret) => ret,
             Err(e) => return (Err(std::io::Error::from(e)), buf),
@@ -159,7 +162,7 @@ impl WriteOwned for TcpWriteHalf {
             },
         )
         .build();
-        let cqe = get_ring().push(sqe).await;
+        let cqe = WrappedOp("write::shutdown", Some(get_ring().push(sqe))).await;
         cqe.error_for_errno()?;
         Ok(())
     }
@@ -193,6 +196,41 @@ impl CqueueExt for io_uring::cqueue::Entry {
         } else {
             Ok(res as _)
         }
+    }
+}
+
+struct WrappedOp(&'static str, Option<Op<io_uring::cqueue::Entry>>);
+
+impl Future for WrappedOp {
+    type Output = <Op<io_uring::cqueue::Entry> as Future>::Output;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let inner = unsafe { self.get_unchecked_mut() };
+        match inner.1 {
+            None => unreachable!("WrappedOp polled after drop"),
+            Some(ref mut op) => unsafe { Pin::new_unchecked(op) }.poll(cx),
+        }
+    }
+}
+
+impl Drop for WrappedOp {
+    fn drop(&mut self) {
+        // TODO: cancel the operation
+        eprintln!("dropping WrappedOp {}", self.0);
+        let ring = get_ring();
+        let mut inner = self.1.take().unwrap();
+        let cancel_fut = inner.cancel(ring.as_ref());
+        std::mem::forget(inner);
+
+        tokio::task::spawn_local(async move {
+            eprintln!("running cancel...");
+            cancel_fut.await;
+            eprintln!("cancel ran!");
+        });
+        eprintln!("...spawned local");
     }
 }
 

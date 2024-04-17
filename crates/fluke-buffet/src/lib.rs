@@ -35,23 +35,63 @@ pub fn spawn<T: Future + 'static>(task: T) -> tokio::task::JoinHandle<T::Output>
 /// Build a new current-thread runtime and runs the provided future on it
 #[cfg(all(target_os = "linux", feature = "uring"))]
 pub fn start<F: Future>(task: F) -> F::Output {
+    use std::time::Duration;
+
     use fluke_io_uring_async::IoUringAsync;
     use send_wrapper::SendWrapper;
-    use tokio::task::LocalSet;
+    use tokio::{runtime::Handle, task::LocalSet, time::timeout};
 
     let u = SendWrapper::new(uring::get_ring());
-    tokio::runtime::Builder::new_current_thread()
+    let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .on_thread_park(move || {
             u.submit().unwrap();
         })
         .build()
-        .unwrap()
-        .block_on(async move {
-            let local = LocalSet::new();
-            local.spawn_local(IoUringAsync::listen(get_ring()));
-            local.run_until(task).await
-        })
+        .unwrap();
+    rt.block_on(async move {
+        let local = LocalSet::new();
+
+        // make a oneshot channel as a cancellation token for IoUringAsync::listen
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+
+        local.spawn_local(async move {
+            tokio::select! {
+                _ = rx => {
+                    eprintln!("listen cancelled");
+                }
+                _ = IoUringAsync::listen(get_ring()) => {
+                    eprintln!("IoUringAsync::listen finished");
+                },
+            }
+        });
+
+        let res = local.run_until(task).await;
+        eprintln!("task finished, cancelling listen");
+        drop(tx);
+        eprintln!("listen cancelled");
+
+        // wait for other spawned futures to finish
+        match tokio::time::timeout(std::time::Duration::from_secs(1), local).await {
+            Ok(_) => {
+                eprintln!("local set finished")
+            }
+            Err(_) => {
+                eprintln!("timeout waiting for local set to finish, dump:");
+
+                // Inside an async block or function.
+                let handle = Handle::current();
+                if let Ok(dump) = timeout(Duration::from_secs(2), handle.dump()).await {
+                    for (i, task) in dump.tasks().iter().enumerate() {
+                        let trace = task.trace();
+                        println!("TASK {i}:");
+                        println!("{trace}\n");
+                    }
+                }
+            }
+        };
+        res
+    })
 }
 
 /// Build a new current-thread runtime and runs the provided future on it
