@@ -35,11 +35,9 @@ pub fn spawn<T: Future + 'static>(task: T) -> tokio::task::JoinHandle<T::Output>
 /// Build a new current-thread runtime and runs the provided future on it
 #[cfg(all(target_os = "linux", feature = "uring"))]
 pub fn start<F: Future>(task: F) -> F::Output {
-    use std::time::Duration;
-
     use fluke_io_uring_async::IoUringAsync;
     use send_wrapper::SendWrapper;
-    use tokio::{runtime::Handle, task::LocalSet, time::timeout};
+    use tokio::task::LocalSet;
 
     let u = SendWrapper::new(uring::get_ring());
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -54,26 +52,7 @@ pub fn start<F: Future>(task: F) -> F::Output {
         local.spawn_local(IoUringAsync::listen(get_ring()));
 
         let res = local.run_until(task).await;
-
-        // wait for other spawned futures to finish
-        match tokio::time::timeout(std::time::Duration::from_millis(250), local).await {
-            Ok(_) => {
-                eprintln!("local set finished")
-            }
-            Err(_) => {
-                eprintln!("timeout waiting for local set to finish, dump:");
-
-                // Inside an async block or function.
-                let handle = Handle::current();
-                if let Ok(dump) = timeout(Duration::from_secs(2), handle.dump()).await {
-                    for (i, task) in dump.tasks().iter().enumerate() {
-                        let trace = task.trace();
-                        println!("TASK {i}:");
-                        println!("{trace}\n");
-                    }
-                }
-            }
-        };
+        tokio::time::timeout(std::time::Duration::from_millis(250), local).await;
         res
     })
 }

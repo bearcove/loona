@@ -1,9 +1,25 @@
-use io_uring::IoUring;
+use io_uring::{opcode::AsyncCancel, IoUring};
 use std::cell::RefCell;
 use std::future::Future;
 use std::os::unix::prelude::{AsRawFd, RawFd};
 use std::rc::Rc;
 use tokio::io::unix::AsyncFd;
+
+thread_local! {
+    // This is a thread-local for now, but it shouldn't be. This is only the case
+    // for op cancellations.
+    static URING: Rc<IoUringAsync> = {
+        // FIXME: magic values
+        Rc::new(IoUringAsync::new(8).unwrap())
+    };
+}
+
+/// Returns the thread-local IoUringAsync instance
+pub fn get_ring() -> Rc<IoUringAsync> {
+    let mut u = None;
+    URING.with(|u_| u = Some(u_.clone()));
+    u.unwrap()
+}
 
 // The IoUring Op state.
 enum Lifecycle<C: cqueue::Entry> {
@@ -50,47 +66,20 @@ impl<C: cqueue::Entry> Drop for Op<C> {
             Lifecycle::Completed(_) => {}
             _ => {
                 drop(guard);
-                tokio::task::spawn_local(inner);
-            }
-        }
-    }
-}
+                // submit cancel op
+                let op = AsyncCancel::new(inner.index.try_into().unwrap()).build();
+                let cancel_fut = get_ring().push(op);
 
-impl<C: cqueue::Entry> Op<C> {
-    pub fn cancel<S: squeue::Entry>(
-        &mut self,
-        ring_async: &IoUringAsync<S, C>,
-    ) -> impl Future<Output = ()> {
-        let inner_fut = self.inner.take().unwrap();
-        let entry: Option<io_uring::squeue::Entry> = 'block: {
-            let mut guard = inner_fut.slab.borrow_mut();
-            let lifecycle = &mut guard[inner_fut.index];
-            match lifecycle {
-                Lifecycle::Submitted => {
-                    // good
-                }
-                Lifecycle::Waiting(_waker) => {
-                    // good
-                }
-                Lifecycle::Completed(_) => {
-                    // no need
-                    break 'block None;
-                }
-            }
-            Some(io_uring::opcode::AsyncCancel::new(inner_fut.index.try_into().unwrap()).build())
-        };
-        let cancel_fut = entry.map(|e| ring_async.push(e));
+                tokio::task::spawn_local(async move {
+                    eprintln!("waiting on cancel_fut...");
+                    cancel_fut.await;
+                    eprintln!("waiting on cancel_fut... done!");
 
-        async move {
-            if let Some(cancel_fut) = cancel_fut {
-                eprintln!("canceling...");
-                cancel_fut.await;
-                eprintln!("canceling... done!");
+                    eprintln!("waiting on inner...");
+                    inner.await;
+                    eprintln!("waiting on inner... done!");
+                });
             }
-
-            eprintln!("awaiting inner op...");
-            inner_fut.await;
-            eprintln!("awaiting inner op... done!");
         }
     }
 }
