@@ -1,7 +1,7 @@
 {
   inputs = {
     flake-utils = { url = "github:numtide/flake-utils"; };
-    nixpkgs = { url = "github:NixOS/nixpkgs/nixos-23.11"; };
+    nixpkgs = { url = "github:NixOS/nixpkgs/nixos-unstable"; };
     rust-overlay =
       {
         url = "github:oxalica/rust-overlay";
@@ -35,6 +35,11 @@
         clang
         mold
         curl
+        go
+        perl
+        ninja
+        nasm
+        libunwind
       ]
       ++ lib.optionals pkgs.stdenv.isLinux [ autoPatchelfHook ]
       ++ lib.optionals pkgs.stdenv.isDarwin
@@ -63,11 +68,7 @@
         default = bin;
       };
       devShells.default = mkShell {
-        packages = with pkgs; [ clang mold just nixpkgs-fmt cargo-nextest libiconv cmake pkg-config lld curl ];
-        # add curl libraries to LD_LIBRARY_PATH
-        shellHook = ''
-          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${pkgs.curl.out}/lib
-        '';
+        packages = with pkgs; [ clang lld just nixpkgs-fmt cargo-nextest libiconv cmake pkg-config ];
       };
     }
     );
