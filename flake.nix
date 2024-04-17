@@ -29,17 +29,19 @@
       craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
       src = craneLib.cleanCargoSource (craneLib.path ./.);
 
-      buildInputs = with pkgs; [ pkgs.stdenv.cc.cc ];
+      buildInputs = with pkgs; [
+        pkgs.stdenv.cc.cc
+        lld
+      ];
       nativeBuildInputs = with pkgs; [
         rustToolchain
         clang
-        mold
         curl
-        go
+        libunwind
         perl
         ninja
         nasm
-        libunwind
+        go
       ]
       ++ lib.optionals pkgs.stdenv.isLinux [ autoPatchelfHook ]
       ++ lib.optionals pkgs.stdenv.isDarwin
@@ -68,7 +70,7 @@
         default = bin;
       };
       devShells.default = mkShell {
-        packages = with pkgs; [ clang lld just nixpkgs-fmt cargo-nextest libiconv cmake pkg-config ];
+        packages = with pkgs; [ clang lld just nixpkgs-fmt cargo-nextest libiconv cmake pkg-config curl.out ];
       };
     }
     );

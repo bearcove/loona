@@ -27,9 +27,6 @@ build-testbed:
 single-test *args:
 	just test --no-capture {{args}}
 
-bench *args:
-	RUST_BACKTRACE=1 cargo bench {{args}} -- --plotting-backend plotters
-
 h2spec *args:
 	#!/bin/bash -eux
 	export RUST_LOG="${RUST_LOG:-fluke=debug,fluke_hpack=info}"
