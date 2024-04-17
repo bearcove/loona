@@ -66,14 +66,27 @@ impl<C: cqueue::Entry> Drop for Op<C> {
             Lifecycle::Completed(_) => {}
             _ => {
                 drop(guard);
+
+                let panicking = std::thread::panicking();
+
                 // submit cancel op
                 let op = AsyncCancel::new(inner.index.try_into().unwrap()).build();
-                let cancel_fut = get_ring().push(op);
+                eprintln!("submitting cancel op. (panicking = {panicking})");
+                let mut cancel_fut = get_ring().push(op);
+                let cancel_fut_inner = cancel_fut.inner.take().unwrap();
+                std::mem::forget(cancel_fut);
+                eprintln!("submitting cancel op... submitted!");
 
+                eprintln!("spawning...");
                 tokio::task::spawn_local(async move {
-                    cancel_fut.await;
+                    eprintln!("waiting for cancel_fut...");
+                    cancel_fut_inner.await;
+                    eprintln!("waiting for cancel_fut... done!");
+                    eprintln!("waiting for inner fut...");
                     inner.await;
+                    eprintln!("waiting for inner fut... done!");
                 });
+                eprintln!("spawning... done!");
             }
         }
     }
@@ -113,7 +126,13 @@ impl<C: cqueue::Entry> Drop for OpInner<C> {
         let lifecycle = guard.remove(self.index);
         match lifecycle {
             Lifecycle::Completed(_) => {}
-            _ => panic!("Op drop occured before completion"),
+            _ => {
+                if std::thread::panicking() {
+                    eprintln!("thread is panicking, eschewing drop cleanliness check")
+                } else {
+                    panic!("Op drop occured before completion (index {})", self.index)
+                }
+            }
         };
     }
 }
@@ -163,11 +182,16 @@ impl<S: squeue::Entry, C: cqueue::Entry> IoUringAsync<S, C> {
 
     pub fn push(&self, entry: impl Into<S>) -> Op<C> {
         let mut guard = self.slab.borrow_mut();
+        eprintln!("inserting into slab...");
         let index = guard.insert(Lifecycle::Submitted);
+        eprintln!("inserting into slab... done! (index {index})");
         let entry = entry.into().user_data(index.try_into().unwrap());
+        eprintln!("building entry...");
         while unsafe { self.uring.submission_shared().push(&entry).is_err() } {
+            eprintln!("can't push to submission queue, calling submit...");
             self.uring.submit().unwrap();
         }
+        eprintln!("returning op!");
         Op {
             inner: Some(OpInner {
                 slab: self.slab.clone(),

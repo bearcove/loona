@@ -111,8 +111,18 @@ impl Body for TestBody {
     }
 }
 
+struct NotifyOnDrop(Rc<tokio::sync::Notify>);
+
+impl Drop for NotifyOnDrop {
+    fn drop(&mut self) {
+        self.0.notify_waiters();
+    }
+}
+
 async fn real_main(h2spec_binary: PathBuf) -> color_eyre::Result<()> {
-    let addr = spawn_server("127.0.0.1:0".parse()?).await?;
+    let shutdown_notif = Rc::new(tokio::sync::Notify::new());
+    let addr = spawn_server("127.0.0.1:0".parse()?, shutdown_notif.clone()).await?;
+    let _shutdown_token = NotifyOnDrop(shutdown_notif);
 
     let mut args = std::env::args().skip(1).collect::<VecDeque<_>>();
     if matches!(args.front().map(|s| s.as_str()), Some("--")) {
@@ -133,17 +143,34 @@ async fn real_main(h2spec_binary: PathBuf) -> color_eyre::Result<()> {
     Ok(())
 }
 
-pub(crate) async fn spawn_server(addr: SocketAddr) -> color_eyre::Result<SocketAddr> {
+pub(crate) async fn spawn_server(
+    addr: SocketAddr,
+    shutdown_notif: Rc<tokio::sync::Notify>,
+) -> color_eyre::Result<SocketAddr> {
     let ln = TcpListener::bind(addr).await?;
     let addr = ln.local_addr()?;
     tracing::info!("Listening on {}", ln.local_addr()?);
 
-    let _task = tokio::task::spawn_local(async move { run_server(ln).await.unwrap() });
+    let shutdown_notif_inner = shutdown_notif.clone();
+    let _task = tokio::task::spawn_local(async move {
+        let run_server = run_server(ln, shutdown_notif_inner);
+        tokio::select! {
+            res = run_server => {
+                res.unwrap()
+            },
+            _ = shutdown_notif.notified() => {
+                tracing::info!("Server shutting down gracefully")
+            }
+        }
+    });
 
     Ok(addr)
 }
 
-pub(crate) async fn run_server(ln: TcpListener) -> color_eyre::Result<()> {
+pub(crate) async fn run_server(
+    ln: TcpListener,
+    shutdown_notif: Rc<tokio::sync::Notify>,
+) -> color_eyre::Result<()> {
     loop {
         let (stream, addr) = ln.accept().await?;
         tracing::debug!(%addr, "Accepted connection from");
@@ -151,11 +178,21 @@ pub(crate) async fn run_server(ln: TcpListener) -> color_eyre::Result<()> {
         let client_buf = RollMut::alloc()?;
         let driver = Rc::new(SDriver);
 
-        tokio::task::spawn_local(async move {
+        let handle_client = async move {
             if let Err(e) = fluke::h2::serve(stream.into_halves(), conf, client_buf, driver).await {
                 tracing::debug!("error serving client {addr}: {e}, {e:?}");
             }
             tracing::debug!("done serving client {addr}");
+        };
+
+        let shutdown_notif_inner = shutdown_notif.clone();
+        tokio::task::spawn_local(async move {
+            tokio::select! {
+                res = handle_client => res,
+                _ = shutdown_notif_inner.notified() => {
+                    tracing::info!("Shutting down server");
+                }
+            }
         });
     }
 }
