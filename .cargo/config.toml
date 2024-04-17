@@ -1,5 +1,2 @@
-[build]
-rustflags = ["--cfg", "tokio_unstable", "--cfg", "tokio_taskdump"]
-
 [target.x86_64-unknown-linux-gnu]
-rustflags = ["--cfg", "tokio_unstable", "--cfg", "tokio_taskdump", "-C", "linker=clang", "-C", "link-arg=-fuse-ld=lld"]
+rustflags = ["-C", "linker=clang", "-C", "link-arg=-fuse-ld=lld"]
