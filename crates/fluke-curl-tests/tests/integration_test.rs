@@ -1,7 +1,6 @@
 mod helpers;
 
 use bytes::BytesMut;
-use curl::easy::{Easy, HttpVersion, List};
 use fluke::buffet::{ChanRead, ChanWrite, IntoHalves};
 use fluke::{
     buffet::{PieceCore, RollMut},
@@ -12,7 +11,7 @@ use http::{header, StatusCode};
 use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
 use pretty_hex::PrettyHex;
-use std::{future::Future, net::SocketAddr, rc::Rc, time::Duration};
+use std::{future::Future, net::SocketAddr, process::Command, rc::Rc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -538,55 +537,28 @@ fn curl_echo_body_chunked() {
 fn curl_echo_body(typ: BodyType) {
     #[allow(drop_bounds)]
     fn client(typ: BodyType, ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
-        let req_body = "Please return to sender".as_bytes();
-        let mut req_body_offset = 0;
+        let req_body = "Please return to sender";
+        let mut cmd = Command::new("curl");
 
-        let mut res_body = Vec::new();
-
-        let mut handle = Easy::new();
-        handle.tcp_nodelay(true)?;
-        handle.url(&format!("http://{ln_addr}/echo-body"))?;
-        handle.post(true)?;
+        cmd.arg("--silent");
+        cmd.arg("--fail-with-body");
+        cmd.arg(format!("http://{ln_addr}/echo-body"));
+        cmd.arg("--data").arg(req_body);
+        cmd.arg("--header")
+            .arg("content-type: application/octet-stream");
 
         if let BodyType::ContentLen = typ {
-            handle.post_field_size(req_body.len() as u64)?;
+            cmd.arg("--header")
+                .arg(format!("content-length: {}", req_body.len()));
+        } else {
+            cmd.arg("--header").arg("transfer-encoding: chunked");
         }
 
-        {
-            let mut list = List::new();
-            list.append("content-type: application/octet-stream")?;
-            handle.http_headers(list)?;
-        }
+        let res_body = cmd.output_assert_success().stdout;
 
-        {
-            let mut transfer = handle.transfer();
-            transfer.read_function(|chunk: &mut [u8]| {
-                let n = std::cmp::min(chunk.len(), req_body.len() - req_body_offset);
-                debug!("sending {n} bytes");
-                chunk[..n].copy_from_slice(&req_body[req_body_offset..][..n]);
-                req_body_offset += n;
-                Ok(n)
-            })?;
-            transfer.write_function(|chunk| {
-                debug!("receiving {} bytes", chunk.len());
-                res_body.extend_from_slice(chunk);
-                Ok(chunk.len())
-            })?;
-            transfer.header_function(|h| {
-                debug!("curl read header: {:?}", h.hex_dump());
-                true
-            })?;
-            transfer.debug_function(|typ, data| {
-                debug!("Got debug: {:?} {:?}", typ, data.hex_dump());
-            })?;
-            transfer.perform()?;
-        }
-
-        let status = handle.response_code()?;
-        assert_eq!(status, 200);
-        debug!("Got HTTP {}, body: {:?}", status, res_body.hex_dump());
+        debug!("Got body: {:?}", res_body.hex_dump());
         assert_eq!(res_body.len(), req_body.len());
-        assert_eq!(res_body, req_body);
+        assert_eq!(res_body, req_body.as_bytes());
 
         Ok(())
     }
@@ -620,55 +592,28 @@ fn curl_echo_body_noproxy_chunked() {
 fn curl_echo_body_noproxy(typ: BodyType) {
     #[allow(drop_bounds)]
     fn client(typ: BodyType, ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
-        let req_body = "Please return to sender".as_bytes();
-        let mut req_body_offset = 0;
+        let req_body = "Please return to sender";
+        let mut cmd = Command::new("curl");
 
-        let mut res_body = Vec::new();
-
-        let mut handle = Easy::new();
-        handle.tcp_nodelay(true)?;
-        handle.url(&format!("http://{ln_addr}/echo-body"))?;
-        handle.post(true)?;
+        cmd.arg("--silent");
+        cmd.arg("--fail-with-body");
+        cmd.arg(format!("http://{ln_addr}/echo-body"));
+        cmd.arg("--data").arg(req_body);
+        cmd.arg("--header")
+            .arg("content-type: application/octet-stream");
 
         if let BodyType::ContentLen = typ {
-            handle.post_field_size(req_body.len() as u64)?;
+            cmd.arg("--header")
+                .arg(format!("content-length: {}", req_body.len()));
+        } else {
+            cmd.arg("--header").arg("transfer-encoding: chunked");
         }
 
-        {
-            let mut list = List::new();
-            list.append("content-type: application/octet-stream")?;
-            handle.http_headers(list)?;
-        }
+        let res_body = cmd.output_assert_success().stdout;
 
-        {
-            let mut transfer = handle.transfer();
-            transfer.read_function(|chunk: &mut [u8]| {
-                let n = std::cmp::min(chunk.len(), req_body.len() - req_body_offset);
-                debug!("sending {n} bytes");
-                chunk[..n].copy_from_slice(&req_body[req_body_offset..][..n]);
-                req_body_offset += n;
-                Ok(n)
-            })?;
-            transfer.write_function(|chunk| {
-                debug!("receiving {} bytes", chunk.len());
-                res_body.extend_from_slice(chunk);
-                Ok(chunk.len())
-            })?;
-            transfer.header_function(|h| {
-                debug!("curl read header: {:?}", h.hex_dump());
-                true
-            })?;
-            transfer.debug_function(|typ, data| {
-                debug!("Got debug: {:?} {:?}", typ, data.hex_dump());
-            })?;
-            transfer.perform()?;
-        }
-
-        let status = handle.response_code()?;
-        assert_eq!(status, 200);
-        debug!("Got HTTP {}, body: {:?}", status, res_body.hex_dump());
+        debug!("Got body: {:?}", res_body.hex_dump());
         assert_eq!(res_body.len(), req_body.len());
-        assert_eq!(res_body, req_body);
+        assert_eq!(res_body, req_body.as_bytes());
 
         Ok(())
     }
@@ -791,54 +736,22 @@ fn curl_echo_body_noproxy(typ: BodyType) {
 fn h2_basic_post() {
     #[allow(drop_bounds)]
     fn client(ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
-        let req_body = "Please return to sender".as_bytes();
-        let mut req_body_offset = 0;
+        let req_body = "Please return to sender";
+        let mut cmd = Command::new("curl");
 
-        let mut res_body = Vec::new();
+        cmd.arg("--silent");
+        cmd.arg("--fail-with-body");
+        cmd.arg("--http2-prior-knowledge");
+        cmd.arg(format!("http://{ln_addr}/echo-body"));
+        cmd.arg("--data").arg(req_body);
+        cmd.arg("--header")
+            .arg("content-type: application/octet-stream");
 
-        let mut handle = Easy::new();
-        handle.tcp_nodelay(true)?;
-        handle.http_version(HttpVersion::V2PriorKnowledge)?;
-        handle.url(&format!("http://{ln_addr}/echo-body"))?;
-        handle.post(true)?;
+        let res_body = cmd.output_assert_success().stdout;
 
-        handle.post_field_size(req_body.len() as u64)?;
-
-        {
-            let mut list = List::new();
-            list.append("content-type: application/octet-stream")?;
-            handle.http_headers(list)?;
-        }
-
-        {
-            let mut transfer = handle.transfer();
-            transfer.read_function(|chunk: &mut [u8]| {
-                let n = std::cmp::min(chunk.len(), req_body.len() - req_body_offset);
-                debug!("sending {n} bytes");
-                chunk[..n].copy_from_slice(&req_body[req_body_offset..][..n]);
-                req_body_offset += n;
-                Ok(n)
-            })?;
-            transfer.write_function(|chunk| {
-                debug!("receiving {} bytes", chunk.len());
-                res_body.extend_from_slice(chunk);
-                Ok(chunk.len())
-            })?;
-            transfer.header_function(|h| {
-                debug!("curl read header: {:?}", h.hex_dump());
-                true
-            })?;
-            transfer.debug_function(|typ, data| {
-                debug!("Got debug: {:?} {:?}", typ, data.hex_dump());
-            })?;
-            transfer.perform()?;
-        }
-
-        let status = handle.response_code()?;
-        assert_eq!(status, 200);
-        debug!("Got HTTP {}, body: {:?}", status, res_body.hex_dump());
+        debug!("Got body: {:?}", res_body.hex_dump());
         assert_eq!(res_body.len(), req_body.len());
-        assert_eq!(res_body, req_body);
+        assert_eq!(res_body, req_body.as_bytes());
 
         Ok(())
     }
@@ -997,33 +910,14 @@ impl Body for SampleBody {
 fn h2_basic_get() {
     #[allow(drop_bounds)]
     fn client(ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
-        let mut res_body = Vec::new();
+        let mut cmd = Command::new("curl");
 
-        let mut handle = Easy::new();
-        handle.tcp_nodelay(true)?;
-        handle.http_version(HttpVersion::V2PriorKnowledge)?;
-        handle.url(&format!("http://{ln_addr}/stream-big-body"))?;
+        cmd.arg("--silent");
+        cmd.arg("--fail-with-body");
+        cmd.arg("--http2-prior-knowledge");
+        cmd.arg(format!("http://{ln_addr}/stream-big-body"));
 
-        {
-            let mut transfer = handle.transfer();
-            transfer.write_function(|chunk| {
-                debug!("receiving {} bytes", chunk.len());
-                res_body.extend_from_slice(chunk);
-                Ok(chunk.len())
-            })?;
-            transfer.header_function(|h| {
-                debug!("curl read header: {:?}", h.hex_dump());
-                true
-            })?;
-            transfer.debug_function(|typ, data| {
-                debug!("Got debug: {:?} {:?}", typ, data.hex_dump());
-            })?;
-            transfer.perform()?;
-        }
-
-        let status = handle.response_code()?;
-        assert_eq!(status, 200);
-        debug!("Got HTTP {}", status);
+        let res_body = cmd.output_assert_success().stdout;
         let ref_body = "this is a big chunk".repeat(256).repeat(128);
         assert_eq!(res_body.len(), ref_body.len());
         assert_eq!(String::from_utf8(res_body).unwrap(), ref_body);
@@ -1143,4 +1037,21 @@ fn h2_basic_get() {
 
         Ok(())
     });
+}
+
+trait CommandExt {
+    fn output_assert_success(&mut self) -> std::process::Output;
+}
+
+impl CommandExt for Command {
+    fn output_assert_success(&mut self) -> std::process::Output {
+        let output = self.output().unwrap();
+        if !output.status.success() {
+            // print stderr
+            eprintln!("command failed with status: {:?}", output.status);
+            eprintln!("stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+            panic!("command failed with status: {:?} {:?}", output.status, self);
+        }
+        output
+    }
 }

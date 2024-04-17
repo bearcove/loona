@@ -70,7 +70,7 @@
         default = bin;
       };
       devShells.default = mkShell {
-        packages = with pkgs; [ clang lld just nixpkgs-fmt cargo-nextest libiconv cmake pkg-config curl.out ];
+        packages = with pkgs; [ clang lld just nixpkgs-fmt cargo-nextest libiconv cmake pkg-config curl ];
       };
     }
     );
