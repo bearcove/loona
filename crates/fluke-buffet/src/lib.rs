@@ -51,28 +51,12 @@ pub fn start<F: Future>(task: F) -> F::Output {
         .unwrap();
     rt.block_on(async move {
         let local = LocalSet::new();
-
-        // make a oneshot channel as a cancellation token for IoUringAsync::listen
-        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-
-        local.spawn_local(async move {
-            tokio::select! {
-                _ = rx => {
-                    eprintln!("listen cancelled");
-                }
-                _ = IoUringAsync::listen(get_ring()) => {
-                    eprintln!("IoUringAsync::listen finished");
-                },
-            }
-        });
+        local.spawn_local(IoUringAsync::listen(get_ring()));
 
         let res = local.run_until(task).await;
-        eprintln!("task finished, cancelling listen");
-        drop(tx);
-        eprintln!("listen cancelled");
 
         // wait for other spawned futures to finish
-        match tokio::time::timeout(std::time::Duration::from_secs(1), local).await {
+        match tokio::time::timeout(std::time::Duration::from_millis(250), local).await {
             Ok(_) => {
                 eprintln!("local set finished")
             }
