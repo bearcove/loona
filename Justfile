@@ -18,22 +18,14 @@ quick-cov:
 # Run all tests with cargo nextest
 test *args:
 	just build-testbed
-	RUST_BACKTRACE=1 cargo nextest run {{args}}
-
-curl-tests *args:
-	just build-testbed
-	export RUST_LOG="${RUST_LOG:-fluke=debug,fluke_hpack=info}"
 	export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
-	cargo nextest run --no-capture -p fluke-curl-tests {{args}}
+	cargo nextest run {{args}}
 
 build-testbed:
 	cargo build --release -p fluke-hyper-testbed
 
 single-test *args:
 	just test --no-capture {{args}}
-
-bench *args:
-	RUST_BACKTRACE=1 cargo bench {{args}} -- --plotting-backend plotters
 
 h2spec *args:
 	#!/bin/bash -eux

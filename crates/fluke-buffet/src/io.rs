@@ -1,9 +1,6 @@
 use std::net::Shutdown;
 
-use crate::{
-    buf::{IoBuf, IoBufMut},
-    BufResult, Piece, PieceList,
-};
+use crate::{BufResult, IoBufMut, Piece, PieceList};
 
 mod chan;
 pub use chan::*;
@@ -24,7 +21,7 @@ pub trait WriteOwned {
     /// Write a single buffer, re-trying the write if the kernel does a partial write.
     async fn write_all(&mut self, mut buf: Piece) -> std::io::Result<()> {
         let mut written = 0;
-        let len = buf.bytes_init();
+        let len = buf.len();
         while written < len {
             let (res, slice) = self.write(buf).await;
             let n = res?;
@@ -46,7 +43,7 @@ pub trait WriteOwned {
         let mut total = 0;
 
         for buf in list.pieces.iter().cloned() {
-            let buf_len = buf.bytes_init();
+            let buf_len = buf.len();
             let (res, _) = self.write(buf).await;
 
             match res {
@@ -114,7 +111,7 @@ pub trait WriteOwned {
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
-    use crate::{buf::IoBuf, io::WriteOwned, BufResult, Piece, PieceList};
+    use crate::{io::WriteOwned, BufResult, Piece, PieceList};
 
     #[test]
     fn test_write_all() {
@@ -130,17 +127,16 @@ mod tests {
 
         impl WriteOwned for Writer {
             async fn write(&mut self, buf: Piece) -> BufResult<usize, Piece> {
-                assert!(buf.bytes_init() > 0, "zero-length writes are forbidden");
+                assert!(!buf.is_empty(), "zero-length writes are forbidden");
 
                 match self.mode {
                     Mode::WriteZero => (Ok(0), buf),
                     Mode::WritePartial => {
-                        let n = match buf.bytes_init() {
+                        let n = match buf.len() {
                             1 => 1,
-                            _ => buf.bytes_init() / 2,
+                            _ => buf.len() / 2,
                         };
-                        let slice = unsafe { std::slice::from_raw_parts(buf.stable_ptr(), n) };
-                        self.bytes.borrow_mut().extend_from_slice(slice);
+                        self.bytes.borrow_mut().extend_from_slice(&buf[..n]);
                         (Ok(n), buf)
                     }
                 }

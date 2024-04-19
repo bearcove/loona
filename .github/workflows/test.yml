@@ -28,7 +28,6 @@ jobs:
         run: |
           cd ${{ github.workspace }}
           just test
-          just curl-tests
   test-linux:
     env:
       CARGO_TERM_COLOR: always

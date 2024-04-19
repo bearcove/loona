@@ -4,8 +4,7 @@ use tracing::debug;
 
 use crate::{types::Request, util::read_and_parse, Body, HeadersExt, Response};
 use fluke_buffet::{
-    io::{ReadOwned, WriteOwned},
-    PieceList, RollMut,
+    PieceList, RollMut, {ReadOwned, WriteOwned},
 };
 
 use super::{

@@ -15,5 +15,5 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 which = "6.0.0"
 
 [features]
-default = ["tokio-uring"]
-tokio-uring = ["fluke/tokio-uring"]
+default = ["uring"]
+uring = ["fluke/uring"]

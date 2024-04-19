@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
+exclude = ["crates/fluke-io-uring-async"]
 
 [profile.dev.package."*"]
 opt-level = 2

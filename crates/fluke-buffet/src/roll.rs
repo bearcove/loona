@@ -8,10 +8,7 @@ use std::{
     str::Utf8Error,
 };
 
-use crate::{
-    buf::{IoBuf, IoBufMut},
-    io::ReadOwned,
-};
+use crate::{io::ReadOwned, IoBufMut};
 use nom::{
     Compare, CompareResult, FindSubstring, InputIter, InputLength, InputTake, InputTakeAtPosition,
     Needed, Slice,
@@ -88,11 +85,6 @@ impl BoxStorage {
         let buf = self.buf.get();
         let len = unsafe { (*buf).len() };
         len - self.off as usize
-    }
-
-    fn as_ptr(&self) -> *const u8 {
-        let buf = self.buf.get();
-        unsafe { (*buf).as_ptr().add(self.off as usize) }
     }
 
     unsafe fn as_mut_ptr(&self) -> *mut u8 {
@@ -269,11 +261,14 @@ impl RollMut {
             buf: self,
             off: read_off,
             cap: read_cap.try_into().unwrap(),
-            init: 0,
         };
         let (res, mut read_into) = r.read(read_into).await;
-        tracing::trace!("read_into got {} bytes", read_into.init);
-        read_into.buf.len += read_into.init;
+        if let Ok(n) = &res {
+            tracing::trace!("read_into got {} bytes", *n);
+            read_into.buf.len += *n as u32;
+        } else {
+            tracing::trace!("read_into failed: {:?}", res);
+        }
         (res, read_into.buf)
     }
 
@@ -454,39 +449,19 @@ impl Deref for RollMut {
     }
 }
 
-struct ReadInto {
+pub(crate) struct ReadInto {
     buf: RollMut,
     off: u32,
     cap: u32,
-    init: u32,
-}
-
-unsafe impl IoBuf for ReadInto {
-    #[inline(always)]
-    fn stable_ptr(&self) -> *const u8 {
-        unreachable!("ReadInto should never be used as a write buffer")
-    }
-
-    #[inline(always)]
-    fn bytes_init(&self) -> usize {
-        unreachable!("ReadInto should never be used as a write buffer")
-    }
-
-    #[inline(always)]
-    fn bytes_total(&self) -> usize {
-        self.cap as _
-    }
 }
 
 unsafe impl IoBufMut for ReadInto {
-    #[inline(always)]
-    fn stable_mut_ptr(&mut self) -> *mut u8 {
+    fn io_buf_mut_stable_mut_ptr(&mut self) -> *mut u8 {
         unsafe { self.buf.storage.as_mut_ptr().add(self.off as usize) }
     }
 
-    #[inline(always)]
-    unsafe fn set_init(&mut self, pos: usize) {
-        self.init = pos.try_into().expect("reads should be < 4GiB");
+    fn io_buf_mut_capacity(&self) -> usize {
+        self.cap as _
     }
 }
 
@@ -499,27 +474,6 @@ pub struct Roll {
 impl Debug for Roll {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         Debug::fmt(&self[..], f)
-    }
-}
-
-unsafe impl IoBuf for Roll {
-    #[inline(always)]
-    fn stable_ptr(&self) -> *const u8 {
-        match &self.inner {
-            RollInner::Buf(b) => b.stable_ptr(),
-            RollInner::Box(b) => b.b.as_ptr(),
-            RollInner::Empty => [].as_ptr(),
-        }
-    }
-
-    #[inline(always)]
-    fn bytes_init(&self) -> usize {
-        self.len()
-    }
-
-    #[inline(always)]
-    fn bytes_total(&self) -> usize {
-        self.len()
     }
 }
 
@@ -1266,12 +1220,12 @@ mod tests {
                 let (mut stream_r, _stream_w) = IntoHalves::into_halves(stream);
                 println!("Accepted connection from {addr}");
 
-                let mut buf = Vec::with_capacity(1024);
+                let mut buf = vec![0u8; 1024];
                 let res;
                 (res, buf) = stream_r.read(buf).await;
-                res?;
+                let n = res?;
 
-                assert_eq!(buf, b"hello");
+                assert_eq!(&buf[..n], b"hello");
 
                 Ok::<_, eyre::Report>(())
             };

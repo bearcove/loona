@@ -29,11 +29,13 @@
       craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
       src = craneLib.cleanCargoSource (craneLib.path ./.);
 
-      buildInputs = with pkgs; [ pkgs.stdenv.cc.cc ];
+      buildInputs = with pkgs; [
+        pkgs.stdenv.cc.cc
+        lld
+      ];
       nativeBuildInputs = with pkgs; [
         rustToolchain
         clang
-        mold
         curl
       ]
       ++ lib.optionals pkgs.stdenv.isLinux [ autoPatchelfHook ]
@@ -49,10 +51,6 @@
         version = "latest";
         strictDeps = true;
         dontStrip = true;
-        # workaround for https://github.com/NixOS/nixpkgs/issues/166205
-        env = with pkgs; lib.optionalAttrs stdenv.cc.isClang {
-          NIX_LDFLAGS = "-l${stdenv.cc.libcxx.cxxabi.libName}";
-        };
         inherit src buildInputs nativeBuildInputs;
       };
       cargoArtifacts = craneLib.buildDepsOnly commonArgs;
@@ -67,7 +65,7 @@
         default = bin;
       };
       devShells.default = mkShell {
-        packages = with pkgs; [ clang mold curl just nixpkgs-fmt cargo-nextest libiconv cmake pkg-config lld ];
+        packages = with pkgs; [ clang lld just nixpkgs-fmt cargo-nextest libiconv cmake pkg-config curl ];
       };
     }
     );

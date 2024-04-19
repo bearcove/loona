@@ -1,9 +1,7 @@
 //! Types for performing vectored I/O.
 
-use std::{collections::VecDeque, fmt, ops::Deref, rc::Rc, str::Utf8Error};
-
-use crate::buf::IoBuf;
 use http::header::HeaderName;
+use std::{collections::VecDeque, fmt, ops::Deref, rc::Rc, str::Utf8Error};
 
 use crate::{Roll, RollStr};
 
@@ -117,13 +115,6 @@ impl AsRef<[u8]> for PieceCore {
 }
 
 impl Piece {
-    fn start(&self) -> usize {
-        match self {
-            Piece::Full { .. } => 0,
-            Piece::Slice { start, .. } => *start,
-        }
-    }
-
     fn core(&self) -> &PieceCore {
         match self {
             Piece::Full { core } => core,
@@ -191,57 +182,6 @@ impl Piece {
     /// UB if not utf-8. Typically only used in parsers.
     pub unsafe fn to_string_unchecked(self) -> PieceStr {
         PieceStr { piece: self }
-    }
-}
-
-unsafe impl IoBuf for PieceCore {
-    #[inline(always)]
-    fn stable_ptr(&self) -> *const u8 {
-        match self {
-            PieceCore::Static(s) => IoBuf::stable_ptr(s),
-            PieceCore::Vec(s) => IoBuf::stable_ptr(s.as_ref()),
-            PieceCore::Roll(s) => IoBuf::stable_ptr(s),
-            PieceCore::HeaderName(s) => s.as_str().as_ptr(),
-        }
-    }
-
-    fn bytes_init(&self) -> usize {
-        match self {
-            PieceCore::Static(s) => IoBuf::bytes_init(s),
-            PieceCore::Vec(s) => IoBuf::bytes_init(s.as_ref()),
-            PieceCore::Roll(s) => IoBuf::bytes_init(s),
-            PieceCore::HeaderName(s) => s.as_str().len(),
-        }
-    }
-
-    fn bytes_total(&self) -> usize {
-        match self {
-            PieceCore::Static(s) => IoBuf::bytes_total(s),
-            PieceCore::Vec(s) => IoBuf::bytes_total(s.as_ref()),
-            PieceCore::Roll(s) => IoBuf::bytes_total(s),
-            PieceCore::HeaderName(s) => s.as_str().len(),
-        }
-    }
-}
-
-unsafe impl IoBuf for Piece {
-    #[inline(always)]
-    fn stable_ptr(&self) -> *const u8 {
-        unsafe { self.core().stable_ptr().byte_add(self.start()) }
-    }
-
-    #[inline(always)]
-    fn bytes_init(&self) -> usize {
-        match self {
-            Piece::Full { core } => core.bytes_init(),
-            // TODO: triple-check
-            Piece::Slice { len, .. } => *len,
-        }
-    }
-
-    #[inline(always)]
-    fn bytes_total(&self) -> usize {
-        todo!()
     }
 }
 

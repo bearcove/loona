@@ -7,7 +7,7 @@ use crate::{
     types::{Headers, Request, Response},
     Encoder,
 };
-use fluke_buffet::{io::WriteOwned, PieceCore, PieceList, RollMut};
+use fluke_buffet::{PieceCore, PieceList, RollMut, WriteOwned};
 
 use super::body::{write_h1_body_chunk, write_h1_body_end, BodyWriteMode};
 

@@ -1,15 +1,15 @@
 use crate::io::IntoHalves;
 
-#[cfg(all(target_os = "linux", feature = "tokio-uring"))]
+#[cfg(all(target_os = "linux", feature = "uring"))]
 mod net_uring;
 
-#[cfg(all(target_os = "linux", feature = "tokio-uring"))]
+#[cfg(all(target_os = "linux", feature = "uring"))]
 pub use net_uring::*;
 
-#[cfg(not(all(target_os = "linux", feature = "tokio-uring")))]
+#[cfg(not(all(target_os = "linux", feature = "uring")))]
 mod net_noring;
 
-#[cfg(not(all(target_os = "linux", feature = "tokio-uring")))]
+#[cfg(not(all(target_os = "linux", feature = "uring")))]
 pub use net_noring::*;
 
 impl IntoHalves for tokio::net::TcpStream {
