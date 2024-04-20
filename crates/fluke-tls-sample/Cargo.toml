@@ -11,7 +11,7 @@ fluke = { path = "../../crates/fluke" }
 rcgen = "0.10.0"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-rustls = { version = "0.23.1", default-features = false }
+rustls = { version = "0.23.5", default-features = false }
 tokio = { version = "1.36.0", features = ["full"] }
 tokio-rustls = { git = "https://github.com/rustls/tokio-rustls", rev = "caf4e8267f0e708a2bfc561dec98a842dc960ba6", default-features = false }
 http = "1.1.0"
