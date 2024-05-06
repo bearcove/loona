@@ -11,7 +11,7 @@ Nothing in this repo is final yet, look around, but please do not use.
 
 ### Funding
 
-Thanks to these companies for contracting work on rc-zip:
+Thanks to these companies for supporting my work on fluke:
 
 [![Shopify](./static/shopify-c.svg)](https://shopify.github.io/) [![fly.io](./static/flyio-c.svg)](https://fly.io/docs/about/open-source/)
 
