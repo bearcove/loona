@@ -1,6 +1,6 @@
 #!/bin/bash -eux
 
-export RUSTUP_TOOLCHAIN=nightly-2024-03-31
+export RUSTUP_TOOLCHAIN=nightly-2024-05-09
 export RUSTFLAGS='-C instrument-coverage -Z coverage-options=branch --cfg=coverage --cfg=trybuild_no_target'
 
 export CARGO_INCREMENTAL=0
