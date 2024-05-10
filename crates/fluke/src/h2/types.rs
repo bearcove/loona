@@ -8,10 +8,8 @@ use tokio::sync::Notify;
 
 use crate::Response;
 
-use super::{
-    body::StreamIncoming,
-    parse::{FrameType, KnownErrorCode, Settings, StreamId},
-};
+use super::body::StreamIncoming;
+use fluke_h2_parse::{FrameType, KnownErrorCode, Settings, StreamId};
 
 pub(crate) struct ConnState {
     pub(crate) streams: HashMap<StreamId, StreamState>,

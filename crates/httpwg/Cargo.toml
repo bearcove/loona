@@ -4,4 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+fluke-buffet = { version = "0.1.0", path = "../fluke-buffet" }
 futures-util = "0.3.30"

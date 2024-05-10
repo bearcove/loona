@@ -8,15 +8,17 @@ use std::{
 };
 
 use byteorder::{BigEndian, WriteBytesExt};
-use enumflags2::BitFlags;
 use eyre::Context;
 use fluke_buffet::{Piece, PieceList, PieceStr, ReadOwned, Roll, RollMut, WriteOwned};
+use fluke_h2_parse::{
+    self as parse, parse_reserved_and_u31, BitFlags, ContinuationFlags, DataFlags, Finish, Frame,
+    FrameType, HeadersFlags, PingFlags, PrioritySpec, Settings, SettingsFlags, StreamId,
+};
 use http::{
     header,
     uri::{Authority, PathAndQuery, Scheme},
     HeaderName, Version,
 };
-use nom::Finish;
 use smallvec::{smallvec, SmallVec};
 use tokio::sync::mpsc;
 use tracing::{debug, trace};
@@ -25,10 +27,6 @@ use crate::{
     h2::{
         body::{H2Body, PieceOrTrailers, StreamIncoming, StreamIncomingItem},
         encode::{EncoderState, H2Encoder},
-        parse::{
-            self, parse_reserved_and_u31, ContinuationFlags, DataFlags, Frame, FrameType,
-            HeadersFlags, PingFlags, PrioritySpec, Settings, SettingsFlags, StreamId,
-        },
         types::{
             BodyOutgoing, ConnState, H2ConnectionError, H2Event, H2EventPayload, H2StreamError,
             HeadersOrTrailers, HeadersOutgoing, StreamOutgoing, StreamState,
@@ -746,7 +744,9 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 max_frame_size: u32::MAX,
             })?;
         debug!(?frame, ">");
-        let frame_roll = frame.into_roll(&mut self.out_scratch)?;
+        let frame_roll = frame
+            .into_roll(&mut self.out_scratch)
+            .map_err(|e| eyre::eyre!(e))?;
 
         if payload.is_empty() {
             trace!("Writing frame without payload");

@@ -6,7 +6,9 @@
 use std::{fmt, ops::RangeInclusive};
 
 use enum_repr::EnumRepr;
-use enumflags2::{bitflags, BitFlags};
+pub use enumflags2::{bitflags, BitFlags};
+pub use nom::Finish;
+
 use nom::{
     combinator::map,
     number::streaming::{be_u16, be_u24, be_u32, be_u8},
@@ -169,7 +171,7 @@ impl FrameType {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct StreamId(pub(crate) u32);
+pub struct StreamId(pub u32);
 
 impl StreamId {
     /// Stream ID used for connection control frames
@@ -328,7 +330,7 @@ impl Frame {
         Ok((i, frame))
     }
 
-    pub fn write_into(self, mut w: impl std::io::Write) -> eyre::Result<()> {
+    pub fn write_into(self, mut w: impl std::io::Write) -> std::io::Result<()> {
         use byteorder::{BigEndian, WriteBytesExt};
         w.write_u24::<BigEndian>(self.len as _)?;
         let ft = self.frame_type.encode();
@@ -340,7 +342,7 @@ impl Frame {
         Ok(())
     }
 
-    pub fn into_roll(self, mut scratch: &mut RollMut) -> eyre::Result<Roll> {
+    pub fn into_roll(self, mut scratch: &mut RollMut) -> std::io::Result<Roll> {
         debug_assert_eq!(scratch.len(), 0);
         self.write_into(&mut scratch)?;
         Ok(scratch.take_all())
@@ -367,7 +369,7 @@ fn parse_reserved_and_stream_id(i: Roll) -> IResult<Roll, (u8, StreamId)> {
 
 // cf. https://httpwg.org/specs/rfc9113.html#HEADERS
 #[derive(Debug)]
-pub(crate) struct PrioritySpec {
+pub struct PrioritySpec {
     pub exclusive: bool,
     pub stream_dependency: StreamId,
     // 0-255 => 1-256
@@ -375,7 +377,7 @@ pub(crate) struct PrioritySpec {
 }
 
 impl PrioritySpec {
-    pub(crate) fn parse(i: Roll) -> IResult<Roll, Self> {
+    pub fn parse(i: Roll) -> IResult<Roll, Self> {
         map(
             tuple((parse_reserved_and_stream_id, be_u8)),
             |((exclusive, stream_dependency), weight)| Self {
@@ -669,7 +671,7 @@ impl Settings {
 
     /// Encode these settings into (u16, u32) pairs as specified in
     /// https://httpwg.org/specs/rfc9113.html#SETTINGS
-    pub fn write_into(self, mut w: impl std::io::Write) -> eyre::Result<()> {
+    pub fn write_into(self, mut w: impl std::io::Write) -> std::io::Result<()> {
         use byteorder::{BigEndian, WriteBytesExt};
 
         for (id, value) in self.pairs() {
@@ -681,7 +683,7 @@ impl Settings {
     }
 
     /// Same as `write_into` but uses a scratch [RollMut] to return a [Roll]
-    pub fn into_roll(self, mut scratch: &mut RollMut) -> eyre::Result<Roll> {
+    pub fn into_roll(self, mut scratch: &mut RollMut) -> std::io::Result<Roll> {
         debug_assert_eq!(scratch.len(), 0);
         self.write_into(&mut scratch)?;
         Ok(scratch.take_all())

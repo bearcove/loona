@@ -1,18 +1,15 @@
-use crate::{Test, TestGroup};
+use futures_util::future::LocalBoxFuture;
+use std::sync::Arc;
+
+use crate::{Config, Conn, Test, TestGroup};
 
 #[derive(Default)]
 pub struct Test3_4 {}
 
 impl Test for Test3_4 {
-    fn run(
-        &self,
-        config: &super::Config,
-        conn: Box<dyn super::Conn>,
-    ) -> super::BoxFuture<Result<(), String>> {
+    fn run(&self, _config: Arc<Config>, mut conn: Conn) -> LocalBoxFuture<Result<(), String>> {
         Box::pin(async move {
-            conn.send(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n").await;
-            conn.write();
-
+            conn.send(&b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"[..]).await;
             Ok(())
         })
     }
