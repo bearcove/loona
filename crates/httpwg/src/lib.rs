@@ -1,40 +1,64 @@
 use std::sync::Arc;
 
-use fluke_buffet::{Piece, ReadOwned, WriteOwned};
-use futures_util::future::LocalBoxFuture;
+use fluke_buffet::{IntoHalves, Piece, WriteOwned};
 
 pub mod rfc9113;
 
-pub struct TestGroup {
+pub struct TestGroup<IO> {
     pub name: String,
-    pub tests: Vec<Box<dyn Test>>,
+    pub tests: Vec<Box<dyn Test<IO>>>,
 }
 
-pub struct Conn {
-    r: fluke_buffet::net::TcpStream,
-    w: fluke_buffet::net::TcpStream,
+pub struct Conn<IO: IntoHalves + 'static> {
+    r: <IO as IntoHalves>::Read,
+    w: <IO as IntoHalves>::Write,
 }
 
-impl Conn {
-    async fn send(&mut self, buf: impl Into<Piece>) -> std::io::Result<usize> {
+impl<IO: IntoHalves> Conn<IO> {
+    pub fn new(io: IO) -> Self {
+        let (r, w) = io.into_halves();
+        Self { r, w }
+    }
+
+    pub async fn send(&mut self, buf: impl Into<Piece>) -> eyre::Result<()> {
         self.w.write_all(buf.into()).await?;
-        Ok(0)
+        Ok(())
     }
 }
 
 pub struct Config {}
 
-pub trait Test {
-    fn run(&self, config: Arc<Config>, conn: Conn) -> LocalBoxFuture<Result<(), String>>;
+pub trait Test<IO: IntoHalves + 'static> {
+    fn name(&self) -> &'static str;
+    fn run(
+        &self,
+        config: Arc<Config>,
+        conn: Conn<IO>,
+    ) -> futures_util::future::LocalBoxFuture<eyre::Result<()>>;
 }
 
-fn all_groups() -> Vec<TestGroup> {
-    fn t<T: Test + Default + 'static>() -> Box<dyn Test> {
-        Box::new(T::default())
-    }
+pub fn all_groups<IO: IntoHalves + 'static>() -> Vec<TestGroup<IO>> {
+    vec![rfc9113::group()]
+}
 
-    vec![TestGroup {
-        name: "RFC 9113".to_owned(),
-        tests: vec![t::<rfc9113::Test3_4>()],
-    }]
+#[macro_export]
+macro_rules! test_struct {
+    ($name: expr, $fn: ident, $struct: ident) => {
+        #[derive(Default)]
+        pub struct $struct {}
+
+        impl<IO: IntoHalves + 'static> Test<IO> for $struct {
+            fn name(&self) -> &'static str {
+                $name
+            }
+
+            fn run(
+                &self,
+                config: Arc<Config>,
+                conn: Conn<IO>,
+            ) -> futures_util::future::LocalBoxFuture<eyre::Result<()>> {
+                Box::pin($fn(config, conn))
+            }
+        }
+    };
 }

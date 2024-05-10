@@ -4,5 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+eyre = "0.6.12"
 fluke-buffet = { version = "0.1.0", path = "../fluke-buffet" }
 futures-util = "0.3.30"
+tokio = "1.37.0"
+tracing = "0.1.40"

@@ -1,27 +1,28 @@
-use futures_util::future::LocalBoxFuture;
+use fluke_buffet::IntoHalves;
 use std::sync::Arc;
 
-use crate::{Config, Conn, Test, TestGroup};
+use crate::{test_struct, Config, Conn, Test, TestGroup};
 
-#[derive(Default)]
-pub struct Test3_4 {}
-
-impl Test for Test3_4 {
-    fn run(&self, _config: Arc<Config>, mut conn: Conn) -> LocalBoxFuture<Result<(), String>> {
-        Box::pin(async move {
-            conn.send(&b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"[..]).await;
-            Ok(())
-        })
-    }
+test_struct!("3.4", test3_4, Test3_4);
+async fn test3_4<IO: IntoHalves + 'static>(
+    _config: Arc<Config>,
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    tracing::debug!("Writing http/2 preface");
+    conn.send(&b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"[..]).await?;
+    tracing::debug!("Sleeping a bit!");
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    tracing::debug!("Okay that's it");
+    Ok(())
 }
 
-pub fn group() -> TestGroup {
-    fn t<T: Test + Default + 'static>() -> Box<dyn Test> {
+pub fn group<IO: IntoHalves + 'static>() -> TestGroup<IO> {
+    fn t<IO: IntoHalves + 'static, T: Test<IO> + Default + 'static>() -> Box<dyn Test<IO>> {
         Box::new(T::default())
     }
 
     TestGroup {
         name: "RFC 9113".to_owned(),
-        tests: vec![t::<Test3_4>()],
+        tests: vec![t::<IO, Test3_4>()],
     }
 }

@@ -225,6 +225,7 @@ dependencies = [
  "futures-util",
  "http 1.1.0",
  "httparse",
+ "httpwg",
  "libc",
  "memchr",
  "nom",
@@ -577,8 +578,11 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 name = "httpwg"
 version = "0.1.0"
 dependencies = [
+ "eyre",
  "fluke-buffet",
  "futures-util",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1304,9 +1308,9 @@ checksum = "ef927ca75afb808a4d64dd374f00a2adf8d0fcff8e7b184af886c3c87ec4a3f3"
 
 [[package]]
 name = "tokio"
-version = "1.36.0"
+version = "1.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61285f6515fa018fb2d1e46eb21223fff441ee8db5d0f1435e8ab4f5cdb80931"
+checksum = "1adbebffeca75fcfd058afa480fb6c0b81e165a0323f9c9d39c9697e37c46787"
 dependencies = [
  "backtrace",
  "bytes",
