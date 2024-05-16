@@ -6,3 +6,4 @@ lcov.info
 junit.xml
 .direnv
 .DS_Store
+/vendor

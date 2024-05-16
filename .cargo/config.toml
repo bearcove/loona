@@ -1,2 +1,18 @@
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "linker=clang", "-C", "link-arg=-fuse-ld=lld"]
+
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/bearcove/ktls?rev=e60101a5cda5c6a873ee8422463ef347c74643af"]
+git = "https://github.com/bearcove/ktls"
+rev = "e60101a5cda5c6a873ee8422463ef347c74643af"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/rustls/tokio-rustls?rev=caf4e8267f0e708a2bfc561dec98a842dc960ba6"]
+git = "https://github.com/rustls/tokio-rustls"
+rev = "caf4e8267f0e708a2bfc561dec98a842dc960ba6"
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
