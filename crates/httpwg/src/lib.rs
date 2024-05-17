@@ -216,10 +216,10 @@ impl<IO: IntoHalves> Conn<IO> {
                             // good, good! let's acknowledge those
                             self.write_frame(
                                 Frame::new(
-                                    FrameType::Settings(BitFlags::empty() | SettingsFlags::Ack),
+                                    FrameType::Settings(SettingsFlags::Ack.into()),
                                     StreamId::CONNECTION,
                                 ),
-                                payload,
+                                (),
                             )
                             .await?;
                         }

@@ -225,18 +225,24 @@ impl PieceList {
 
     /// Add a single chunk to the back of the list
     pub fn push_back(&mut self, chunk: impl Into<Piece>) {
-        self.pieces.push_back(chunk.into());
+        let chunk = chunk.into();
+        if !chunk.is_empty() {
+            self.pieces.push_back(chunk.into());
+        }
+    }
+
+    /// Add a single chunk to the front of the list
+    pub fn push_front(&mut self, chunk: impl Into<Piece>) {
+        let chunk = chunk.into();
+        if !chunk.is_empty() {
+            self.pieces.push_front(chunk.into());
+        }
     }
 
     /// Add a single chunk to the back list and return self
     pub fn followed_by(mut self, chunk: impl Into<Piece>) -> Self {
         self.push_back(chunk);
         self
-    }
-
-    /// Add a single chunk to the front of the list
-    pub fn push_front(&mut self, chunk: impl Into<Piece>) {
-        self.pieces.push_front(chunk.into());
     }
 
     /// Add a single chunk to the front of the list and return self
