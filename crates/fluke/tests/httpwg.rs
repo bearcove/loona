@@ -1,4 +1,4 @@
-use std::{rc::Rc, sync::Arc};
+use std::rc::Rc;
 
 use fluke::{Body, Encoder, ExpectResponseHeaders, Responder, Response, ResponseDone};
 use fluke_buffet::{IntoHalves, PipeRead, PipeWrite, ReadOwned, RollMut, WriteOwned};
@@ -81,16 +81,12 @@ pub fn start_server() -> httpwg::Conn<TwoHalves<PipeWrite, PipeRead>> {
         let conf = fluke::h2::ServerConf {
             ..Default::default()
         };
+        let conf = Rc::new(conf);
 
         let client_buf = RollMut::alloc()?;
         let driver = Rc::new(TestDriver);
-        fluke::h2::serve(
-            (server_read, server_write),
-            Rc::new(conf),
-            client_buf,
-            driver,
-        )
-        .await?;
+        let io = (server_read, server_write);
+        fluke::h2::serve(io, conf, client_buf, driver).await?;
         tracing::debug!("http/2 server done");
         Ok::<_, eyre::Report>(())
     };
@@ -102,31 +98,36 @@ pub fn start_server() -> httpwg::Conn<TwoHalves<PipeWrite, PipeRead>> {
     httpwg::Conn::new(TwoHalves(client_write, client_read))
 }
 
-// httpwg::gen_tests! {
+httpwg::gen_tests! {{
+   crate::setup_tracing();
+
+   fluke_buffet::start(async move {
+       let conn = crate::start_server();
+       let config = std::rc::Rc::new(httpwg::Config {});
+       let test = Test::default();
+       let result = httpwg::Test::run(&test, config, conn).await;
+       result.unwrap()
+   });
+}}
+
+// #[test]
+// fn httpwg() {
 //     setup_tracing();
 
 //     async fn inner() -> eyre::Result<()> {
+//         let groups = httpwg::all_groups();
+//         for group in groups {
+//             println!("Group: {}", group.name);
+//             for test in group.tests {
+//                 let conn = start_server();
+//                 let config = std::rc::Rc::new(httpwg::Config {});
+//                 let result = test.run(config, conn).await;
+//                 println!("  Test: {:?}", result);
+//             }
+//         }
+
+//         Ok(())
 //     }
-// };
 
-#[test]
-fn httpwg() {
-    setup_tracing();
-
-    async fn inner() -> eyre::Result<()> {
-        let groups = httpwg::all_groups();
-        for group in groups {
-            println!("Group: {}", group.name);
-            for test in group.tests {
-                let conn = start_server();
-                let config = Arc::new(httpwg::Config {});
-                let result = test.run(config, conn).await;
-                println!("  Test: {:?}", result);
-            }
-        }
-
-        Ok(())
-    }
-
-    fluke_buffet::start(async move { inner().await.unwrap() });
-}
+//     fluke_buffet::start(async move { inner().await.unwrap() });
+// }

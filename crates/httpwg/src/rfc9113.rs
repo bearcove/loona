@@ -1,11 +1,11 @@
 use fluke_buffet::IntoHalves;
-use std::sync::Arc;
+use std::rc::Rc;
 
 use crate::{test_struct, Config, Conn, Test, TestGroup};
 
 test_struct!("3.4", test3_4, Test3_4);
 async fn test3_4<IO: IntoHalves + 'static>(
-    _config: Arc<Config>,
+    _config: Rc<Config>,
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     tracing::debug!("Writing http/2 preface");

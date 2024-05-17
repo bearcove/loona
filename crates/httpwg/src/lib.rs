@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::rc::Rc;
 
 use fluke_buffet::{IntoHalves, Piece, WriteOwned};
 
@@ -32,7 +32,7 @@ pub trait Test<IO: IntoHalves + 'static> {
     fn name(&self) -> &'static str;
     fn run(
         &self,
-        config: Arc<Config>,
+        config: Rc<Config>,
         conn: Conn<IO>,
     ) -> futures_util::future::LocalBoxFuture<eyre::Result<()>>;
 }
@@ -54,10 +54,24 @@ macro_rules! test_struct {
 
             fn run(
                 &self,
-                config: Arc<Config>,
+                config: std::rc::Rc<Config>,
                 conn: Conn<IO>,
             ) -> futures_util::future::LocalBoxFuture<eyre::Result<()>> {
                 Box::pin($fn(config, conn))
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! gen_tests {
+    ($body: tt) => {
+        #[cfg(test)]
+        mod rfc9113 {
+            #[test]
+            fn test_3_4() {
+                use ::httpwg::rfc9113Test3_4 as Test;
+                $body
             }
         }
     };
