@@ -750,7 +750,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         if payload.is_empty() {
             trace!("Writing frame without payload");
             self.transport_w
-                .write_all(frame_roll.into())
+                .write_all(frame_roll)
                 .await
                 .map_err(H2ConnectionError::WriteError)?;
         } else {

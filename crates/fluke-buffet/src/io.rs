@@ -20,7 +20,8 @@ pub trait WriteOwned {
     async fn write(&mut self, buf: Piece) -> BufResult<usize, Piece>;
 
     /// Write a single buffer, re-trying the write if the kernel does a partial write.
-    async fn write_all(&mut self, mut buf: Piece) -> std::io::Result<()> {
+    async fn write_all(&mut self, buf: impl Into<Piece>) -> std::io::Result<()> {
+        let mut buf = buf.into();
         let mut written = 0;
         let len = buf.len();
         while written < len {
@@ -156,7 +157,7 @@ mod tests {
                 bytes: Default::default(),
             };
             let buf_a = vec![1, 2, 3, 4, 5];
-            let res = writer.write_all(buf_a.into()).await;
+            let res = writer.write_all(buf_a).await;
             assert!(res.is_err());
 
             let mut writer = Writer {
@@ -175,7 +176,7 @@ mod tests {
                 bytes: Default::default(),
             };
             let buf_a = vec![1, 2, 3, 4, 5];
-            writer.write_all(buf_a.into()).await.unwrap();
+            writer.write_all(buf_a).await.unwrap();
             assert_eq!(&writer.bytes.borrow()[..], &[1, 2, 3, 4, 5]);
 
             let mut writer = Writer {
