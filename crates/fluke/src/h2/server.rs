@@ -116,7 +116,6 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
     ) -> eyre::Result<()> {
         // first read the preface
         {
-            debug!("Reading preface");
             (client_buf, _) = match read_and_parse(
                 parse::preface,
                 &mut transport_r,
@@ -131,7 +130,6 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     return Ok(());
                 }
             };
-            debug!("Reading preface: done");
         }
 
         // then send our initial settings

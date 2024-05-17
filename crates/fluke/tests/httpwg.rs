@@ -20,7 +20,8 @@ pub(crate) fn setup_tracing() {
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_ansi(true)
         .with_file(false)
-        .with_line_number(false);
+        .with_line_number(false)
+        .without_time();
 
     tracing_subscriber::registry()
         .with(targets)

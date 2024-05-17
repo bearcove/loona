@@ -13,7 +13,7 @@ pub struct TestGroup<IO> {
 
 pub struct Conn<IO: IntoHalves + 'static> {
     w: <IO as IntoHalves>::Write,
-    ev_rx: tokio::sync::mpsc::Receiver<Ev>,
+    pub ev_rx: tokio::sync::mpsc::Receiver<Ev>,
 }
 
 pub enum Ev {
@@ -29,7 +29,6 @@ impl<IO: IntoHalves> Conn<IO> {
         let recv_fut = async move {
             let mut res_buf = RollMut::alloc()?;
             loop {
-                debug!("Reading a chunk");
                 res_buf.reserve()?;
 
                 let res;
@@ -42,6 +41,7 @@ impl<IO: IntoHalves> Conn<IO> {
                 match Frame::parse(res_buf.filled()).finish() {
                     Ok((rest, frame)) => {
                         res_buf.keep(rest);
+                        debug!("< {frame:?}");
 
                         // read frame payload
                         let frame_len = frame.len as usize;
@@ -57,13 +57,14 @@ impl<IO: IntoHalves> Conn<IO> {
                         let payload = res_buf.take_at_most(frame_len).unwrap();
                         assert_eq!(payload.len(), frame_len);
 
-                        debug!("got frame {frame:#?}");
+                        debug!(%frame_len, "got frame payload");
                         ev_tx.send(Ev::Frame { frame, payload }).await.unwrap();
                     }
-                    Err(_) => todo!(),
+                    Err(err) => {
+                        debug!(?err, "got parse error");
+                        break;
+                    }
                 }
-
-                todo!()
             }
 
             Ok::<_, eyre::Report>(())

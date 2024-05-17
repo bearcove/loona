@@ -24,8 +24,6 @@ async fn test4_1<IO: IntoHalves + 'static>(
     _config: Rc<Config>,
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
-    tracing::warn!("Hello??");
-
     // TODO: handshake facility on `conn`
 
     tracing::debug!("Writing http/2 preface");
