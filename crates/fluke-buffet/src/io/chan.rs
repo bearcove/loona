@@ -161,7 +161,8 @@ impl ChanWrite {
 }
 
 impl WriteOwned for ChanWrite {
-    async fn write(&mut self, buf: Piece) -> BufResult<usize, Piece> {
+    async fn write_owned(&mut self, buf: impl Into<Piece>) -> BufResult<usize, Piece> {
+        let buf = buf.into();
         let v = buf[..].to_vec();
         let v_len = v.len();
         match self.tx.send(v).await {
@@ -339,14 +340,14 @@ mod tests {
                 let wrote_three = wrote_three.clone();
                 async move {
                     let mut res;
-                    (res, _) = cw.write("one".into()).await;
+                    (res, _) = cw.write_owned("one").await;
                     res.unwrap();
-                    (res, _) = cw.write("two".into()).await;
+                    (res, _) = cw.write_owned("two").await;
                     res.unwrap();
-                    (res, _) = cw.write("three".into()).await;
+                    (res, _) = cw.write_owned("three").await;
                     res.unwrap();
                     *wrote_three.borrow_mut() = true;
-                    (res, _) = cw.write("splitread".into()).await;
+                    (res, _) = cw.write_owned("splitread").await;
                     res.unwrap();
                 }
             });

@@ -21,7 +21,7 @@ impl<IO: IntoHalves> Conn<IO> {
     }
 
     pub async fn send(&mut self, buf: impl Into<Piece>) -> eyre::Result<()> {
-        self.w.write_all(buf.into()).await?;
+        self.w.write_all_owned(buf.into()).await?;
         Ok(())
     }
 }

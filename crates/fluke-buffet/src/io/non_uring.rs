@@ -17,7 +17,8 @@ impl<T> WriteOwned for T
 where
     T: AsyncWrite + Unpin,
 {
-    async fn write(&mut self, buf: Piece) -> BufResult<usize, Piece> {
+    async fn write_owned(&mut self, buf: impl Into<Piece>) -> BufResult<usize, Piece> {
+        let buf = buf.into();
         let res = tokio::io::AsyncWriteExt::write(self, &buf[..]).await;
         (res, buf)
     }

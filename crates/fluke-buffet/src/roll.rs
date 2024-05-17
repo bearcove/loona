@@ -1070,7 +1070,7 @@ mod tests {
 
             let (mut send, mut read) = crate::pipe();
             crate::spawn(async move {
-                send.write_all("123456").await.unwrap();
+                send.write_all_owned("123456").await.unwrap();
             });
 
             let mut res;
@@ -1211,7 +1211,7 @@ mod tests {
             let send_fut = async move {
                 let stream = TcpStream::connect(local_addr).await?;
                 let (_stream_r, mut stream_w) = IntoHalves::into_halves(stream);
-                stream_w.write_all(roll).await?;
+                stream_w.write_all_owned(roll).await?;
                 Ok::<_, eyre::Report>(())
             };
 

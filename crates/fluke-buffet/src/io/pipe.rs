@@ -98,7 +98,8 @@ impl PipeWrite {
 }
 
 impl WriteOwned for PipeWrite {
-    async fn write(&mut self, buf: Piece) -> crate::BufResult<usize, Piece> {
+    async fn write_owned(&mut self, buf: impl Into<Piece>) -> crate::BufResult<usize, Piece> {
+        let buf = buf.into();
         if buf.is_empty() {
             // ignore 0-length writes
         }
@@ -132,11 +133,11 @@ mod tests {
             crate::spawn({
                 let wrote_three = wrote_three.clone();
                 async move {
-                    w.write_all("one").await.unwrap();
-                    w.write_all("two").await.unwrap();
-                    w.write_all("three").await.unwrap();
+                    w.write_all_owned("one").await.unwrap();
+                    w.write_all_owned("two").await.unwrap();
+                    w.write_all_owned("three").await.unwrap();
                     *wrote_three.borrow_mut() = true;
-                    w.write_all("splitread").await.unwrap();
+                    w.write_all_owned("splitread").await.unwrap();
                 }
             });
 
@@ -194,7 +195,7 @@ mod tests {
 
             crate::spawn({
                 async move {
-                    w.write_all("two-part").await.unwrap();
+                    w.write_all_owned("two-part").await.unwrap();
                     w.reset().await;
                 }
             });

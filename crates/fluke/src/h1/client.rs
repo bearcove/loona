@@ -58,7 +58,7 @@ where
     let mut list = PieceList::default();
     encode_request(req, &mut list, &mut buf)?;
     transport_w
-        .writev_all(list)
+        .writev_all_owned(list)
         .await
         .wrap_err("writing request headers")?;
 

@@ -12,6 +12,7 @@ use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
 use pretty_hex::PrettyHex;
 use std::{future::Future, net::SocketAddr, process::Command, rc::Rc, time::Duration};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tracing::debug;
 
@@ -85,7 +86,7 @@ fn serve_api() {
         let driver = TestDriver;
         let serve_fut = fluke::buffet::spawn(h1::serve((read, write), conf, client_buf, driver));
 
-        tx.write_all("GET / HTTP/1.1\r\n\r\n").await?;
+        tx.write_all_owned("GET / HTTP/1.1\r\n\r\n").await?;
         let mut res_buf = BytesMut::new();
         while let Some(chunk) = rx.recv().await {
             debug!("Got a chunk:\n{:?}", chunk.hex_dump());
@@ -219,7 +220,7 @@ fn proxy_statuses() {
         for status in [200, 400, 500] {
             debug!("Asking for a {status}");
             socket
-                .write_all(format!("GET /status/{status} HTTP/1.1\r\n\r\n").as_bytes())
+                .write_all_owned(format!("GET /status/{status} HTTP/1.1\r\n\r\n").into_bytes())
                 .await?;
 
             socket.flush().await?;
@@ -280,14 +281,14 @@ fn proxy_echo_body_content_len() {
 
         let send_fut = async move {
             write
-                .write_all(
+                .write_all_owned(
                     format!("POST /echo-body HTTP/1.1\r\ncontent-length: {content_len}\r\n\r\n")
-                        .as_bytes(),
+                        .into_bytes(),
                 )
                 .await?;
             write.flush().await?;
 
-            write.write_all(body.as_bytes()).await?;
+            write.write_all_owned(body.as_bytes()).await?;
             write.flush().await?;
 
             Ok::<(), eyre::Report>(())
@@ -381,7 +382,9 @@ fn proxy_echo_body_chunked() {
 
         let send_fut = async move {
             write
-                .write_all(b"POST /echo-body HTTP/1.1\r\ntransfer-encoding: chunked\r\n\r\n")
+                .write_all_owned(
+                    &b"POST /echo-body HTTP/1.1\r\ntransfer-encoding: chunked\r\n\r\n"[..],
+                )
                 .await?;
             write.flush().await?;
 
@@ -389,12 +392,12 @@ fn proxy_echo_body_chunked() {
             for chunk in chunks {
                 let chunk_len = chunk.len();
                 write
-                    .write_all(format!("{chunk_len:x}\r\n{chunk}\r\n").as_bytes())
+                    .write_all_owned(format!("{chunk_len:x}\r\n{chunk}\r\n").into_bytes())
                     .await?;
                 write.flush().await?;
             }
 
-            write.write_all(b"0\r\n\r\n").await?;
+            write.write_all_owned(&b"0\r\n\r\n"[..]).await?;
             write.flush().await?;
 
             Ok::<(), eyre::Report>(())

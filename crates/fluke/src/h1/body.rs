@@ -273,7 +273,7 @@ pub(crate) async fn write_h1_body_chunk(
     match mode {
         BodyWriteMode::Chunked => {
             transport
-                .writev_all(
+                .writev_all_owned(
                     PieceList::default()
                         .followed_by(format!("{:x}\r\n", chunk.len()).into_bytes())
                         .followed_by(chunk)
@@ -282,7 +282,7 @@ pub(crate) async fn write_h1_body_chunk(
                 .await?;
         }
         BodyWriteMode::ContentLength => {
-            transport.write_all(chunk).await?;
+            transport.write_all_owned(chunk).await?;
         }
         BodyWriteMode::Empty => {
             return Err(BodyErrorReason::CalledWriteBodyChunkWhenNoBodyWasExpected
@@ -300,7 +300,7 @@ pub(crate) async fn write_h1_body_end(
     debug!(?mode, "writing h1 body end");
     match mode {
         BodyWriteMode::Chunked => {
-            transport.write_all("0\r\n\r\n").await?;
+            transport.write_all_owned("0\r\n\r\n").await?;
         }
         BodyWriteMode::ContentLength => {
             // nothing to do
