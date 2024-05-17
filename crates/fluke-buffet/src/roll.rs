@@ -262,7 +262,7 @@ impl RollMut {
             off: read_off,
             cap: read_cap.try_into().unwrap(),
         };
-        let (res, mut read_into) = r.read(read_into).await;
+        let (res, mut read_into) = r.read_owned(read_into).await;
         if let Ok(n) = &res {
             tracing::trace!("read_into got {} bytes", *n);
             read_into.buf.len += *n as u32;
@@ -1222,7 +1222,7 @@ mod tests {
 
                 let mut buf = vec![0u8; 1024];
                 let res;
-                (res, buf) = stream_r.read(buf).await;
+                (res, buf) = stream_r.read_owned(buf).await;
                 let n = res?;
 
                 assert_eq!(&buf[..n], b"hello");

@@ -6,7 +6,7 @@ impl<T> ReadOwned for T
 where
     T: AsyncRead + Unpin,
 {
-    async fn read<B: IoBufMut>(&mut self, mut buf: B) -> BufResult<usize, B> {
+    async fn read_owned<B: IoBufMut>(&mut self, mut buf: B) -> BufResult<usize, B> {
         let buf_slice = unsafe { buf.slice_mut() };
         let res = tokio::io::AsyncReadExt::read(self, buf_slice).await;
         (res, buf)

@@ -1,7 +1,7 @@
 mod helpers;
 
 use bytes::BytesMut;
-use fluke::buffet::{ChanRead, ChanWrite, IntoHalves, WriteOwned};
+use fluke::buffet::{IntoHalves, ReadOwned, WriteOwned};
 use fluke::{
     buffet::{PieceCore, RollMut},
     h1, h2, Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, HeadersExt, Method, Request,
@@ -80,15 +80,28 @@ fn serve_api() {
             }
         }
 
-        let (mut tx, read) = fluke::buffet::pipe();
-        let (mut rx, write) = ChanWrite::new();
+        let (mut client_write, server_read) = fluke::buffet::pipe();
+        let (server_write, mut client_read) = fluke::buffet::pipe();
         let client_buf = RollMut::alloc()?;
         let driver = TestDriver;
-        let serve_fut = fluke::buffet::spawn(h1::serve((read, write), conf, client_buf, driver));
+        let serve_fut = fluke::buffet::spawn(h1::serve(
+            (server_read, server_write),
+            conf,
+            client_buf,
+            driver,
+        ));
 
-        tx.write_all_owned("GET / HTTP/1.1\r\n\r\n").await?;
+        client_write
+            .write_all_owned("GET / HTTP/1.1\r\n\r\n")
+            .await?;
         let mut res_buf = BytesMut::new();
-        while let Some(chunk) = rx.recv().await {
+        let mut buf = vec![0u8; 1024];
+        loop {
+            let res;
+            (res, buf) = client_read.read_owned(buf).await;
+            let n = res.unwrap();
+            let chunk = &buf[..n];
+
             debug!("Got a chunk:\n{:?}", chunk.hex_dump());
             res_buf.extend_from_slice(&chunk[..]);
 
@@ -117,7 +130,7 @@ fn serve_api() {
             }
         }
 
-        drop(tx);
+        drop(client_write);
 
         tokio::time::timeout(Duration::from_secs(5), serve_fut).await???;
 
@@ -128,8 +141,8 @@ fn serve_api() {
 #[test]
 fn request_api() {
     helpers::run(async move {
-        let (tx, read) = ChanRead::new();
-        let (mut rx, write) = ChanWrite::new();
+        let (mut server_write, client_read) = fluke::buffet::pipe();
+        let (client_write, mut server_read) = fluke::buffet::pipe();
 
         let req = Request {
             method: Method::Get,
@@ -169,11 +182,16 @@ fn request_api() {
         let request_fut = fluke::buffet::spawn(async {
             #[allow(clippy::let_unit_value)]
             let mut body = ();
-            h1::request((read, write), req, &mut body, driver).await
+            h1::request((client_read, client_write), req, &mut body, driver).await
         });
 
         let mut req_buf = BytesMut::new();
-        while let Some(chunk) = rx.recv().await {
+        let mut buf = vec![0u8; 1024];
+        loop {
+            let res;
+            (res, buf) = server_read.read_owned(buf).await;
+            let n = res.unwrap();
+            let chunk = &buf[..n];
             debug!("Got a chunk:\n{:?}", chunk.hex_dump());
             req_buf.extend_from_slice(&chunk[..]);
 
@@ -195,12 +213,13 @@ fn request_api() {
 
         let body = "Hi there";
         let body_len = body.len();
-        tx.send(format!(
-            "HTTP/1.1 200 OK\r\ncontent-length: {body_len}\r\n\r\n"
-        ))
-        .await?;
-        tx.send(body).await?;
-        drop(tx);
+        server_write
+            .write_all_owned(
+                format!("HTTP/1.1 200 OK\r\ncontent-length: {body_len}\r\n\r\n").into_bytes(),
+            )
+            .await?;
+        server_write.write_all_owned(body).await?;
+        drop(server_write);
 
         tokio::time::timeout(Duration::from_secs(5), request_fut).await???;
 

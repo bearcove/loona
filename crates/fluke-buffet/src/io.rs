@@ -1,8 +1,5 @@
 use crate::{BufResult, IoBufMut, Piece, PieceList};
 
-mod chan;
-pub use chan::*;
-
 mod pipe;
 pub use pipe::*;
 
@@ -10,7 +7,7 @@ mod non_uring;
 
 #[allow(async_fn_in_trait)] // we never require Send
 pub trait ReadOwned {
-    async fn read<B: IoBufMut>(&mut self, buf: B) -> BufResult<usize, B>;
+    async fn read_owned<B: IoBufMut>(&mut self, buf: B) -> BufResult<usize, B>;
 }
 
 #[allow(async_fn_in_trait)] // we never require Send

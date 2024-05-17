@@ -36,7 +36,7 @@ pub struct PipeRead {
 }
 
 impl ReadOwned for PipeRead {
-    async fn read<B: crate::IoBufMut>(&mut self, mut buf: B) -> crate::BufResult<usize, B> {
+    async fn read_owned<B: crate::IoBufMut>(&mut self, mut buf: B) -> crate::BufResult<usize, B> {
         loop {
             match self.state {
                 ReadState::Live => {
@@ -143,7 +143,7 @@ mod tests {
 
             {
                 let buf = vec![0u8; 256];
-                let (res, buf) = r.read(buf).await;
+                let (res, buf) = r.read_owned(buf).await;
                 let n = res.unwrap();
                 assert_eq!(&buf[..n], b"one");
             }
@@ -152,7 +152,7 @@ mod tests {
 
             {
                 let buf = vec![0u8; 256];
-                let (res, buf) = r.read(buf).await;
+                let (res, buf) = r.read_owned(buf).await;
                 let n = res.unwrap();
                 assert_eq!(&buf[..n], b"two");
             }
@@ -162,26 +162,26 @@ mod tests {
 
             {
                 let buf = vec![0u8; 256];
-                let (res, buf) = r.read(buf).await;
+                let (res, buf) = r.read_owned(buf).await;
                 let n = res.unwrap();
                 assert_eq!(&buf[..n], b"three");
             }
 
             {
                 let buf = vec![0u8; 5];
-                let (res, buf) = r.read(buf).await;
+                let (res, buf) = r.read_owned(buf).await;
                 let n = res.unwrap();
                 assert_eq!(&buf[..n], b"split");
 
                 let buf = vec![0u8; 256];
-                let (res, buf) = r.read(buf).await;
+                let (res, buf) = r.read_owned(buf).await;
                 let n = res.unwrap();
                 assert_eq!(&buf[..n], b"read");
             }
 
             {
                 let buf = vec![0u8; 0];
-                let (res, _) = r.read(buf).await;
+                let (res, _) = r.read_owned(buf).await;
                 let n = res.unwrap();
                 assert_eq!(n, 0, "reached EOF");
             }
@@ -206,21 +206,21 @@ mod tests {
 
             {
                 let buf = vec![0u8; 4];
-                let (res, buf) = r.read(buf).await;
+                let (res, buf) = r.read_owned(buf).await;
                 let n = res.unwrap();
                 assert_eq!(&buf[..n], b"two-");
             }
 
             {
                 let buf = vec![0u8; 4];
-                let (res, buf) = r.read(buf).await;
+                let (res, buf) = r.read_owned(buf).await;
                 let n = res.unwrap();
                 assert_eq!(&buf[..n], b"part");
             }
 
             {
                 let buf = vec![0u8; 0];
-                let (res, _) = r.read(buf).await;
+                let (res, _) = r.read_owned(buf).await;
                 let err = res.unwrap_err();
                 assert_eq!(
                     err.kind(),
