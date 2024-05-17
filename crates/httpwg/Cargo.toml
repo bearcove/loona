@@ -4,8 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bytes = "1.5.0"
 eyre = "0.6.12"
 fluke-buffet = { version = "0.1.0", path = "../fluke-buffet" }
+fluke-h2-parse = { version = "0.1.0", path = "../fluke-h2-parse" }
 futures-util = "0.3.30"
+pretty-hex = "0.4.1"
 tokio = "1.37.0"
 tracing = "0.1.40"

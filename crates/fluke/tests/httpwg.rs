@@ -13,6 +13,7 @@ pub(crate) fn setup_tracing() {
         Targets::new()
             .with_default(Level::INFO)
             .with_target("fluke", Level::DEBUG)
+            .with_target("httpwg", Level::DEBUG)
             .with_target("want", Level::INFO)
     };
 

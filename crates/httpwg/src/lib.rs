@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use fluke_buffet::{IntoHalves, Piece, WriteOwned};
+use fluke_h2_parse::Frame;
 
 pub mod rfc9113;
 
@@ -23,6 +24,12 @@ impl<IO: IntoHalves> Conn<IO> {
     pub async fn send(&mut self, buf: impl Into<Piece>) -> eyre::Result<()> {
         self.w.write_all_owned(buf.into()).await?;
         Ok(())
+    }
+
+    pub async fn write_frame(&mut self, frame: Frame) -> eyre::Result<()> {
+        let mut buf = Vec::new();
+        frame.write_into(&mut buf)?;
+        self.send(buf).await
     }
 }
 
@@ -73,6 +80,12 @@ macro_rules! gen_tests {
             #[test]
             fn test_3_4() {
                 use __rfc::Test3_4 as Test;
+                $body
+            }
+
+            #[test]
+            fn test_4_1() {
+                use __rfc::Test4_1 as Test;
                 $body
             }
         }
