@@ -1,7 +1,7 @@
 mod helpers;
 
 use bytes::BytesMut;
-use fluke::buffet::{ChanRead, ChanWrite, IntoHalves};
+use fluke::buffet::{ChanRead, ChanWrite, IntoHalves, WriteOwned};
 use fluke::{
     buffet::{PieceCore, RollMut},
     h1, h2, Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, HeadersExt, Method, Request,
@@ -12,10 +12,7 @@ use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
 use pretty_hex::PrettyHex;
 use std::{future::Future, net::SocketAddr, process::Command, rc::Rc, time::Duration};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
-};
+use tokio::net::TcpStream;
 use tracing::debug;
 
 mod proxy;
@@ -82,13 +79,13 @@ fn serve_api() {
             }
         }
 
-        let (tx, read) = ChanRead::new();
+        let (mut tx, read) = fluke::buffet::pipe();
         let (mut rx, write) = ChanWrite::new();
         let client_buf = RollMut::alloc()?;
         let driver = TestDriver;
         let serve_fut = fluke::buffet::spawn(h1::serve((read, write), conf, client_buf, driver));
 
-        tx.send("GET / HTTP/1.1\r\n\r\n").await?;
+        tx.write_all("GET / HTTP/1.1\r\n\r\n").await?;
         let mut res_buf = BytesMut::new();
         while let Some(chunk) = rx.recv().await {
             debug!("Got a chunk:\n{:?}", chunk.hex_dump());

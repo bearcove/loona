@@ -149,16 +149,9 @@ impl WriteOwned for TcpWriteHalf {
 
     // TODO: implement writev
 
-    async fn shutdown(&mut self, how: Shutdown) -> std::io::Result<()> {
-        let sqe = io_uring::opcode::Shutdown::new(
-            io_uring::types::Fd(self.0.fd),
-            match how {
-                Shutdown::Read => libc::SHUT_RD,
-                Shutdown::Write => libc::SHUT_WR,
-                Shutdown::Both => libc::SHUT_RDWR,
-            },
-        )
-        .build();
+    async fn shutdown(&mut self) -> std::io::Result<()> {
+        let sqe =
+            io_uring::opcode::Shutdown::new(io_uring::types::Fd(self.0.fd), libc::SHUT_WR).build();
         let cqe = get_ring().push(sqe).await;
         cqe.error_for_errno()?;
         Ok(())
