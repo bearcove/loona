@@ -55,6 +55,7 @@ impl ReadOwned for PipeRead {
             if self.remain.is_none() {
                 match self.rx.recv().await {
                     Some(PipeEvent::Piece(piece)) => {
+                        assert!(!piece.is_empty());
                         self.remain = Some(piece);
                     }
                     Some(PipeEvent::Reset) => {
@@ -98,6 +99,10 @@ impl PipeWrite {
 
 impl WriteOwned for PipeWrite {
     async fn write(&mut self, buf: Piece) -> crate::BufResult<usize, Piece> {
+        if buf.is_empty() {
+            // ignore 0-length writes
+        }
+
         if let Err(_) = self.tx.send(PipeEvent::Piece(buf.clone())).await {
             let err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "simulated broken pipe");
             return (Err(err), buf);
