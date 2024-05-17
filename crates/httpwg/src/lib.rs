@@ -1,8 +1,7 @@
 use std::rc::Rc;
 
-use fluke_buffet::{IntoHalves, Piece, ReadOwned, RollMut, WriteOwned};
+use fluke_buffet::{IntoHalves, Piece, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::Frame;
-use pretty_hex::PrettyHex;
 use tracing::debug;
 
 pub mod rfc9113;
@@ -19,6 +18,7 @@ pub struct Conn<IO: IntoHalves + 'static> {
 
 pub enum Ev {
     Todo,
+    Frame { frame: Frame, payload: Roll },
 }
 
 impl<IO: IntoHalves> Conn<IO> {
@@ -28,21 +28,40 @@ impl<IO: IntoHalves> Conn<IO> {
         let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<Ev>(1);
         let recv_fut = async move {
             let mut res_buf = RollMut::alloc()?;
-            let mut buf = vec![0u8; 1024];
             loop {
                 debug!("Reading a chunk");
-                let res;
-                (res, buf) = r.read_owned(buf).await;
-                let n = res.unwrap();
-                let chunk = &buf[..n];
+                res_buf.reserve()?;
 
-                debug!("Got a chunk:\n{:?}", chunk.hex_dump());
-                res_buf.put(&chunk[..]).unwrap();
+                let res;
+                (res, res_buf) = res_buf.read_into(16384, &mut r).await;
+                let n = res?;
+                debug!(%n, "read bytes (reading frame header)");
 
                 // try to parse a frame
                 use fluke_h2_parse::Finish;
-                let (rest, frame) = Frame::parse(res_buf.filled()).finish().unwrap();
-                panic!("got frame {frame:#?}");
+                match Frame::parse(res_buf.filled()).finish() {
+                    Ok((rest, frame)) => {
+                        res_buf.keep(rest);
+
+                        // read frame payload
+                        let frame_len = frame.len as usize;
+                        res_buf.reserve_at_least(frame_len)?;
+
+                        while res_buf.len() < frame_len {
+                            let res;
+                            (res, res_buf) = res_buf.read_into(16384, &mut r).await;
+                            let n = res?;
+                            debug!(%n, len = %res_buf.len(), "read bytes (reading frame payload)");
+                        }
+
+                        let payload = res_buf.take_at_most(frame_len).unwrap();
+                        assert_eq!(payload.len(), frame_len);
+
+                        debug!("got frame {frame:#?}");
+                        ev_tx.send(Ev::Frame { frame, payload }).await.unwrap();
+                    }
+                    Err(_) => todo!(),
+                }
 
                 todo!()
             }

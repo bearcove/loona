@@ -1,6 +1,7 @@
-use fluke_buffet::{IntoHalves, ReadOwned, RollMut};
-use fluke_h2_parse::{Frame, FrameType, StreamId};
 use std::rc::Rc;
+
+use fluke_buffet::IntoHalves;
+use fluke_h2_parse::{Frame, FrameType, StreamId};
 use tracing::debug;
 
 use crate::{test_struct, Config, Conn, Test, TestGroup};
@@ -43,8 +44,6 @@ async fn test4_1<IO: IntoHalves + 'static>(
 
     // sleep for 1 second
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-    todo!("finish this test");
 
     Ok(())
 }
