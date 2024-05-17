@@ -18,6 +18,7 @@ use http::{
     uri::{Authority, PathAndQuery, Scheme},
     HeaderName, Version,
 };
+use parse::IntoPiece;
 use smallvec::{smallvec, SmallVec};
 use tokio::sync::mpsc;
 use tracing::{debug, trace};
@@ -135,7 +136,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         // then send our initial settings
         {
             debug!("Sending initial settings");
-            let payload = self.state.self_settings.into_roll(&mut self.out_scratch)?;
+            let payload = self.state.self_settings.into_piece(&mut self.out_scratch)?;
             let frame = Frame::new(
                 FrameType::Settings(Default::default()),
                 StreamId::CONNECTION,
@@ -167,22 +168,33 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 res = &mut deframe_task => {
                     debug!(?res, "h2 deframe task finished");
 
-                    if let Err(H2ConnectionError::ReadError(e)) = res {
-                        let mut should_ignore_err = false;
+                    if let Err(e) = res {
+                        match e {
+                            H2ConnectionError::ReadError(e) => {
+                                let mut should_ignore_err = false;
 
-                        // if this is a connection reset and we've sent a goaway, ignore it
-                        if let Some(io_error) = e.root_cause().downcast_ref::<std::io::Error>() {
-                            if io_error.kind() == std::io::ErrorKind::ConnectionReset {
-                                should_ignore_err = true;
+                                // if this is a connection reset and we've sent a goaway, ignore it
+                                if let Some(io_error) = e.root_cause().downcast_ref::<std::io::Error>() {
+                                    if io_error.kind() == std::io::ErrorKind::ConnectionReset {
+                                        should_ignore_err = true;
+                                    }
+                                }
+
+                                debug!(%should_ignore_err, "deciding whether or not to propagate deframer error");
+                                if !should_ignore_err {
+                                    return Err(e.wrap_err("h2 io"));
+                                }
+                            },
+                            e => {
+                                debug!("turning error into GOAWAY");
+                                goaway_err = Some(e)
                             }
-                        }
-
-                        if !should_ignore_err {
-                            return Err(e.wrap_err("h2 io"));
                         }
                     }
 
                     if let Err(e) = (&mut process_task).await {
+                        // what about the GOAWAY?
+
                         debug!("h2 process task finished with error: {e}");
                         return Err(e).wrap_err("h2 process");
                     }
@@ -742,7 +754,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
             })?;
         debug!(?frame, ">");
         let frame_roll = frame
-            .into_roll(&mut self.out_scratch)
+            .into_piece(&mut self.out_scratch)
             .map_err(|e| eyre::eyre!(e))?;
 
         if payload.is_empty() {

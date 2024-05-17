@@ -74,6 +74,13 @@ impl From<Roll> for PieceCore {
     }
 }
 
+impl From<()> for PieceCore {
+    #[inline(always)]
+    fn from(_empty: ()) -> Self {
+        PieceCore::Static(&[])
+    }
+}
+
 impl From<PieceStr> for Piece {
     fn from(s: PieceStr) -> Self {
         s.piece

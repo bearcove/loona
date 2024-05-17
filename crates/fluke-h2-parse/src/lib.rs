@@ -16,7 +16,7 @@ use nom::{
     IResult,
 };
 
-use fluke_buffet::{Roll, RollMut};
+use fluke_buffet::{Piece, Roll, RollMut};
 
 /// This is sent by h2 clients after negotiating over ALPN, or when doing h2c.
 pub const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
@@ -24,6 +24,10 @@ pub const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 pub fn preface(i: Roll) -> IResult<Roll, ()> {
     let (i, _) = nom::bytes::streaming::tag(PREFACE)(i)?;
     Ok((i, ()))
+}
+
+pub trait IntoPiece {
+    fn into_piece(self, scratch: &mut RollMut) -> std::io::Result<Piece>;
 }
 
 /// See https://httpwg.org/specs/rfc9113.html#FrameTypes
@@ -341,11 +345,13 @@ impl Frame {
 
         Ok(())
     }
+}
 
-    pub fn into_roll(self, mut scratch: &mut RollMut) -> std::io::Result<Roll> {
+impl IntoPiece for Frame {
+    fn into_piece(self, mut scratch: &mut RollMut) -> std::io::Result<Piece> {
         debug_assert_eq!(scratch.len(), 0);
         self.write_into(&mut scratch)?;
-        Ok(scratch.take_all())
+        Ok(scratch.take_all().into())
     }
 }
 
@@ -681,11 +687,21 @@ impl Settings {
 
         Ok(())
     }
+}
 
-    /// Same as `write_into` but uses a scratch [RollMut] to return a [Roll]
-    pub fn into_roll(self, mut scratch: &mut RollMut) -> std::io::Result<Roll> {
+impl IntoPiece for Settings {
+    fn into_piece(self, mut scratch: &mut RollMut) -> std::io::Result<Piece> {
         debug_assert_eq!(scratch.len(), 0);
         self.write_into(&mut scratch)?;
-        Ok(scratch.take_all())
+        Ok(scratch.take_all().into())
+    }
+}
+
+impl<T> IntoPiece for T
+where
+    Piece: From<T>,
+{
+    fn into_piece(self, _scratch: &mut RollMut) -> std::io::Result<Piece> {
+        Ok(self.into())
     }
 }

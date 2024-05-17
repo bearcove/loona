@@ -1,18 +1,16 @@
 use std::rc::Rc;
 
-use fluke_buffet::{IntoHalves, Piece, Roll, RollMut, WriteOwned};
-use fluke_h2_parse::{nom, Frame};
+use fluke_buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
+use fluke_h2_parse::{
+    nom, BitFlags, Frame, FrameType, IntoPiece, Settings, SettingsFlags, StreamId,
+};
 use tracing::debug;
 
 pub mod rfc9113;
 
-pub struct TestGroup<IO> {
-    pub name: String,
-    pub tests: Vec<Box<dyn Test<IO>>>,
-}
-
 pub struct Conn<IO: IntoHalves + 'static> {
     w: <IO as IntoHalves>::Write,
+    scratch: RollMut,
     pub ev_rx: tokio::sync::mpsc::Receiver<Ev>,
 }
 
@@ -100,18 +98,78 @@ impl<IO: IntoHalves> Conn<IO> {
         };
         fluke_buffet::spawn(async move { recv_fut.await.unwrap() });
 
-        Self { w, ev_rx }
+        Self {
+            w,
+            scratch: RollMut::alloc().unwrap(),
+            ev_rx,
+        }
+    }
+
+    pub async fn write_frame(&mut self, frame: Frame, payload: impl IntoPiece) -> eyre::Result<()> {
+        let payload = payload.into_piece(&mut self.scratch)?;
+        let frame = frame.with_len(payload.len().try_into().unwrap());
+
+        let header = frame.into_piece(&mut self.scratch)?;
+        self.w
+            .writev_all_owned(PieceList::single(header).followed_by(payload))
+            .await?;
+        Ok(())
+    }
+
+    pub async fn handshake(&mut self) -> eyre::Result<()> {
+        // perform an HTTP/2 handshake as a client
+
+        let preface = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+        self.w.write_all_owned(&preface[..]).await?;
+
+        self.write_frame(
+            Frame::new(
+                fluke_h2_parse::FrameType::Settings(Default::default()),
+                StreamId::CONNECTION,
+            ),
+            Settings::default(),
+        )
+        .await?;
+
+        // now wait for the server's settings frame, which must be the first frame
+        match self.ev_rx.recv().await {
+            None => {
+                panic!("EOF while doing http/2 handshake (we sent preface etc., the peer hung up)");
+            }
+            Some(ev) => match ev {
+                Ev::Frame { frame, payload } => {
+                    match frame.frame_type {
+                        FrameType::Settings(flags) => {
+                            if flags.contains(SettingsFlags::Ack) {
+                                panic!("RFC 9113 Section 3.4: server sent a settings frame but it had ACK set")
+                            }
+
+                            // good, good! let's acknowledge those
+                            self.write_frame(
+                                Frame::new(
+                                    FrameType::Settings(BitFlags::empty() | SettingsFlags::Ack),
+                                    StreamId::CONNECTION,
+                                ),
+                                payload,
+                            )
+                            .await?;
+                        }
+                        _ => {
+                            panic!("Expected settings frame, got: {frame:?}")
+                        }
+                    }
+                }
+                Ev::IoError { error } => panic!("I/O error during http2 handshake: {error}"),
+                Ev::Eof => panic!("Eof during http2 handshake"),
+            },
+        }
+
+        Ok(())
     }
 
     pub async fn send(&mut self, buf: impl Into<Piece>) -> eyre::Result<()> {
         self.w.write_all_owned(buf.into()).await?;
         Ok(())
-    }
-
-    pub async fn write_frame(&mut self, frame: Frame) -> eyre::Result<()> {
-        let mut buf = Vec::new();
-        frame.write_into(&mut buf)?;
-        self.send(buf).await
     }
 }
 
@@ -124,10 +182,6 @@ pub trait Test<IO: IntoHalves + 'static> {
         config: Rc<Config>,
         conn: Conn<IO>,
     ) -> futures_util::future::LocalBoxFuture<eyre::Result<()>>;
-}
-
-pub fn all_groups<IO: IntoHalves + 'static>() -> Vec<TestGroup<IO>> {
-    vec![rfc9113::group()]
 }
 
 #[macro_export]
@@ -166,8 +220,8 @@ macro_rules! gen_tests {
             }
 
             #[test]
-            fn test_4_1() {
-                use __rfc::Test4_1 as Test;
+            fn test_4_2() {
+                use __rfc::Test4_2 as Test;
                 $body
             }
         }
