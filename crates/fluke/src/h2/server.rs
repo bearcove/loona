@@ -2,7 +2,6 @@ use std::{
     borrow::Cow,
     collections::HashSet,
     io::Write,
-    net::Shutdown,
     rc::Rc,
     sync::atomic::{AtomicU32, Ordering},
 };
@@ -60,7 +59,7 @@ pub async fn serve(
 
     let mut cx = ServerContext::new(driver.clone(), state, transport_w)?;
     cx.work(client_buf, transport_r).await?;
-    cx.transport_w.shutdown(Shutdown::Both).await?;
+    cx.transport_w.shutdown().await?;
 
     debug!("finished serving");
     Ok(())

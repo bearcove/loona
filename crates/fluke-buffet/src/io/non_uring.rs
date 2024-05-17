@@ -26,7 +26,7 @@ where
     // everything in `IoSlice`, advancing correctly, etc. It's not fun, but it
     // should yield a boost for non-uring codepaths.
 
-    async fn shutdown(&mut self, _how: std::net::Shutdown) -> std::io::Result<()> {
+    async fn shutdown(&mut self) -> std::io::Result<()> {
         AsyncWriteExt::shutdown(self).await
     }
 }

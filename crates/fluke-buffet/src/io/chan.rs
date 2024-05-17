@@ -33,7 +33,7 @@ enum ChanReadState {
     // [ChanReaderSend] was dropped, no more data is coming
     Eof,
 
-    // [ChanReaderSend::rest] was called
+    // [ChanReaderSend::reset] was called
     Reset,
 }
 
@@ -154,7 +154,7 @@ pub struct ChanWrite {
 }
 
 impl ChanWrite {
-    pub fn new() -> (mpsc::Receiver<Vec<u8>>, Self) {
+    pub fn new() -> (ChanWriteReceive, Self) {
         let (tx, rx) = mpsc::channel(1);
         (rx, Self { tx })
     }
@@ -170,14 +170,59 @@ impl WriteOwned for ChanWrite {
         }
     }
 
-    async fn shutdown(&mut self, _how: std::net::Shutdown) -> std::io::Result<()> {
+    async fn shutdown(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+pub type ChanWriteReceive = mpsc::Receiver<Vec<u8>>;
+
+/// An adapter that implements ReadOwned for ChanWriteReceive.
+pub struct ChanWriteReceiveReader {
+    rx: ChanWriteReceive,
+    remain: Option<Vec<u8>>,
+}
+
+impl ChanWriteReceiveReader {
+    pub fn new(rx: ChanWriteReceive) -> Self {
+        Self { rx, remain: None }
+    }
+}
+
+impl ReadOwned for ChanWriteReceiveReader {
+    async fn read<B: IoBufMut>(&mut self, mut buf: B) -> BufResult<usize, B> {
+        if self.remain.is_none() {
+            match self.rx.recv().await {
+                Some(v) => {
+                    self.remain = Some(v);
+                }
+                None => {
+                    return (Ok(0), buf);
+                }
+            }
+        }
+
+        let remain = self.remain.take().unwrap();
+
+        let n = std::cmp::min(remain.len(), buf.io_buf_mut_capacity());
+        unsafe {
+            buf.slice_mut()[..n].copy_from_slice(&remain[..n]);
+        };
+
+        if n < remain.len() {
+            // TODO: avoid this copy
+            self.remain = Some(remain[n..].to_vec());
+        }
+
+        return (Ok(n), buf);
     }
 }
 
 #[cfg(all(test, not(feature = "miri")))]
 mod tests {
-    use super::{ChanRead, ReadOwned};
+    use crate::WriteOwned;
+
+    use super::{ChanRead, ChanWrite, ChanWriteReceiveReader, ReadOwned};
     use std::{cell::RefCell, rc::Rc};
 
     #[test]
@@ -278,6 +323,77 @@ mod tests {
                     std::io::ErrorKind::ConnectionReset,
                     "reached EOF"
                 );
+            }
+        })
+    }
+
+    #[test]
+    fn test_chan_writer() {
+        crate::start(async move {
+            // build a writer, build a ReadOwned adapter for it, write to it, read from it
+            let (rx, mut cw) = ChanWrite::new();
+            let mut cr = ChanWriteReceiveReader::new(rx);
+            let wrote_three = Rc::new(RefCell::new(false));
+
+            crate::spawn({
+                let wrote_three = wrote_three.clone();
+                async move {
+                    let mut res;
+                    (res, _) = cw.write("one".into()).await;
+                    res.unwrap();
+                    (res, _) = cw.write("two".into()).await;
+                    res.unwrap();
+                    (res, _) = cw.write("three".into()).await;
+                    res.unwrap();
+                    *wrote_three.borrow_mut() = true;
+                    (res, _) = cw.write("splitread".into()).await;
+                    res.unwrap();
+                }
+            });
+
+            {
+                let buf = vec![0u8; 256];
+                let (res, buf) = cr.read(buf).await;
+                let n = res.unwrap();
+                assert_eq!(&buf[..n], b"one");
+            }
+
+            assert!(!*wrote_three.borrow());
+
+            {
+                let buf = vec![0u8; 256];
+                let (res, buf) = cr.read(buf).await;
+                let n = res.unwrap();
+                assert_eq!(&buf[..n], b"two");
+            }
+
+            tokio::task::yield_now().await;
+            assert!(*wrote_three.borrow());
+
+            {
+                let buf = vec![0u8; 256];
+                let (res, buf) = cr.read(buf).await;
+                let n = res.unwrap();
+                assert_eq!(&buf[..n], b"three");
+            }
+
+            {
+                let buf = vec![0u8; 5];
+                let (res, buf) = cr.read(buf).await;
+                let n = res.unwrap();
+                assert_eq!(&buf[..n], b"split");
+
+                let buf = vec![0u8; 256];
+                let (res, buf) = cr.read(buf).await;
+                let n = res.unwrap();
+                assert_eq!(&buf[..n], b"read");
+            }
+
+            {
+                let buf = vec![0u8; 0];
+                let (res, _) = cr.read(buf).await;
+                let n = res.unwrap();
+                assert_eq!(n, 0, "reached EOF");
             }
         })
     }

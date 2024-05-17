@@ -1,9 +1,10 @@
-use std::net::Shutdown;
-
 use crate::{BufResult, IoBufMut, Piece, PieceList};
 
 mod chan;
 pub use chan::*;
+
+mod pipe;
+pub use pipe::*;
 
 mod non_uring;
 
@@ -104,7 +105,9 @@ pub trait WriteOwned {
         Ok(())
     }
 
-    async fn shutdown(&mut self, how: Shutdown) -> std::io::Result<()>;
+    /// Shuts down the write end of this socket. This flushes
+    /// any data that may not have been send.
+    async fn shutdown(&mut self) -> std::io::Result<()>;
 }
 
 #[cfg(all(test, not(feature = "miri")))]
@@ -142,7 +145,7 @@ mod tests {
                 }
             }
 
-            async fn shutdown(&mut self, _how: std::net::Shutdown) -> std::io::Result<()> {
+            async fn shutdown(&mut self) -> std::io::Result<()> {
                 Ok(())
             }
         }
