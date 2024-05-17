@@ -6,7 +6,10 @@
 use std::{fmt, ops::RangeInclusive};
 
 use enum_repr::EnumRepr;
-pub use enumflags2::{bitflags, BitFlags};
+
+pub use enumflags2;
+use enumflags2::{bitflags, BitFlags};
+
 pub use nom;
 
 use nom::{

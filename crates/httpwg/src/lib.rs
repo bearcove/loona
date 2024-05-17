@@ -1,8 +1,9 @@
 use std::rc::Rc;
 
+use enumflags2::{bitflags, BitFlags};
 use fluke_buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
-    nom, BitFlags, Frame, FrameType, IntoPiece, Settings, SettingsFlags, StreamId,
+    enumflags2, nom, Frame, FrameType, IntoPiece, Settings, SettingsFlags, StreamId,
 };
 use tracing::debug;
 
@@ -18,6 +19,43 @@ pub enum Ev {
     Frame { frame: Frame, payload: Roll },
     IoError { error: std::io::Error },
     Eof,
+}
+
+/// A "hollow" variant of [FrameType], with no associated data.
+/// Useful to expect a certain frame type
+#[bitflags]
+#[repr(u16)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum FrameT {
+    Data,
+    Headers,
+    Priority,
+    RstStream,
+    Settings,
+    PushPromise,
+    Ping,
+    GoAway,
+    WindowUpdate,
+    Continuation,
+    Unknown,
+}
+
+impl From<FrameType> for FrameT {
+    fn from(value: FrameType) -> Self {
+        match value {
+            FrameType::Data(_) => Self::Data,
+            FrameType::Headers(_) => Self::Headers,
+            FrameType::Priority => Self::Priority,
+            FrameType::RstStream => Self::RstStream,
+            FrameType::Settings(_) => Self::Settings,
+            FrameType::PushPromise => Self::PushPromise,
+            FrameType::Ping(_) => Self::Ping,
+            FrameType::GoAway => Self::GoAway,
+            FrameType::WindowUpdate => Self::WindowUpdate,
+            FrameType::Continuation(_) => Self::Continuation,
+            FrameType::Unknown(_) => Self::Unknown,
+        }
+    }
 }
 
 impl<IO: IntoHalves> Conn<IO> {
@@ -114,6 +152,37 @@ impl<IO: IntoHalves> Conn<IO> {
             .writev_all_owned(PieceList::single(header).followed_by(payload))
             .await?;
         Ok(())
+    }
+
+    /// Waits for a certain kind of frame
+    pub async fn wait_for_frame(&mut self, types: impl Into<BitFlags<FrameT>>) -> (Frame, Roll) {
+        let types = types.into();
+        let mut last_frame: Option<Frame> = None;
+
+        loop {
+            match self.ev_rx.recv().await {
+                None => {
+                    panic!(
+                        "expected a frame of type ({types:?}), last frame we saw was {last_frame:?}"
+                    );
+                }
+                Some(ev) => match ev {
+                    Ev::Frame { frame, payload } => {
+                        if types.contains(FrameT::from(frame.frame_type)) {
+                            return (frame, payload);
+                        } else {
+                            last_frame = Some(frame)
+                        }
+                    }
+                    Ev::IoError { error } => {
+                        panic!("I/O error while waiting for frame of type ({types:?}): {error}")
+                    }
+                    Ev::Eof => {
+                        panic!("EOF while waiting for frame of type ({types:?}")
+                    }
+                },
+            }
+        }
     }
 
     pub async fn handshake(&mut self) -> eyre::Result<()> {
