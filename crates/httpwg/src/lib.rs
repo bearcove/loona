@@ -1,7 +1,9 @@
 use std::rc::Rc;
 
-use fluke_buffet::{IntoHalves, Piece, WriteOwned};
+use fluke_buffet::{IntoHalves, Piece, ReadOwned, RollMut, WriteOwned};
 use fluke_h2_parse::Frame;
+use pretty_hex::PrettyHex;
+use tracing::debug;
 
 pub mod rfc9113;
 
@@ -11,14 +13,45 @@ pub struct TestGroup<IO> {
 }
 
 pub struct Conn<IO: IntoHalves + 'static> {
-    r: <IO as IntoHalves>::Read,
     w: <IO as IntoHalves>::Write,
+    ev_rx: tokio::sync::mpsc::Receiver<Ev>,
+}
+
+pub enum Ev {
+    Todo,
 }
 
 impl<IO: IntoHalves> Conn<IO> {
     pub fn new(io: IO) -> Self {
-        let (r, w) = io.into_halves();
-        Self { r, w }
+        let (mut r, w) = io.into_halves();
+
+        let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<Ev>(1);
+        let recv_fut = async move {
+            let mut res_buf = RollMut::alloc()?;
+            let mut buf = vec![0u8; 1024];
+            loop {
+                debug!("Reading a chunk");
+                let res;
+                (res, buf) = r.read_owned(buf).await;
+                let n = res.unwrap();
+                let chunk = &buf[..n];
+
+                debug!("Got a chunk:\n{:?}", chunk.hex_dump());
+                res_buf.put(&chunk[..]).unwrap();
+
+                // try to parse a frame
+                use fluke_h2_parse::Finish;
+                let (rest, frame) = Frame::parse(res_buf.filled()).finish().unwrap();
+                panic!("got frame {frame:#?}");
+
+                todo!()
+            }
+
+            Ok::<_, eyre::Report>(())
+        };
+        fluke_buffet::spawn(async move { recv_fut.await.unwrap() });
+
+        Self { w, ev_rx }
     }
 
     pub async fn send(&mut self, buf: impl Into<Piece>) -> eyre::Result<()> {

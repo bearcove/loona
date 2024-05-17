@@ -1,6 +1,5 @@
 use fluke_buffet::{IntoHalves, ReadOwned, RollMut};
 use fluke_h2_parse::{Frame, FrameType, StreamId};
-use pretty_hex::PrettyHex;
 use std::rc::Rc;
 use tracing::debug;
 
@@ -42,26 +41,10 @@ async fn test4_1<IO: IntoHalves + 'static>(
     conn.send(vec![0u8; 16384 + 1]).await.unwrap();
     debug!("Now reading.");
 
-    // expect an error
-    let mut res_buf = RollMut::alloc()?;
-    let mut buf = vec![0u8; 1024];
-    loop {
-        debug!("Reading a chunk");
-        let res;
-        (res, buf) = conn.r.read_owned(buf).await;
-        let n = res.unwrap();
-        let chunk = &buf[..n];
+    // sleep for 1 second
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-        debug!("Got a chunk:\n{:?}", chunk.hex_dump());
-        res_buf.put(&chunk[..]).unwrap();
-
-        // try to parse a frame
-        use fluke_h2_parse::Finish;
-        let (rest, frame) = Frame::parse(res_buf.filled()).finish().unwrap();
-        panic!("got frame {frame:#?}");
-
-        todo!()
-    }
+    todo!("finish this test");
 
     Ok(())
 }
