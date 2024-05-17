@@ -68,9 +68,11 @@ macro_rules! gen_tests {
     ($body: tt) => {
         #[cfg(test)]
         mod rfc9113 {
+            use ::httpwg::rfc9113 as __rfc;
+
             #[test]
             fn test_3_4() {
-                use ::httpwg::rfc9113Test3_4 as Test;
+                use __rfc::Test3_4 as Test;
                 $body
             }
         }

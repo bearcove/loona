@@ -109,25 +109,3 @@ httpwg::gen_tests! {{
        result.unwrap()
    });
 }}
-
-// #[test]
-// fn httpwg() {
-//     setup_tracing();
-
-//     async fn inner() -> eyre::Result<()> {
-//         let groups = httpwg::all_groups();
-//         for group in groups {
-//             println!("Group: {}", group.name);
-//             for test in group.tests {
-//                 let conn = start_server();
-//                 let config = std::rc::Rc::new(httpwg::Config {});
-//                 let result = test.run(config, conn).await;
-//                 println!("  Test: {:?}", result);
-//             }
-//         }
-
-//         Ok(())
-//     }
-
-//     fluke_buffet::start(async move { inner().await.unwrap() });
-// }
