@@ -17,8 +17,9 @@ pub struct Conn<IO: IntoHalves + 'static> {
 }
 
 pub enum Ev {
-    Todo,
     Frame { frame: Frame, payload: Roll },
+    IoError { error: std::io::Error },
+    Eof,
 }
 
 impl<IO: IntoHalves> Conn<IO> {
@@ -26,20 +27,25 @@ impl<IO: IntoHalves> Conn<IO> {
         let (mut r, w) = io.into_halves();
 
         let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<Ev>(1);
+        let mut eof = false;
         let recv_fut = async move {
             let mut res_buf = RollMut::alloc()?;
             'read: loop {
-                res_buf.reserve()?;
-
-                let res;
-                (res, res_buf) = res_buf.read_into(16384, &mut r).await;
-                let n = res?;
-                debug!(%n, "read bytes (reading frame header)");
-                if n == 0 {
-                    if res_buf.is_empty() {
+                if !eof {
+                    res_buf.reserve()?;
+                    let res;
+                    (res, res_buf) = res_buf.read_into(16384, &mut r).await;
+                    let n = res?;
+                    if n == 0 {
                         debug!("reached EOF");
-                        break 'read;
+                        eof = true;
+                    } else {
+                        debug!(%n, "read bytes (reading frame header)");
                     }
+                }
+
+                if eof && res_buf.is_empty() {
+                    break 'read;
                 }
 
                 match Frame::parse(res_buf.filled()) {
@@ -56,6 +62,15 @@ impl<IO: IntoHalves> Conn<IO> {
                             (res, res_buf) = res_buf.read_into(16384, &mut r).await;
                             let n = res?;
                             debug!(%n, len = %res_buf.len(), "read bytes (reading frame payload)");
+
+                            if n == 0 {
+                                eof = true;
+                                if res_buf.len() < frame_len {
+                                    panic!(
+                                        "peer frame header, then incomplete payload, then hung up"
+                                    )
+                                }
+                            }
                         }
 
                         let payload = res_buf.take_at_most(frame_len).unwrap();
@@ -65,7 +80,13 @@ impl<IO: IntoHalves> Conn<IO> {
                         ev_tx.send(Ev::Frame { frame, payload }).await.unwrap();
                     }
                     Err(nom::Err::Incomplete(_)) => {
-                        // keep trying
+                        if eof {
+                            panic!(
+                                "peer sent incomplete frame header then hung up (buf len: {})",
+                                res_buf.len()
+                            )
+                        }
+
                         continue;
                     }
                     Err(nom::Err::Failure(err) | nom::Err::Error(err)) => {
