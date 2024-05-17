@@ -7,7 +7,7 @@ use std::{fmt, ops::RangeInclusive};
 
 use enum_repr::EnumRepr;
 pub use enumflags2::{bitflags, BitFlags};
-pub use nom::Finish;
+pub use nom;
 
 use nom::{
     combinator::map,

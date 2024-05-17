@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use fluke_buffet::{IntoHalves, Piece, Roll, RollMut, WriteOwned};
-use fluke_h2_parse::Frame;
+use fluke_h2_parse::{nom, Frame};
 use tracing::debug;
 
 pub mod rfc9113;
@@ -28,17 +28,21 @@ impl<IO: IntoHalves> Conn<IO> {
         let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<Ev>(1);
         let recv_fut = async move {
             let mut res_buf = RollMut::alloc()?;
-            loop {
+            'read: loop {
                 res_buf.reserve()?;
 
                 let res;
                 (res, res_buf) = res_buf.read_into(16384, &mut r).await;
                 let n = res?;
                 debug!(%n, "read bytes (reading frame header)");
+                if n == 0 {
+                    if res_buf.is_empty() {
+                        debug!("reached EOF");
+                        break 'read;
+                    }
+                }
 
-                // try to parse a frame
-                use fluke_h2_parse::Finish;
-                match Frame::parse(res_buf.filled()).finish() {
+                match Frame::parse(res_buf.filled()) {
                     Ok((rest, frame)) => {
                         res_buf.keep(rest);
                         debug!("< {frame:?}");
@@ -60,7 +64,11 @@ impl<IO: IntoHalves> Conn<IO> {
                         debug!(%frame_len, "got frame payload");
                         ev_tx.send(Ev::Frame { frame, payload }).await.unwrap();
                     }
-                    Err(err) => {
+                    Err(nom::Err::Incomplete(_)) => {
+                        // keep trying
+                        continue;
+                    }
+                    Err(nom::Err::Failure(err) | nom::Err::Error(err)) => {
                         debug!(?err, "got parse error");
                         break;
                     }

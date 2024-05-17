@@ -10,8 +10,8 @@ use byteorder::{BigEndian, WriteBytesExt};
 use eyre::Context;
 use fluke_buffet::{Piece, PieceList, PieceStr, ReadOwned, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
-    self as parse, parse_reserved_and_u31, BitFlags, ContinuationFlags, DataFlags, Finish, Frame,
-    FrameType, HeadersFlags, PingFlags, PrioritySpec, Settings, SettingsFlags, StreamId,
+    self as parse, nom::Finish, parse_reserved_and_u31, BitFlags, ContinuationFlags, DataFlags,
+    Frame, FrameType, HeadersFlags, PingFlags, PrioritySpec, Settings, SettingsFlags, StreamId,
 };
 use http::{
     header,
