@@ -3,15 +3,15 @@ use tokio::sync::mpsc;
 use crate::{Piece, ReadOwned, WriteOwned};
 
 /// Create a new pipe.
-pub fn pipe() -> (PipeRead, PipeWrite) {
+pub fn pipe() -> (PipeWrite, PipeRead) {
     let (tx, rx) = mpsc::channel(1);
     (
+        PipeWrite { tx },
         PipeRead {
             rx,
             state: Default::default(),
             remain: None,
         },
-        PipeWrite { tx },
     )
 }
 
@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn test_pipe() {
         crate::start(async move {
-            let (mut r, mut w) = pipe();
+            let (mut w, mut r) = pipe();
             let wrote_three = Rc::new(RefCell::new(false));
 
             crate::spawn({
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn test_pipe_fragmented_read() {
         crate::start(async move {
-            let (mut r, mut w) = pipe();
+            let (mut w, mut r) = pipe();
 
             crate::spawn({
                 async move {

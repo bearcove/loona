@@ -1063,14 +1063,14 @@ mod tests {
     #[test]
     #[cfg(not(feature = "miri"))]
     fn test_roll_readfrom_start() {
-        use crate::io::ChanRead;
+        use crate::WriteOwned;
 
         crate::start(async move {
             let mut rm = RollMut::alloc().unwrap();
 
-            let (send, mut read) = ChanRead::new();
+            let (mut send, mut read) = crate::pipe();
             crate::spawn(async move {
-                send.send("123456").await.unwrap();
+                send.write_all("123456").await.unwrap();
             });
 
             let mut res;
