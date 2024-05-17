@@ -60,3 +60,4 @@ futures-util = { version = "0.3.30", default-features = false, features = [
 ] }
 libc = "0.2.153"
 httpwg = { path = "../httpwg" }
+color-eyre = "0.6.3"

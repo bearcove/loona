@@ -109,7 +109,11 @@ impl<IO: IntoHalves> Conn<IO> {
                             }
                         }
 
-                        let payload = res_buf.take_at_most(frame_len).unwrap();
+                        let payload = if frame_len == 0 {
+                            Roll::empty()
+                        } else {
+                            res_buf.take_at_most(frame_len).unwrap()
+                        };
                         assert_eq!(payload.len(), frame_len);
 
                         debug!(%frame_len, "got frame payload");

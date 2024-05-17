@@ -218,6 +218,7 @@ version = "0.1.0"
 dependencies = [
  "byteorder",
  "bytes",
+ "color-eyre",
  "eyre",
  "fluke-buffet",
  "fluke-h2-parse",

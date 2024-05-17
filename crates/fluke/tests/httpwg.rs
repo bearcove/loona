@@ -7,6 +7,8 @@ use tracing::Level;
 use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::SubscriberInitExt};
 
 pub(crate) fn setup_tracing() {
+    color_eyre::install().unwrap();
+
     let targets = if let Ok(rust_log) = std::env::var("RUST_LOG") {
         rust_log.parse::<Targets>().unwrap()
     } else {

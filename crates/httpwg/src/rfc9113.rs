@@ -11,11 +11,13 @@ async fn test3_4<IO: IntoHalves + 'static>(
     _config: Rc<Config>,
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
-    tracing::debug!("Writing http/2 preface");
+    debug!("Writing http/2 preface");
     conn.send(&b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"[..]).await?;
-    tracing::debug!("Sleeping a bit!");
+
+    debug!("Sleeping a bit!");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    tracing::debug!("Okay that's it");
+
+    debug!("Okay that's it");
     Ok(())
 }
 
