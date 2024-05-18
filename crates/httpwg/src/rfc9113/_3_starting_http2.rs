@@ -1,16 +1,15 @@
 use fluke_buffet::IntoHalves;
-use fluke_h2_parse::{FrameType, Settings, StreamId};
-use tracing::debug;
+use fluke_h2_parse::{FrameType, Settings, SettingsFlags, StreamId};
 
 use crate::{
     rfc9113::{DEFAULT_FRAME_SIZE, DEFAULT_WINDOW_SIZE},
-    Conn,
+    Conn, ErrorC, FrameT,
 };
 
 /// The server connection preface consists of a potentially empty
 /// SETTINGS frame (Section 6.5) that MUST be the first frame
 /// the server sends in the HTTP/2 connection.
-pub async fn http2_connection_preface<IO: IntoHalves + 'static>(
+pub async fn sends_client_connection_preface<IO: IntoHalves + 'static>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.send(&b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"[..]).await?;
@@ -24,6 +23,25 @@ pub async fn http2_connection_preface<IO: IntoHalves + 'static>(
     )
     .await?;
 
-    debug!("Okay that's it");
+    let (frame, _) = conn.wait_for_frame(FrameT::Settings).await.unwrap();
+    match frame.frame_type {
+        FrameType::Settings(flags) => {
+            assert!(!flags.contains(SettingsFlags::Ack), "The server connection preface MUST be the first frame the server sends in the HTTP/2 connection.");
+        }
+        _ => unreachable!(),
+    };
+
+    Ok(())
+}
+
+/// Clients and servers MUST treat an invalid connection preface as
+/// a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+pub async fn sends_invalid_connection_preface<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.send(&b"INVALID CONNECTION PREFACE\r\n\r\n"[..])
+        .await?;
+    conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
     Ok(())
 }

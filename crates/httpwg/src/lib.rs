@@ -3,7 +3,7 @@ use std::{rc::Rc, time::Duration};
 use enumflags2::{bitflags, BitFlags};
 use fluke_buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
-    enumflags2, nom, Frame, FrameType, IntoPiece, Settings, SettingsFlags, StreamId,
+    enumflags2, nom, Frame, FrameType, IntoPiece, KnownErrorCode, Settings, SettingsFlags, StreamId,
 };
 use tokio::time::Instant;
 use tracing::debug;
@@ -20,7 +20,51 @@ pub struct Conn<IO: IntoHalves + 'static> {
 pub enum Ev {
     Frame { frame: Frame, payload: Roll },
     IoError { error: std::io::Error },
-    Eof,
+}
+
+pub enum FrameWaitOutcome {
+    Success(Frame, Roll),
+    Timeout {
+        wanted: BitFlags<FrameT>,
+        last_frame: Option<Frame>,
+        waited: Duration,
+    },
+    Eof {
+        wanted: BitFlags<FrameT>,
+        last_frame: Option<Frame>,
+    },
+    IoError {
+        wanted: BitFlags<FrameT>,
+        last_frame: Option<Frame>,
+        error: std::io::Error,
+    },
+}
+
+impl FrameWaitOutcome {
+    pub fn unwrap(self) -> (Frame, Roll) {
+        match self {
+            FrameWaitOutcome::Success(frame, payload) => (frame, payload),
+            FrameWaitOutcome::Timeout {
+                wanted,
+                last_frame,
+                waited,
+            } => {
+                panic!(
+                    "Wanted ({wanted:?}), timed out after {waited:?}. Last frame: {last_frame:?}"
+                );
+            }
+            FrameWaitOutcome::Eof { wanted, last_frame } => {
+                panic!("Wanted ({wanted:?}), peer hung up. Last frame: {last_frame:?}");
+            }
+            FrameWaitOutcome::IoError {
+                wanted,
+                last_frame,
+                error,
+            } => {
+                panic!("Wanted ({wanted:?}), got I/O error {error}. Last frame: {last_frame:?}")
+            }
+        }
+    }
 }
 
 /// A "hollow" variant of [FrameType], with no associated data.
@@ -56,6 +100,48 @@ impl From<FrameType> for FrameT {
             FrameType::WindowUpdate => Self::WindowUpdate,
             FrameType::Continuation(_) => Self::Continuation,
             FrameType::Unknown(_) => Self::Unknown,
+        }
+    }
+}
+
+// A hollow variant of [KnownErrorCode]
+#[bitflags]
+#[repr(u16)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum ErrorC {
+    NoError,
+    ProtocolError,
+    InternalError,
+    FlowControlError,
+    SettingsTimeout,
+    StreamClosed,
+    FrameSizeError,
+    RefusedStream,
+    Cancel,
+    CompressionError,
+    ConnectError,
+    EnhanceYourCalm,
+    InadequateSecurity,
+    Http1_1Required,
+}
+
+impl From<KnownErrorCode> for ErrorC {
+    fn from(value: KnownErrorCode) -> Self {
+        match value {
+            KnownErrorCode::NoError => Self::NoError,
+            KnownErrorCode::ProtocolError => Self::ProtocolError,
+            KnownErrorCode::InternalError => Self::InternalError,
+            KnownErrorCode::FlowControlError => Self::FlowControlError,
+            KnownErrorCode::SettingsTimeout => Self::SettingsTimeout,
+            KnownErrorCode::StreamClosed => Self::StreamClosed,
+            KnownErrorCode::FrameSizeError => Self::FrameSizeError,
+            KnownErrorCode::RefusedStream => Self::RefusedStream,
+            KnownErrorCode::Cancel => Self::Cancel,
+            KnownErrorCode::CompressionError => Self::CompressionError,
+            KnownErrorCode::ConnectError => Self::ConnectError,
+            KnownErrorCode::EnhanceYourCalm => Self::EnhanceYourCalm,
+            KnownErrorCode::InadequateSecurity => Self::InadequateSecurity,
+            KnownErrorCode::Http1_1Required => Self::Http1_1Required,
         }
     }
 }
@@ -162,7 +248,7 @@ impl<IO: IntoHalves> Conn<IO> {
     }
 
     /// Waits for a certain kind of frame
-    pub async fn wait_for_frame(&mut self, types: impl Into<BitFlags<FrameT>>) -> (Frame, Roll) {
+    pub async fn wait_for_frame(&mut self, types: impl Into<BitFlags<FrameT>>) -> FrameWaitOutcome {
         let deadline = Instant::now() + self.config.timeout;
 
         let types = types.into();
@@ -171,27 +257,33 @@ impl<IO: IntoHalves> Conn<IO> {
         loop {
             match tokio::time::timeout_at(deadline, self.ev_rx.recv()).await {
                 Err(_) => {
-                    panic!("Timed out while waiting for ({types:?}), last frame was {last_frame:?}")
+                    return FrameWaitOutcome::Timeout {
+                        wanted: types,
+                        last_frame,
+                        waited: self.config.timeout,
+                    };
                 }
                 Ok(maybe_ev) => match maybe_ev {
                     None => {
-                        panic!(
-                            "Expected a frame of type ({types:?}), last frame was {last_frame:?}"
-                        );
+                        return FrameWaitOutcome::Eof {
+                            wanted: types,
+                            last_frame,
+                        }
                     }
                     Some(ev) => match ev {
                         Ev::Frame { frame, payload } => {
                             if types.contains(FrameT::from(frame.frame_type)) {
-                                return (frame, payload);
+                                return FrameWaitOutcome::Success(frame, payload);
                             } else {
                                 last_frame = Some(frame)
                             }
                         }
                         Ev::IoError { error } => {
-                            panic!("I/O error while waiting for frame of type ({types:?}): {error}")
-                        }
-                        Ev::Eof => {
-                            panic!("EOF while waiting for frame of type ({types:?}")
+                            return FrameWaitOutcome::IoError {
+                                wanted: types,
+                                last_frame,
+                                error,
+                            }
                         }
                     },
                 },
@@ -215,12 +307,13 @@ impl<IO: IntoHalves> Conn<IO> {
         .await?;
 
         // now wait for the server's settings frame, which must be the first frame
-        let (frame, _payload) = self.wait_for_frame(FrameT::Settings).await;
+        let (frame, _payload) = self.wait_for_frame(FrameT::Settings).await.unwrap();
         match frame.frame_type {
             FrameType::Settings(flags) => {
-                if flags.contains(SettingsFlags::Ack) {
-                    panic!("RFC 9113 Section 3.4: server sent a settings frame but it had ACK set")
-                }
+                assert!(
+                    flags.contains(SettingsFlags::Ack),
+                    "server should send their settings first thing (no ack)"
+                );
             }
             _ => unreachable!(),
         };
@@ -236,12 +329,13 @@ impl<IO: IntoHalves> Conn<IO> {
         .await?;
 
         // and wait until the server acknowledges our settings
-        let (frame, _payload) = self.wait_for_frame(FrameT::Settings).await;
+        let (frame, _payload) = self.wait_for_frame(FrameT::Settings).await.unwrap();
         match frame.frame_type {
             FrameType::Settings(flags) => {
-                if flags.contains(SettingsFlags::Ack) {
-                    panic!("RFC 9113 Section 3.4: server sent a settings frame but it had ACK set")
-                }
+                assert!(
+                    flags.contains(SettingsFlags::Ack),
+                    "server should acknowledge our settings"
+                );
             }
             _ => unreachable!(),
         }
@@ -252,6 +346,13 @@ impl<IO: IntoHalves> Conn<IO> {
     pub async fn send(&mut self, buf: impl Into<Piece>) -> eyre::Result<()> {
         self.w.write_all_owned(buf.into()).await?;
         Ok(())
+    }
+
+    async fn verify_connection_error(
+        &self,
+        codes: impl Into<BitFlags<ErrorC>>,
+    ) -> eyre::Result<()> {
+        todo!()
     }
 }
 
@@ -269,14 +370,14 @@ impl Default for Config {
     }
 }
 
-pub trait Test<IO: IntoHalves + 'static> {
-    fn name(&self) -> &'static str;
-    fn run(
-        &self,
-        config: Rc<Config>,
-        conn: Conn<IO>,
-    ) -> futures_util::future::LocalBoxFuture<eyre::Result<()>>;
-}
+// TODO: generate this macro from httpwg sources.
+// The macros will be split in a separte `httpwg-macros` crate.
+// It can probably be generated using the "types as JSON" output
+// used by cargo-semver-checks?
+//
+// Right now it's too fragile, too easy to slip up and forget
+// a test case / have a test name-test case mismatch. Also it
+// cannot be used as a standalone CLI.
 
 #[macro_export]
 macro_rules! gen_tests {
@@ -289,8 +390,14 @@ macro_rules! gen_tests {
                 use super::__rfc::_3_starting_http2 as __suite;
 
                 #[test]
-                fn starting_http2() {
-                    use __suite::http2_connection_preface as test;
+                fn sends_client_connection_preface() {
+                    use __suite::sends_client_connection_preface as test;
+                    $body
+                }
+
+                #[test]
+                fn sends_invalid_connection_preface() {
+                    use __suite::sends_invalid_connection_preface as test;
                     $body
                 }
             }
