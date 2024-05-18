@@ -290,7 +290,7 @@ macro_rules! gen_tests {
 
                 #[test]
                 fn starting_http2() {
-                    use __suite::starting_http2 as test;
+                    use __suite::http2_connection_preface as test;
                     $body
                 }
             }

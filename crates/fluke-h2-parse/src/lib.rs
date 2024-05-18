@@ -65,6 +65,18 @@ pub enum FrameType {
     Unknown(EncodedFrameType),
 }
 
+impl FrameType {
+    /// Turn this [FrameType] into a [Frame]
+    pub fn into_frame(self, stream_id: StreamId) -> Frame {
+        Frame {
+            frame_type: self,
+            len: 0,
+            reserved: 0,
+            stream_id,
+        }
+    }
+}
+
 /// See https://httpwg.org/specs/rfc9113.html#DATA
 #[bitflags]
 #[repr(u8)]
