@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{rc::Rc, time::Duration};
 
 use enumflags2::{bitflags, BitFlags};
 use fluke_buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
@@ -13,6 +13,7 @@ pub struct Conn<IO: IntoHalves + 'static> {
     w: <IO as IntoHalves>::Write,
     scratch: RollMut,
     pub ev_rx: tokio::sync::mpsc::Receiver<Ev>,
+    config: Rc<Config>,
 }
 
 pub enum Ev {
@@ -59,7 +60,7 @@ impl From<FrameType> for FrameT {
 }
 
 impl<IO: IntoHalves> Conn<IO> {
-    pub fn new(io: IO) -> Self {
+    pub fn new(config: Rc<Config>, io: IO) -> Self {
         let (mut r, w) = io.into_halves();
 
         let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<Ev>(1);
@@ -144,6 +145,7 @@ impl<IO: IntoHalves> Conn<IO> {
             w,
             scratch: RollMut::alloc().unwrap(),
             ev_rx,
+            config,
         }
     }
 
@@ -205,36 +207,35 @@ impl<IO: IntoHalves> Conn<IO> {
         .await?;
 
         // now wait for the server's settings frame, which must be the first frame
-        match self.ev_rx.recv().await {
-            None => {
-                panic!("EOF while doing http/2 handshake (we sent preface etc., the peer hung up)");
-            }
-            Some(ev) => match ev {
-                Ev::Frame { frame, payload } => {
-                    match frame.frame_type {
-                        FrameType::Settings(flags) => {
-                            if flags.contains(SettingsFlags::Ack) {
-                                panic!("RFC 9113 Section 3.4: server sent a settings frame but it had ACK set")
-                            }
-
-                            // good, good! let's acknowledge those
-                            self.write_frame(
-                                Frame::new(
-                                    FrameType::Settings(SettingsFlags::Ack.into()),
-                                    StreamId::CONNECTION,
-                                ),
-                                (),
-                            )
-                            .await?;
-                        }
-                        _ => {
-                            panic!("Expected settings frame, got: {frame:?}")
-                        }
-                    }
+        let (frame, _payload) = self.wait_for_frame(FrameT::Settings).await;
+        match frame.frame_type {
+            FrameType::Settings(flags) => {
+                if flags.contains(SettingsFlags::Ack) {
+                    panic!("RFC 9113 Section 3.4: server sent a settings frame but it had ACK set")
                 }
-                Ev::IoError { error } => panic!("I/O error during http2 handshake: {error}"),
-                Ev::Eof => panic!("Eof during http2 handshake"),
-            },
+            }
+            _ => unreachable!(),
+        };
+
+        // good, good! let's acknowledge the server's settings
+        self.write_frame(
+            Frame::new(
+                FrameType::Settings(SettingsFlags::Ack.into()),
+                StreamId::CONNECTION,
+            ),
+            (),
+        )
+        .await?;
+
+        // and wait until the server acknowledges our settings
+        let (frame, _payload) = self.wait_for_frame(FrameT::Settings).await;
+        match frame.frame_type {
+            FrameType::Settings(flags) => {
+                if flags.contains(SettingsFlags::Ack) {
+                    panic!("RFC 9113 Section 3.4: server sent a settings frame but it had ACK set")
+                }
+            }
+            _ => unreachable!(),
         }
 
         Ok(())
@@ -246,7 +247,19 @@ impl<IO: IntoHalves> Conn<IO> {
     }
 }
 
-pub struct Config {}
+/// Parameters for tests
+pub struct Config {
+    /// how long to wait for a frame
+    timeout: Duration,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            timeout: Duration::from_secs(1),
+        }
+    }
+}
 
 pub trait Test<IO: IntoHalves + 'static> {
     fn name(&self) -> &'static str;
@@ -258,44 +271,20 @@ pub trait Test<IO: IntoHalves + 'static> {
 }
 
 #[macro_export]
-macro_rules! test_struct {
-    ($name: expr, $fn: ident, $struct: ident) => {
-        #[derive(Default)]
-        pub struct $struct {}
-
-        impl<IO: IntoHalves + 'static> Test<IO> for $struct {
-            fn name(&self) -> &'static str {
-                $name
-            }
-
-            fn run(
-                &self,
-                config: std::rc::Rc<Config>,
-                conn: Conn<IO>,
-            ) -> futures_util::future::LocalBoxFuture<eyre::Result<()>> {
-                Box::pin($fn(config, conn))
-            }
-        }
-    };
-}
-
-#[macro_export]
 macro_rules! gen_tests {
     ($body: tt) => {
         #[cfg(test)]
         mod rfc9113 {
             use ::httpwg::rfc9113 as __rfc;
 
-            #[test]
-            fn test_3_4() {
-                use __rfc::Test3_4 as Test;
-                $body
-            }
+            mod _3_starting_http2 {
+                use super::__rfc::_3_starting_http2 as __suite;
 
-            #[test]
-            fn test_4_2() {
-                use __rfc::Test4_2 as Test;
-                $body
+                #[test]
+                fn starting_http2() {
+                    use __suite::starting_http2 as test;
+                    $body
+                }
             }
         }
     };

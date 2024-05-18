@@ -6,7 +6,9 @@ use http::StatusCode;
 use tracing::Level;
 use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::SubscriberInitExt};
 
-pub(crate) fn setup_tracing() {
+/// Note: this will not work with `cargo test`, since it sets up process-level
+/// globals. But it will work with `cargo nextest`, and that's what fluke is standardizing on.
+pub(crate) fn setup_tracing_and_error_reporting() {
     color_eyre::install().unwrap();
 
     let targets = if let Ok(rust_log) = std::env::var("RUST_LOG") {
@@ -82,15 +84,14 @@ pub fn start_server() -> httpwg::Conn<TwoHalves<PipeWrite, PipeRead>> {
     let (client_write, server_read) = fluke::buffet::pipe();
 
     let serve_fut = async move {
-        let conf = fluke::h2::ServerConf {
+        let server_conf = Rc::new(fluke::h2::ServerConf {
             ..Default::default()
-        };
-        let conf = Rc::new(conf);
+        });
 
         let client_buf = RollMut::alloc()?;
         let driver = Rc::new(TestDriver);
         let io = (server_read, server_write);
-        fluke::h2::serve(io, conf, client_buf, driver).await?;
+        fluke::h2::serve(io, server_conf, client_buf, driver).await?;
         tracing::debug!("http/2 server done");
         Ok::<_, eyre::Report>(())
     };
@@ -99,17 +100,16 @@ pub fn start_server() -> httpwg::Conn<TwoHalves<PipeWrite, PipeRead>> {
         serve_fut.await.unwrap();
     });
 
-    httpwg::Conn::new(TwoHalves(client_write, client_read))
+    let config = Rc::new(httpwg::Config::default());
+    httpwg::Conn::new(config, TwoHalves(client_write, client_read))
 }
 
 httpwg::gen_tests! {{
-   crate::setup_tracing();
+   crate::setup_tracing_and_error_reporting();
 
    fluke_buffet::start(async move {
        let conn = crate::start_server();
-       let config = std::rc::Rc::new(httpwg::Config {});
-       let test = Test::default();
-       let result = httpwg::Test::run(&test, config, conn).await;
+       let result = test(conn).await;
        result.unwrap()
    });
 }}
