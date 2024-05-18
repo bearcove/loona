@@ -5,6 +5,7 @@ use fluke_buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
     enumflags2, nom, Frame, FrameType, IntoPiece, Settings, SettingsFlags, StreamId,
 };
+use tokio::time::Instant;
 use tracing::debug;
 
 pub mod rfc9113;
@@ -162,30 +163,37 @@ impl<IO: IntoHalves> Conn<IO> {
 
     /// Waits for a certain kind of frame
     pub async fn wait_for_frame(&mut self, types: impl Into<BitFlags<FrameT>>) -> (Frame, Roll) {
+        let deadline = Instant::now() + self.config.timeout;
+
         let types = types.into();
         let mut last_frame: Option<Frame> = None;
 
         loop {
-            match self.ev_rx.recv().await {
-                None => {
-                    panic!(
-                        "expected a frame of type ({types:?}), last frame we saw was {last_frame:?}"
-                    );
+            match tokio::time::timeout_at(deadline, self.ev_rx.recv()).await {
+                Err(_) => {
+                    panic!("Timed out while waiting for ({types:?}), last frame was {last_frame:?}")
                 }
-                Some(ev) => match ev {
-                    Ev::Frame { frame, payload } => {
-                        if types.contains(FrameT::from(frame.frame_type)) {
-                            return (frame, payload);
-                        } else {
-                            last_frame = Some(frame)
+                Ok(maybe_ev) => match maybe_ev {
+                    None => {
+                        panic!(
+                            "Expected a frame of type ({types:?}), last frame was {last_frame:?}"
+                        );
+                    }
+                    Some(ev) => match ev {
+                        Ev::Frame { frame, payload } => {
+                            if types.contains(FrameT::from(frame.frame_type)) {
+                                return (frame, payload);
+                            } else {
+                                last_frame = Some(frame)
+                            }
                         }
-                    }
-                    Ev::IoError { error } => {
-                        panic!("I/O error while waiting for frame of type ({types:?}): {error}")
-                    }
-                    Ev::Eof => {
-                        panic!("EOF while waiting for frame of type ({types:?}")
-                    }
+                        Ev::IoError { error } => {
+                            panic!("I/O error while waiting for frame of type ({types:?}): {error}")
+                        }
+                        Ev::Eof => {
+                            panic!("EOF while waiting for frame of type ({types:?}")
+                        }
+                    },
                 },
             }
         }
