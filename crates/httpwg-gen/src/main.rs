@@ -112,6 +112,7 @@ fn main() {
     #[derive(Debug)]
     struct Test {
         name: String,
+        docs: Option<String>,
     }
 
     let mut suites: Vec<Suite> = Default::default();
@@ -159,7 +160,10 @@ fn main() {
                                         let test_name = item.name.clone().unwrap();
                                         println!("    📄 {test_name} ({item_id})");
 
-                                        let test = Test { name: test_name };
+                                        let test = Test {
+                                            name: test_name,
+                                            docs: item.docs.clone(),
+                                        };
                                         group.tests.push(test);
                                     }
                                     _ => {
@@ -250,6 +254,9 @@ fn main() {
                             for test in &group.tests {
                                 let test_name = &test.name;
                                 w!("");
+                                for line in test.docs.as_deref().unwrap_or_default().lines() {
+                                    w!("/// {line}");
+                                }
                                 w!("#[test]");
                                 w!("fn {test_name}() {{");
                                 {
