@@ -3,8 +3,9 @@
 //! HTTP/2 <https://httpwg.org/specs/rfc9113.html>
 //! HTTP semantics <https://httpwg.org/specs/rfc9110.html>
 
-use std::{fmt, ops::RangeInclusive};
+use std::{fmt, io::Write, ops::RangeInclusive};
 
+use byteorder::{BigEndian, WriteBytesExt};
 use enum_repr::EnumRepr;
 
 pub use enumflags2;
@@ -709,6 +710,44 @@ impl IntoPiece for Settings {
         debug_assert_eq!(scratch.len(), 0);
         self.write_into(&mut scratch)?;
         Ok(scratch.take_all().into())
+    }
+}
+
+/// Payload for a GO_AWAY frame
+pub struct GoAway {
+    pub last_stream_id: StreamId,
+    pub error_code: ErrorCode,
+    pub additional_debug_data: Piece,
+}
+
+impl IntoPiece for GoAway {
+    fn into_piece(self, scratch: &mut RollMut) -> std::io::Result<Piece> {
+        let roll = scratch
+            .put_to_roll(8 + self.additional_debug_data.len(), |mut slice| {
+                slice.write_u32::<BigEndian>(self.last_stream_id.0)?;
+                slice.write_u32::<BigEndian>(self.error_code.0)?;
+                slice.write_all(&self.additional_debug_data[..])?;
+
+                Ok(())
+            })
+            .unwrap();
+        Ok(roll.into())
+    }
+}
+
+impl GoAway {
+    pub fn parse(i: Roll) -> IResult<Roll, Self> {
+        let (rest, (last_stream_id, error_code)) = tuple((be_u32, be_u32))(i)?;
+
+        let i = Roll::empty();
+        Ok((
+            i,
+            Self {
+                last_stream_id: StreamId(last_stream_id),
+                error_code: ErrorCode(error_code),
+                additional_debug_data: rest.into(),
+            },
+        ))
     }
 }
 

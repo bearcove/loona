@@ -1209,10 +1209,13 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         debug!("Sending rst because: {e} (known error code: {error_code:?})");
 
         debug!(%stream_id, ?error_code, "Sending RstStream");
-        let payload = self.out_scratch.put_to_roll(4, |mut slice| {
-            slice.write_u32::<BigEndian>(error_code.repr())?;
-            Ok(())
-        })?;
+        let payload = self
+            .out_scratch
+            .put_to_roll(4, |mut slice| {
+                slice.write_u32::<BigEndian>(error_code.repr())?;
+                Ok(())
+            })
+            .unwrap();
 
         let frame = Frame::new(FrameType::RstStream, stream_id)
             .with_len((payload.len()).try_into().unwrap());

@@ -8,7 +8,7 @@ use std::{
     str::Utf8Error,
 };
 
-use crate::{io::ReadOwned, IoBufMut};
+use crate::{io::ReadOwned, Error, IoBufMut};
 use nom::{
     Compare, CompareResult, FindSubstring, InputIter, InputLength, InputTake, InputTakeAtPosition,
     Needed, Slice,
@@ -16,6 +16,8 @@ use nom::{
 use tracing::trace;
 
 use crate::{Buf, BufMut, BUF_SIZE};
+
+type Result<T, E = crate::Error> = std::result::Result<T, E>;
 
 /// A "rolling buffer". Uses either one [BufMut] or a `Box<[u8]>` for storage.
 /// This buffer never grows, but it can be split, and it can be reallocated so
@@ -112,13 +114,9 @@ impl BoxStorage {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("slice does not fit into this RollMut")]
-pub struct DoesNotFit;
-
 impl RollMut {
     /// Allocate, using a single [BufMut] for storage.
-    pub fn alloc() -> eyre::Result<Self> {
+    pub fn alloc() -> Result<Self> {
         Ok(Self {
             storage: StorageMut::Buf(BufMut::alloc()?),
             len: 0,
@@ -149,7 +147,7 @@ impl RollMut {
     /// Reallocates the backing storage for this buffer, copying the filled
     /// portion into it. Panics if `len() == storage_size()`, in which case
     /// reallocating won't do much good
-    pub fn realloc(&mut self) -> eyre::Result<()> {
+    pub fn realloc(&mut self) -> Result<()> {
         assert!(self.len() != self.storage_size());
 
         let next_storage = match &self.storage {
@@ -185,7 +183,7 @@ impl RollMut {
     /// If this buffer's size matches the underlying storage size,
     /// this is equivalent to `grow`. Otherwise, it's equivalent
     /// to `realloc`.
-    pub fn reserve(&mut self) -> eyre::Result<()> {
+    pub fn reserve(&mut self) -> Result<()> {
         if self.len() < self.cap() {
             return Ok(());
         }
@@ -203,7 +201,7 @@ impl RollMut {
     }
 
     /// Make sure we can hold "request_len"
-    pub fn reserve_at_least(&mut self, requested_len: usize) -> Result<(), eyre::Error> {
+    pub fn reserve_at_least(&mut self, requested_len: usize) -> Result<()> {
         while self.cap() < requested_len {
             if self.cap() < self.storage_size() {
                 // we don't need to go up a buffer size
@@ -273,12 +271,12 @@ impl RollMut {
     }
 
     /// Put a slice into this buffer, fails if the slice doesn't fit in the buffer's capacity
-    pub fn put(&mut self, s: impl AsRef<[u8]>) -> Result<(), DoesNotFit> {
+    pub fn put(&mut self, s: impl AsRef<[u8]>) -> Result<()> {
         let s = s.as_ref();
 
         let len = s.len();
         if len > self.cap() {
-            return Err(DoesNotFit);
+            return Err(Error::DoesNotFit);
         }
         unsafe {
             let ptr = self.storage.as_mut_ptr().add(self.len as usize);
@@ -290,11 +288,7 @@ impl RollMut {
     }
 
     /// Put data into this RollMut with a closure. Panics if `len > self.cap()`
-    pub fn put_with<T, E>(
-        &mut self,
-        len: usize,
-        f: impl FnOnce(&mut [u8]) -> Result<T, E>,
-    ) -> Result<T, E> {
+    pub fn put_with<T>(&mut self, len: usize, f: impl FnOnce(&mut [u8]) -> Result<T>) -> Result<T> {
         assert!(len <= self.cap());
 
         let u32_len: u32 = len.try_into().unwrap();
@@ -314,8 +308,8 @@ impl RollMut {
     pub fn put_to_roll(
         &mut self,
         len: usize,
-        f: impl FnOnce(&mut [u8]) -> eyre::Result<()>,
-    ) -> eyre::Result<Roll> {
+        f: impl FnOnce(&mut [u8]) -> Result<()>,
+    ) -> Result<Roll> {
         // TODO: this whole dance is a bit silly: the idea is to have a
         // `RollMut` around that we use whenever we need to serialize something.
         // it's weird that we need to do all this for it to happen but ah well.
