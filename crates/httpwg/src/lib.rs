@@ -1,3 +1,4 @@
+use eyre::eyre;
 use std::{rc::Rc, time::Duration};
 
 use enumflags2::{bitflags, BitFlags};
@@ -349,10 +350,44 @@ impl<IO: IntoHalves> Conn<IO> {
     }
 
     async fn verify_connection_error(
-        &self,
+        &mut self,
         codes: impl Into<BitFlags<ErrorC>>,
     ) -> eyre::Result<()> {
-        todo!()
+        let deadline = Instant::now() + self.config.timeout;
+        let mut last_frame: Option<Frame> = None;
+
+        loop {
+            let fut = tokio::time::timeout_at(deadline, self.ev_rx.recv());
+            let maybe_ev = fut.await.map_err(|_| {
+                eyre!("Timed out while waiting for connection error, last frame: ({last_frame:?})")
+            })?;
+
+            let ev = match maybe_ev {
+                None => {
+                    // that's EOF / connection closed, it passes
+                    return Ok(());
+                }
+                Some(frame) => frame,
+            };
+
+            let (frame, ..) = match ev {
+                Ev::Frame { frame, payload } => (frame, payload),
+                Ev::IoError { .. } => {
+                    // that's probably connection reset? but we should check more closely
+                    return Ok(());
+                }
+            };
+
+            match frame.frame_type {
+                FrameType::GoAway => {
+                    // that's what we expected!
+                    return Ok(());
+                }
+                _ => {
+                    last_frame = Some(frame);
+                }
+            }
+        }
     }
 }
 
