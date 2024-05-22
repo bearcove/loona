@@ -1,7 +1,13 @@
+use serde::Deserialize;
 use std::{
     io::{BufRead, BufReader, Read},
     process::{Command, Stdio},
 };
+
+#[derive(Deserialize)]
+struct Root {
+    format_version: i64,
+}
 
 fn main() {
     println!("🧱 Generating rustdoc...");
@@ -11,6 +17,7 @@ fn main() {
     cmd.args(["-Z", "unstable-options"]);
     cmd.args(["--output-format", "json"]);
     cmd.args(["--package", "httpwg"]);
+    cmd.args(["--target-dir", "target-codegen"]);
     cmd.arg("--frozen");
     cmd.env("RUSTC_BOOTSTRAP", "1");
     cmd.stdout(Stdio::piped());
@@ -68,4 +75,15 @@ fn main() {
     }
 
     println!("🕵️‍♂️ Parsing type info");
+    let json_path = "target/doc/httpwg.json";
+    let json_payload = std::fs::read(json_path).unwrap();
+    let root: Root = serde_json::from_slice(&json_payload).expect("Format should match");
+    assert!(
+        root.format_version >= 28,
+        "This tool expects JSON format version 28",
+    );
+    println!("📝 Listing tests...");
+
+    println!("🦉 TODO: the rest of the owl");
+    // println!("✨ httpwg-macros generated!");
 }

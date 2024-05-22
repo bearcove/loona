@@ -5,4 +5,5 @@ edition = "2021"
 description = "Generates httpwg-macros from rustdoc's JSON output"
 
 [dependencies]
+serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0.114"
