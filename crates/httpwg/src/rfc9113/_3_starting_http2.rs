@@ -1,3 +1,5 @@
+//! Section 3: Starting HTTP/2
+
 use fluke_buffet::IntoHalves;
 use fluke_h2_parse::{FrameType, Settings, SettingsFlags, StreamId};
 

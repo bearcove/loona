@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufRead, BufReader, Read, Stdin, Write},
+    io::{BufRead, BufReader, Read, Write},
     process::{Command, Stdio},
 };
 
@@ -100,12 +100,14 @@ fn main() {
     #[derive(Debug)]
     struct Suite {
         name: String,
+        docs: Option<String>,
         groups: Vec<Group>,
     }
 
     #[derive(Debug)]
     struct Group {
         name: String,
+        docs: Option<String>,
         tests: Vec<Test>,
     }
 
@@ -131,6 +133,7 @@ fn main() {
                 println!("📚 {suite_name} ({item_id})");
                 let mut suite = Suite {
                     name: suite_name,
+                    docs: item.docs.clone(),
                     groups: Default::default(),
                 };
 
@@ -149,6 +152,7 @@ fn main() {
 
                             let mut group = Group {
                                 name: group_name,
+                                docs: item.docs.clone(),
                                 tests: Default::default(),
                             };
 
@@ -156,7 +160,7 @@ fn main() {
                                 let item =
                                     doc.index.get(item_id).expect("Could not find some node");
                                 match &item.inner {
-                                    ast::ItemInner::Function(f) => {
+                                    ast::ItemInner::Function(_) => {
                                         let test_name = item.name.clone().unwrap();
                                         println!("    📄 {test_name} ({item_id})");
 
@@ -241,6 +245,9 @@ fn main() {
             for suite in &suites {
                 let suite_name = &suite.name;
                 w!("");
+                for line in suite.docs.as_deref().unwrap_or_default().lines() {
+                    w!("/// {line}");
+                }
                 w!("#[cfg(test)]");
                 w!("mod {suite_name} {{");
                 {
@@ -248,6 +255,9 @@ fn main() {
                     for group in &suite.groups {
                         let group_name = &group.name;
                         w!("");
+                        for line in group.docs.as_deref().unwrap_or_default().lines() {
+                            w!("/// {line}");
+                        }
                         w!("mod {group_name} {{");
                         {
                             w!("use ::httpwg::{suite_name} as __suite;");

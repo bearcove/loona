@@ -1,3 +1,5 @@
+//! Section 4.2: Frame Size
+
 use fluke_buffet::IntoHalves;
 use fluke_h2_parse::{Frame, FrameType, StreamId};
 

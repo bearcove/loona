@@ -10,10 +10,22 @@
 #[macro_export]
 macro_rules! tests {
     ($body: tt) => {
+        /// RFC 9113 describes an optimized expression of the
+        /// semantics of the Hypertext Transfer Protocol (HTTP), referred to as
+        /// HTTP version 2 (HTTP/2).
+        ///
+        /// HTTP/2 enables a more efficient use of network resources and a reduced
+        /// latency by introducing field compression and allowing multiple concurrent
+        /// exchanges on the same connection.
+        ///
+        /// This document obsoletes RFCs 7540 and 8740.
+        ///
+        /// cf. <https://httpwg.org/specs/rfc9113.html>
         #[cfg(test)]
         mod rfc9113 {
             use httpwg::rfc9113 as __suite;
 
+            /// Section 3: Starting HTTP/2
             mod _3_starting_http2 {
                 use httpwg::rfc9113 as __suite;
 
@@ -35,6 +47,7 @@ macro_rules! tests {
                 }
             }
 
+            /// Section 4.2: Frame Size
             mod _4_2_frame_size {
                 use httpwg::rfc9113 as __suite;
 
