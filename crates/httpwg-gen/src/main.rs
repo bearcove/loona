@@ -1,13 +1,9 @@
-use serde::Deserialize;
 use std::{
     io::{BufRead, BufReader, Read},
     process::{Command, Stdio},
 };
 
-#[derive(Deserialize)]
-struct Root {
-    format_version: i64,
-}
+mod ast;
 
 fn main() {
     println!("🧱 Generating rustdoc...");
@@ -75,9 +71,9 @@ fn main() {
     }
 
     println!("🕵️‍♂️ Parsing type info");
-    let json_path = "target/doc/httpwg.json";
+    let json_path = "target-codegen/doc/httpwg.json";
     let json_payload = std::fs::read(json_path).unwrap();
-    let root: Root = serde_json::from_slice(&json_payload).expect("Format should match");
+    let root: ast::Root = serde_json::from_slice(&json_payload).expect("Format should match");
     assert!(
         root.format_version >= 28,
         "This tool expects JSON format version 28",
