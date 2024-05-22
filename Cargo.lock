@@ -227,6 +227,7 @@ dependencies = [
  "http 1.1.0",
  "httparse",
  "httpwg",
+ "httpwg-macros",
  "libc",
  "memchr",
  "nom",
@@ -588,6 +589,17 @@ dependencies = [
  "pretty-hex",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "httpwg-gen"
+version = "0.1.0"
+
+[[package]]
+name = "httpwg-macros"
+version = "0.1.0"
+dependencies = [
+ "httpwg",
 ]
 
 [[package]]

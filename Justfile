@@ -39,3 +39,6 @@ check:
 
 tls-sample:
 	cargo run -p fluke-tls-sample
+
+httpwg-gen:
+    RUSTC_BOOTSTRAP=1 cargo rustdoc -Z unstable-options --output-format json -p httpwg --frozen

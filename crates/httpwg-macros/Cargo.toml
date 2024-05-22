@@ -1,0 +1,8 @@
+[package]
+name = "httpwg-macros"
+version = "0.1.0"
+edition = "2021"
+description = "Macros to allow generating httpwg unit tests"
+
+[dependencies]
+httpwg = { version = "0.1.0", path = "../httpwg" }
