@@ -27,14 +27,14 @@ macro_rules! tests {
 
             /// Section 3: Starting HTTP/2
             mod _3_starting_http2 {
-                use httpwg::rfc9113 as __suite;
+                use super::__suite::_3_starting_http2 as __group;
 
                 /// The server connection preface consists of a potentially empty
                 /// SETTINGS frame (Section 6.5) that MUST be the first frame
                 /// the server sends in the HTTP/2 connection.
                 #[test]
                 fn sends_client_connection_preface() {
-                    use __suite::sends_client_connection_preface as test;
+                    use __group::sends_client_connection_preface as test;
                     $body
                 }
 
@@ -42,21 +42,21 @@ macro_rules! tests {
                 /// a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
                 #[test]
                 fn sends_invalid_connection_preface() {
-                    use __suite::sends_invalid_connection_preface as test;
+                    use __group::sends_invalid_connection_preface as test;
                     $body
                 }
             }
 
             /// Section 4.2: Frame Size
             mod _4_2_frame_size {
-                use httpwg::rfc9113 as __suite;
+                use super::__suite::_4_2_frame_size as __group;
 
                 /// An endpoint MUST send an error code of FRAME_SIZE_ERROR if a frame
                 /// exceeds the size defined in SETTINGS_MAX_FRAME_SIZE, exceeds any
                 /// limit defined for the frame type, or is too small to contain mandatory frame data
                 #[test]
                 fn frame_exceeding_max_size() {
-                    use __suite::frame_exceeding_max_size as test;
+                    use __group::frame_exceeding_max_size as test;
                     $body
                 }
             }

@@ -260,7 +260,7 @@ fn main() {
                         }
                         w!("mod {group_name} {{");
                         {
-                            w!("use ::httpwg::{suite_name} as __suite;");
+                            w!("use super::__suite::{group_name} as __group;");
                             for test in &group.tests {
                                 let test_name = &test.name;
                                 w!("");
@@ -270,7 +270,7 @@ fn main() {
                                 w!("#[test]");
                                 w!("fn {test_name}() {{");
                                 {
-                                    w!("use __suite::{test_name} as test;");
+                                    w!("use __group::{test_name} as test;");
                                     w!("$body");
                                 }
                                 w!("}}");
