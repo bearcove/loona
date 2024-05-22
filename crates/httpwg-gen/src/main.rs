@@ -73,12 +73,31 @@ fn main() {
     println!("🕵️‍♂️ Parsing type info");
     let json_path = "target-codegen/doc/httpwg.json";
     let json_payload = std::fs::read(json_path).unwrap();
-    let root: ast::Root = serde_json::from_slice(&json_payload).expect("Format should match");
+    let doc: ast::Document = serde_json::from_slice(&json_payload).expect("Format should match");
     assert!(
-        root.format_version >= 28,
+        doc.format_version >= 28,
         "This tool expects JSON format version 28",
     );
     println!("📝 Listing tests...");
+
+    let root = doc.index.get(&doc.root).expect("Could not find root node");
+    let module = match &root.inner {
+        ast::ItemInner::Module(m) => m,
+        _ => panic!("Root has to be module"),
+    };
+
+    for item_id in &module.items {
+        let item = doc.index.get(item_id).expect("Could not find some node");
+        println!("Has item {item_id}");
+        match &item.inner {
+            ast::ItemInner::Module(m) => {
+                println!("It's another module")
+            }
+            _ => {
+                println!("It's something else")
+            }
+        }
+    }
 
     println!("🦉 TODO: the rest of the owl");
     // println!("✨ httpwg-macros generated!");

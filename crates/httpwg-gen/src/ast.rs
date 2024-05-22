@@ -1,12 +1,18 @@
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt};
 
 #[derive(Deserialize, Eq, PartialEq, Hash)]
 #[serde(transparent)]
 pub struct ItemId(pub String);
 
+impl fmt::Display for ItemId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
 #[derive(Deserialize)]
-pub struct Root {
+pub struct Document {
     pub format_version: i64,
     pub root: ItemId,
     pub index: HashMap<ItemId, Item>,
