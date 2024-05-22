@@ -1,11 +1,22 @@
 use std::{
-    io::{BufRead, BufReader, Read},
+    fs::File,
+    io::{BufRead, BufReader, Read, Stdin, Write},
     process::{Command, Stdio},
 };
 
 mod ast;
 
 fn main() {
+    let out_path = "crates/httpwg-macros/src/lib.rs";
+    if std::fs::symlink_metadata(out_path).is_err() {
+        eprintln!("⛔️ Output path doesn't exist: {out_path}");
+        eprintln!("(This tool expect to overwrite it, so the fact that it doesn't");
+        eprintln!("already exist means you're probably running it from the wrong");
+        eprintln!("directory.)");
+        eprintln!("👉 This tool should only be run from the top-level of the fluke workspace.");
+        panic!("Refusing to proceed, read stderr above");
+    }
+
     println!("🧱 Generating rustdoc...");
 
     let mut cmd = Command::new("cargo");
@@ -168,6 +179,34 @@ fn main() {
             }
         }
     }
+
+    // Generate macro code, pipe it to rustfmt
+    let mut cmd = Command::new("rustfmt");
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let final_cmd = format!("{cmd:?}");
+    let mut child = cmd
+        .spawn()
+        .unwrap_or_else(|err| panic!("{err} while spawning command: {final_cmd}"));
+
+    let stdout = std::thread::spawn({
+        let r = child.stdout.take().unwrap();
+        let mut f = File::create(out_path).unwrap();
+
+        move || {
+            let r = BufReader::new(r);
+            for line in r.lines() {
+                let line = line.unwrap();
+                writeln!(&mut f, "{line}").unwrap();
+            }
+        }
+    });
+
+    let stderr = std::thread::spawn({
+        let stderr = child.stderr.take().unwrap();
+        move || collect_output(StdoutOrStderr::Stderr, stderr)
+    });
 
     println!("🦉 TODO: the rest of the owl");
     // println!("✨ httpwg-macros generated!");
