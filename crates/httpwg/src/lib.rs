@@ -381,7 +381,65 @@ impl<IO: IntoHalves> Conn<IO> {
         codes: impl Into<BitFlags<ErrorC>>,
     ) -> eyre::Result<()> {
         let codes = codes.into();
-        todo!("should verify stream error with {:?}", codes)
+
+        match self
+            .wait_for_frame(FrameT::GoAway | FrameT::RstStream)
+            .await
+        {
+            FrameWaitOutcome::Success(frame, payload) => {
+                match frame.frame_type {
+                    FrameType::GoAway => {
+                        let (_, goaway) = GoAway::parse(payload).finish().unwrap();
+                        let error_c: ErrorC = KnownErrorCode::try_from(goaway.error_code)
+                            .map_err(|_| eyre::eyre!(
+                                "Expected GOAWAY or RSTSTREAM with one of {codes:?}, but got unknown error code {} (0x{:x})",
+                                goaway.error_code.as_repr(), goaway.error_code.as_repr()
+                            ))?
+                            .into();
+
+                        if codes.contains(error_c) {
+                            // that's what we expected!
+                            Ok(())
+                        } else {
+                            Err(eyre::eyre!(
+                                "Expected GOAWAY or RSTSTREAM with one of {codes:?}, but got {error_c:?}"
+                            ))
+                        }
+                    }
+                    FrameType::RstStream => {
+                        // FIXME: implement `RstStream` struct with parsing, like `GoAway`
+                        let error_code = KnownErrorCode::try_from(frame.error_code)
+                            .map_err(|_| eyre::eyre!(
+                                "Expected GOAWAY or RSTSTREAM with one of {codes:?}, but got unknown error code {} (0x{:x})",
+                                frame.error_code.as_repr(), frame.error_code.as_repr()
+                            ))?;
+
+                        let error_c: ErrorC = error_code.into();
+
+                        if codes.contains(error_c) {
+                            // that's what we expected!
+                            Ok(())
+                        } else {
+                            Err(eyre::eyre!(
+                                "Expected GOAWAY or RSTSTREAM with one of {codes:?}, but got {error_c:?}"
+                            ))
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            FrameWaitOutcome::Timeout { last_frame, .. } => Err(eyre!(
+                "Timed out while waiting for stream error, last frame: ({last_frame:?})"
+            )),
+            FrameWaitOutcome::Eof { .. } => {
+                // that's fine
+                Ok(())
+            }
+            FrameWaitOutcome::IoError { .. } => {
+                // TODO: that's fine if it's a connection reset, we should probably check
+                Ok(())
+            }
+        }
     }
 }
 

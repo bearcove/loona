@@ -745,7 +745,7 @@ impl IntoPiece for Settings {
     }
 }
 
-/// Payload for a GO_AWAY frame
+/// Payload for a GOAWAY frame
 pub struct GoAway {
     pub last_stream_id: StreamId,
     pub error_code: ErrorCode,
