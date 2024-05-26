@@ -10,8 +10,18 @@
 //!
 //! cf. <https://httpwg.org/specs/rfc9113.html>
 
+use fluke_h2_parse::Settings;
+
 pub const DEFAULT_WINDOW_SIZE: u32 = 65536;
 pub const DEFAULT_FRAME_SIZE: u32 = 16384;
+
+pub fn default_settings() -> Settings {
+    Settings {
+        initial_window_size: DEFAULT_WINDOW_SIZE,
+        max_frame_size: DEFAULT_FRAME_SIZE,
+        ..Default::default()
+    }
+}
 
 pub mod _3_starting_http2;
 pub mod _4_2_frame_size;

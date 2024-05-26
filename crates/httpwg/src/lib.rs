@@ -4,10 +4,15 @@ use std::{rc::Rc, time::Duration};
 use enumflags2::{bitflags, BitFlags};
 use fluke_buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
-    enumflags2, nom, Frame, FrameType, IntoPiece, KnownErrorCode, Settings, SettingsFlags, StreamId,
+    enumflags2,
+    nom::{self, Finish},
+    Frame, FrameType, GoAway, IntoPiece, KnownErrorCode, Settings, SettingsFlags, StreamId,
+    PREFACE,
 };
 use tokio::time::Instant;
 use tracing::debug;
+
+use crate::rfc9113::default_settings;
 
 pub mod rfc9113;
 
@@ -248,6 +253,14 @@ impl<IO: IntoHalves> Conn<IO> {
         Ok(())
     }
 
+    pub async fn write_settings(&mut self, settings: Settings) -> eyre::Result<()> {
+        self.write_frame(
+            FrameType::Settings(Default::default()).into_frame(StreamId::CONNECTION),
+            settings,
+        )
+        .await
+    }
+
     /// Waits for a certain kind of frame
     pub async fn wait_for_frame(&mut self, types: impl Into<BitFlags<FrameT>>) -> FrameWaitOutcome {
         let deadline = Instant::now() + self.config.timeout;
@@ -294,32 +307,16 @@ impl<IO: IntoHalves> Conn<IO> {
 
     pub async fn handshake(&mut self) -> eyre::Result<()> {
         // perform an HTTP/2 handshake as a client
+        self.w.write_all_owned(PREFACE).await?;
 
-        let preface = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
-        self.w.write_all_owned(&preface[..]).await?;
+        self.write_settings(default_settings()).await?;
 
-        self.write_frame(
-            Frame::new(
-                fluke_h2_parse::FrameType::Settings(Default::default()),
-                StreamId::CONNECTION,
-            ),
-            Settings::default(),
-        )
-        .await?;
-
-        // now wait for the server's settings frame, which must be the first frame
         let (frame, _payload) = self.wait_for_frame(FrameT::Settings).await.unwrap();
-        match frame.frame_type {
-            FrameType::Settings(flags) => {
-                assert!(
-                    flags.contains(SettingsFlags::Ack),
-                    "server should send their settings first thing (no ack)"
-                );
-            }
-            _ => unreachable!(),
-        };
+        assert!(
+            !frame.is_ack(),
+            "server should send their settings first thing (no ack)"
+        );
 
-        // good, good! let's acknowledge the server's settings
         self.write_frame(
             Frame::new(
                 FrameType::Settings(SettingsFlags::Ack.into()),
@@ -331,15 +328,7 @@ impl<IO: IntoHalves> Conn<IO> {
 
         // and wait until the server acknowledges our settings
         let (frame, _payload) = self.wait_for_frame(FrameT::Settings).await.unwrap();
-        match frame.frame_type {
-            FrameType::Settings(flags) => {
-                assert!(
-                    flags.contains(SettingsFlags::Ack),
-                    "server should acknowledge our settings"
-                );
-            }
-            _ => unreachable!(),
-        }
+        assert!(frame.is_ack(), "server shoudl acknowledge our settings");
 
         Ok(())
     }
@@ -353,6 +342,8 @@ impl<IO: IntoHalves> Conn<IO> {
         &mut self,
         codes: impl Into<BitFlags<ErrorC>>,
     ) -> eyre::Result<()> {
+        let codes = codes.into();
+
         let deadline = Instant::now() + self.config.timeout;
         let mut last_frame: Option<Frame> = None;
 
@@ -370,7 +361,7 @@ impl<IO: IntoHalves> Conn<IO> {
                 Some(frame) => frame,
             };
 
-            let (frame, ..) = match ev {
+            let (frame, payload) = match ev {
                 Ev::Frame { frame, payload } => (frame, payload),
                 Ev::IoError { .. } => {
                     // that's probably connection reset? but we should check more closely
@@ -380,14 +371,40 @@ impl<IO: IntoHalves> Conn<IO> {
 
             match frame.frame_type {
                 FrameType::GoAway => {
-                    // that's what we expected!
-                    return Ok(());
+                    let (_, goaway) = GoAway::parse(payload).finish().unwrap();
+
+                    let error_c = match KnownErrorCode::try_from(goaway.error_code) {
+                        Ok(error_code) => ErrorC::from(error_code),
+                        Err(_) => {
+                            return Err(eyre::eyre!(
+                                "Expected GOAWAY with one of {codes:?}, but got unknown error code {} (0x{:x})",
+                                goaway.error_code.as_repr(), goaway.error_code.as_repr()
+                            ));
+                        }
+                    };
+
+                    if codes.contains(error_c) {
+                        // that's what we expected!
+                        return Ok(());
+                    }
+
+                    return Err(eyre::eyre!(
+                        "Expected GOAWAY with one of {codes:?}, but got {error_c:?}"
+                    ));
                 }
                 _ => {
                     last_frame = Some(frame);
                 }
             }
         }
+    }
+
+    async fn verify_stream_error(
+        &mut self,
+        codes: impl Into<BitFlags<ErrorC>>,
+    ) -> eyre::Result<()> {
+        let codes = codes.into();
+        todo!("should verify stream error with {:?}", codes)
     }
 }
 

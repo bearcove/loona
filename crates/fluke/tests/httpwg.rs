@@ -104,6 +104,7 @@ pub fn start_server() -> httpwg::Conn<TwoHalves<PipeWrite, PipeRead>> {
     httpwg::Conn::new(config, TwoHalves(client_write, client_read))
 }
 
+#[cfg(test)]
 httpwg_macros::tests! {{
    crate::setup_tracing_and_error_reporting();
 

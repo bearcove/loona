@@ -356,10 +356,26 @@ impl Frame {
         let ft = self.frame_type.encode();
         w.write_u8(ft.ty)?;
         w.write_u8(ft.flags)?;
-        // TODO: do we ever need to write the reserved bit?
-        w.write_u32::<BigEndian>(self.stream_id.0)?;
+        w.write_all(&pack_reserved_and_stream_id(self.reserved, self.stream_id))?;
 
         Ok(())
+    }
+
+    /// Returns true if this  frame is an ack
+    pub fn is_ack(self) -> bool {
+        match self.frame_type {
+            FrameType::Data(_) => false,
+            FrameType::Headers(_) => false,
+            FrameType::Priority => false,
+            FrameType::RstStream => false,
+            FrameType::Settings(flags) => flags.contains(SettingsFlags::Ack),
+            FrameType::PushPromise => false,
+            FrameType::Ping(flags) => flags.contains(PingFlags::Ack),
+            FrameType::GoAway => false,
+            FrameType::WindowUpdate => false,
+            FrameType::Continuation(_) => false,
+            FrameType::Unknown(_) => false,
+        }
     }
 }
 
@@ -389,6 +405,15 @@ fn parse_reserved_and_stream_id(i: Roll) -> IResult<Roll, (u8, StreamId)> {
     parse_reserved_and_u31(i).map(|(i, (reserved, stream_id))| (i, (reserved, StreamId(stream_id))))
 }
 
+/// Pack `reserved` into the first bit of a u32 and write it out as big-endian
+fn pack_reserved_and_stream_id(reserved: u8, stream_id: StreamId) -> [u8; 4] {
+    let mut bytes = stream_id.0.to_be_bytes();
+    if reserved != 0 {
+        bytes[0] |= 0b1000_0000;
+    }
+    bytes
+}
+
 // cf. https://httpwg.org/specs/rfc9113.html#HEADERS
 #[derive(Debug)]
 pub struct PrioritySpec {
@@ -413,6 +438,13 @@ impl PrioritySpec {
 
 #[derive(Clone, Copy)]
 pub struct ErrorCode(u32);
+
+impl ErrorCode {
+    /// Returns the underlying u32
+    pub fn as_repr(self) -> u32 {
+        self.0
+    }
+}
 
 impl fmt::Debug for ErrorCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

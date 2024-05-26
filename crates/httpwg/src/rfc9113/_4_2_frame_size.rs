@@ -3,7 +3,7 @@
 use fluke_buffet::IntoHalves;
 use fluke_h2_parse::{Frame, FrameType, StreamId};
 
-use crate::{Conn, FrameT};
+use crate::{Conn, ErrorC};
 
 /// An endpoint MUST send an error code of FRAME_SIZE_ERROR if a frame
 /// exceeds the size defined in SETTINGS_MAX_FRAME_SIZE, exceeds any
@@ -19,9 +19,7 @@ pub async fn frame_exceeding_max_size<IO: IntoHalves + 'static>(
     let f = Frame::new(FrameType::Headers(Default::default()), StreamId(1));
     _ = conn.write_frame(f, vec![0u8; 16384 + 1]).await;
 
-    // FIXME: a stream reset is okay too, a connection reset is okay too, see h2spec's
-    //
-    conn.wait_for_frame(FrameT::GoAway).await;
+    conn.verify_stream_error(ErrorC::FrameSizeError).await?;
 
     Ok(())
 }
