@@ -344,57 +344,34 @@ impl<IO: IntoHalves> Conn<IO> {
     ) -> eyre::Result<()> {
         let codes = codes.into();
 
-        let deadline = Instant::now() + self.config.timeout;
-        let mut last_frame: Option<Frame> = None;
+        match self.wait_for_frame(FrameT::GoAway).await {
+            FrameWaitOutcome::Success(_frame, payload) => {
+                let (_, goaway) = GoAway::parse(payload).finish().unwrap();
+                let error_c: ErrorC = KnownErrorCode::try_from(goaway.error_code)
+                    .map_err(|_| eyre::eyre!(
+                        "Expected GOAWAY with one of {codes:?}, but got unknown error code {} (0x{:x})",
+                        goaway.error_code.as_repr(), goaway.error_code.as_repr()
+                    ))?
+                    .into();
 
-        loop {
-            let fut = tokio::time::timeout_at(deadline, self.ev_rx.recv());
-            let maybe_ev = fut.await.map_err(|_| {
-                eyre!("Timed out while waiting for connection error, last frame: ({last_frame:?})")
-            })?;
-
-            let ev = match maybe_ev {
-                None => {
-                    // that's EOF / connection closed, it passes
+                if codes.contains(error_c) {
+                    // that's what we expected!
                     return Ok(());
                 }
-                Some(frame) => frame,
-            };
-
-            let (frame, payload) = match ev {
-                Ev::Frame { frame, payload } => (frame, payload),
-                Ev::IoError { .. } => {
-                    // that's probably connection reset? but we should check more closely
-                    return Ok(());
-                }
-            };
-
-            match frame.frame_type {
-                FrameType::GoAway => {
-                    let (_, goaway) = GoAway::parse(payload).finish().unwrap();
-
-                    let error_c = match KnownErrorCode::try_from(goaway.error_code) {
-                        Ok(error_code) => ErrorC::from(error_code),
-                        Err(_) => {
-                            return Err(eyre::eyre!(
-                                "Expected GOAWAY with one of {codes:?}, but got unknown error code {} (0x{:x})",
-                                goaway.error_code.as_repr(), goaway.error_code.as_repr()
-                            ));
-                        }
-                    };
-
-                    if codes.contains(error_c) {
-                        // that's what we expected!
-                        return Ok(());
-                    }
-
-                    return Err(eyre::eyre!(
-                        "Expected GOAWAY with one of {codes:?}, but got {error_c:?}"
-                    ));
-                }
-                _ => {
-                    last_frame = Some(frame);
-                }
+                Err(eyre::eyre!(
+                    "Expected GOAWAY with one of {codes:?}, but got {error_c:?}"
+                ))
+            }
+            FrameWaitOutcome::Timeout { last_frame, .. } => Err(eyre!(
+                "Timed out while waiting for connection error, last frame: ({last_frame:?})"
+            )),
+            FrameWaitOutcome::Eof { .. } => {
+                // that's fine
+                Ok(())
+            }
+            FrameWaitOutcome::IoError { .. } => {
+                // TODO: that's fine if it's a connection reset, we should probably check
+                Ok(())
             }
         }
     }
