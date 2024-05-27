@@ -10,10 +10,13 @@ ci-test:
     just cov
 
 cov:
-	scripts/cov.sh
-
-quick-cov:
-	SKIP_H2SPEC=1 scripts/cov.sh
+    #!/bin/bash -eux
+    just build-testbed
+    export RUSTUP_TOOLCHAIN=nightly-2024-05-26
+    rm -rf coverage
+    mkdir -p coverage
+    cargo llvm-cov nextest --branch --ignore-filename-regex '.*crates/(httpwg|fluke-hyper-testbed|fluke-tls-sample|fluke-sample-h2-server).*' --html --output-dir=coverage
+    cargo llvm-cov report --lcov --output-path 'coverage/lcov.info'
 
 # Run all tests with cargo nextest
 test *args:
@@ -27,15 +30,12 @@ build-testbed:
 single-test *args:
 	just test --no-capture {{args}}
 
-h2spec *args:
-	#!/bin/bash -eux
-	export RUST_LOG="${RUST_LOG:-fluke=debug,fluke_hpack=info}"
-	export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
-	cargo run -p fluke-h2spec -- {{args}}
-
 check:
 	#!/bin/bash -eu
 	cargo clippy --all-targets --all-features
 
 tls-sample:
 	cargo run -p fluke-tls-sample
+
+httpwg-gen:
+    cargo run --release --package httpwg-gen

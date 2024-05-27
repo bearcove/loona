@@ -159,7 +159,7 @@ where
         encode_response(res, &mut list)?;
 
         self.transport_w
-            .writev_all(list)
+            .writev_all_owned(list)
             .await
             .wrap_err("writing response headers upstream")?;
 
@@ -187,7 +187,7 @@ where
         encode_headers(*trailers, &mut list)?;
 
         self.transport_w
-            .writev_all(list)
+            .writev_all_owned(list)
             .await
             .wrap_err("writing response headers upstream")?;
 

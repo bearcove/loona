@@ -1,29 +1,28 @@
-use std::net::Shutdown;
-
 use crate::{BufResult, IoBufMut, Piece, PieceList};
 
-mod chan;
-pub use chan::*;
+mod pipe;
+pub use pipe::*;
 
 mod non_uring;
 
 #[allow(async_fn_in_trait)] // we never require Send
 pub trait ReadOwned {
-    async fn read<B: IoBufMut>(&mut self, buf: B) -> BufResult<usize, B>;
+    async fn read_owned<B: IoBufMut>(&mut self, buf: B) -> BufResult<usize, B>;
 }
 
 #[allow(async_fn_in_trait)] // we never require Send
 pub trait WriteOwned {
     /// Write a single buffer, taking ownership for the duration of the write.
     /// Might perform a partial write, see [WriteOwned::write_all]
-    async fn write(&mut self, buf: Piece) -> BufResult<usize, Piece>;
+    async fn write_owned(&mut self, buf: impl Into<Piece>) -> BufResult<usize, Piece>;
 
     /// Write a single buffer, re-trying the write if the kernel does a partial write.
-    async fn write_all(&mut self, mut buf: Piece) -> std::io::Result<()> {
+    async fn write_all_owned(&mut self, buf: impl Into<Piece>) -> std::io::Result<()> {
+        let mut buf = buf.into();
         let mut written = 0;
         let len = buf.len();
         while written < len {
-            let (res, slice) = self.write(buf).await;
+            let (res, slice) = self.write_owned(buf).await;
             let n = res?;
             if n == 0 {
                 return Err(std::io::Error::new(
@@ -39,12 +38,12 @@ pub trait WriteOwned {
 
     /// Write a list of buffers, taking ownership for the duration of the write.
     /// Might perform a partial write, see [WriteOwned::writev_all]
-    async fn writev(&mut self, list: &PieceList) -> std::io::Result<usize> {
+    async fn writev_owned(&mut self, list: &PieceList) -> std::io::Result<usize> {
         let mut total = 0;
 
         for buf in list.pieces.iter().cloned() {
             let buf_len = buf.len();
-            let (res, _) = self.write(buf).await;
+            let (res, _) = self.write_owned(buf).await;
 
             match res {
                 Ok(0) => {
@@ -70,9 +69,9 @@ pub trait WriteOwned {
     }
 
     /// Write a list of buffers, re-trying the write if the kernel does a partial write.
-    async fn writev_all(&mut self, mut list: PieceList) -> std::io::Result<()> {
+    async fn writev_all_owned(&mut self, mut list: PieceList) -> std::io::Result<()> {
         while !list.is_empty() {
-            let n = self.writev(&list).await?;
+            let n = self.writev_owned(&list).await?;
             if n == 0 {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::WriteZero,
@@ -104,7 +103,9 @@ pub trait WriteOwned {
         Ok(())
     }
 
-    async fn shutdown(&mut self, how: Shutdown) -> std::io::Result<()>;
+    /// Shuts down the write end of this socket. This flushes
+    /// any data that may not have been send.
+    async fn shutdown(&mut self) -> std::io::Result<()>;
 }
 
 #[cfg(all(test, not(feature = "miri")))]
@@ -126,7 +127,8 @@ mod tests {
         }
 
         impl WriteOwned for Writer {
-            async fn write(&mut self, buf: Piece) -> BufResult<usize, Piece> {
+            async fn write_owned(&mut self, buf: impl Into<Piece>) -> BufResult<usize, Piece> {
+                let buf = buf.into();
                 assert!(!buf.is_empty(), "zero-length writes are forbidden");
 
                 match self.mode {
@@ -142,7 +144,7 @@ mod tests {
                 }
             }
 
-            async fn shutdown(&mut self, _how: std::net::Shutdown) -> std::io::Result<()> {
+            async fn shutdown(&mut self) -> std::io::Result<()> {
                 Ok(())
             }
         }
@@ -153,7 +155,7 @@ mod tests {
                 bytes: Default::default(),
             };
             let buf_a = vec![1, 2, 3, 4, 5];
-            let res = writer.write_all(buf_a.into()).await;
+            let res = writer.write_all_owned(buf_a).await;
             assert!(res.is_err());
 
             let mut writer = Writer {
@@ -163,7 +165,7 @@ mod tests {
             let buf_a = vec![1, 2, 3, 4, 5];
             let buf_b = vec![6, 7, 8, 9, 10];
             let res = writer
-                .writev_all(PieceList::single(buf_a).followed_by(buf_b))
+                .writev_all_owned(PieceList::single(buf_a).followed_by(buf_b))
                 .await;
             assert!(res.is_err());
 
@@ -172,7 +174,7 @@ mod tests {
                 bytes: Default::default(),
             };
             let buf_a = vec![1, 2, 3, 4, 5];
-            writer.write_all(buf_a.into()).await.unwrap();
+            writer.write_all_owned(buf_a).await.unwrap();
             assert_eq!(&writer.bytes.borrow()[..], &[1, 2, 3, 4, 5]);
 
             let mut writer = Writer {
@@ -182,7 +184,7 @@ mod tests {
             let buf_a = vec![1, 2, 3, 4, 5];
             let buf_b = vec![6, 7, 8, 9, 10];
             writer
-                .writev_all(PieceList::single(buf_a).followed_by(buf_b))
+                .writev_all_owned(PieceList::single(buf_a).followed_by(buf_b))
                 .await
                 .unwrap();
             assert_eq!(&writer.bytes.borrow()[..], &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);

@@ -3,10 +3,16 @@
 //! HTTP/2 <https://httpwg.org/specs/rfc9113.html>
 //! HTTP semantics <https://httpwg.org/specs/rfc9110.html>
 
-use std::{fmt, ops::RangeInclusive};
+use std::{fmt, io::Write, ops::RangeInclusive};
 
+use byteorder::{BigEndian, WriteBytesExt};
 use enum_repr::EnumRepr;
+
+pub use enumflags2;
 use enumflags2::{bitflags, BitFlags};
+
+pub use nom;
+
 use nom::{
     combinator::map,
     number::streaming::{be_u16, be_u24, be_u32, be_u8},
@@ -14,7 +20,7 @@ use nom::{
     IResult,
 };
 
-use fluke_buffet::{Roll, RollMut};
+use fluke_buffet::{Piece, Roll, RollMut};
 
 /// This is sent by h2 clients after negotiating over ALPN, or when doing h2c.
 pub const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
@@ -22,6 +28,10 @@ pub const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 pub fn preface(i: Roll) -> IResult<Roll, ()> {
     let (i, _) = nom::bytes::streaming::tag(PREFACE)(i)?;
     Ok((i, ()))
+}
+
+pub trait IntoPiece {
+    fn into_piece(self, scratch: &mut RollMut) -> std::io::Result<Piece>;
 }
 
 /// See https://httpwg.org/specs/rfc9113.html#FrameTypes
@@ -54,6 +64,18 @@ pub enum FrameType {
     WindowUpdate,
     Continuation(BitFlags<ContinuationFlags>),
     Unknown(EncodedFrameType),
+}
+
+impl FrameType {
+    /// Turn this [FrameType] into a [Frame]
+    pub fn into_frame(self, stream_id: StreamId) -> Frame {
+        Frame {
+            frame_type: self,
+            len: 0,
+            reserved: 0,
+            stream_id,
+        }
+    }
 }
 
 /// See https://httpwg.org/specs/rfc9113.html#DATA
@@ -169,7 +191,7 @@ impl FrameType {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct StreamId(pub(crate) u32);
+pub struct StreamId(pub u32);
 
 impl StreamId {
     /// Stream ID used for connection control frames
@@ -328,22 +350,40 @@ impl Frame {
         Ok((i, frame))
     }
 
-    pub fn write_into(self, mut w: impl std::io::Write) -> eyre::Result<()> {
+    pub fn write_into(self, mut w: impl std::io::Write) -> std::io::Result<()> {
         use byteorder::{BigEndian, WriteBytesExt};
         w.write_u24::<BigEndian>(self.len as _)?;
         let ft = self.frame_type.encode();
         w.write_u8(ft.ty)?;
         w.write_u8(ft.flags)?;
-        // TODO: do we ever need to write the reserved bit?
-        w.write_u32::<BigEndian>(self.stream_id.0)?;
+        w.write_all(&pack_reserved_and_stream_id(self.reserved, self.stream_id))?;
 
         Ok(())
     }
 
-    pub fn into_roll(self, mut scratch: &mut RollMut) -> eyre::Result<Roll> {
+    /// Returns true if this  frame is an ack
+    pub fn is_ack(self) -> bool {
+        match self.frame_type {
+            FrameType::Data(_) => false,
+            FrameType::Headers(_) => false,
+            FrameType::Priority => false,
+            FrameType::RstStream => false,
+            FrameType::Settings(flags) => flags.contains(SettingsFlags::Ack),
+            FrameType::PushPromise => false,
+            FrameType::Ping(flags) => flags.contains(PingFlags::Ack),
+            FrameType::GoAway => false,
+            FrameType::WindowUpdate => false,
+            FrameType::Continuation(_) => false,
+            FrameType::Unknown(_) => false,
+        }
+    }
+}
+
+impl IntoPiece for Frame {
+    fn into_piece(self, mut scratch: &mut RollMut) -> std::io::Result<Piece> {
         debug_assert_eq!(scratch.len(), 0);
         self.write_into(&mut scratch)?;
-        Ok(scratch.take_all())
+        Ok(scratch.take_all().into())
     }
 }
 
@@ -365,9 +405,18 @@ fn parse_reserved_and_stream_id(i: Roll) -> IResult<Roll, (u8, StreamId)> {
     parse_reserved_and_u31(i).map(|(i, (reserved, stream_id))| (i, (reserved, StreamId(stream_id))))
 }
 
+/// Pack `reserved` into the first bit of a u32 and write it out as big-endian
+fn pack_reserved_and_stream_id(reserved: u8, stream_id: StreamId) -> [u8; 4] {
+    let mut bytes = stream_id.0.to_be_bytes();
+    if reserved != 0 {
+        bytes[0] |= 0b1000_0000;
+    }
+    bytes
+}
+
 // cf. https://httpwg.org/specs/rfc9113.html#HEADERS
 #[derive(Debug)]
-pub(crate) struct PrioritySpec {
+pub struct PrioritySpec {
     pub exclusive: bool,
     pub stream_dependency: StreamId,
     // 0-255 => 1-256
@@ -375,7 +424,7 @@ pub(crate) struct PrioritySpec {
 }
 
 impl PrioritySpec {
-    pub(crate) fn parse(i: Roll) -> IResult<Roll, Self> {
+    pub fn parse(i: Roll) -> IResult<Roll, Self> {
         map(
             tuple((parse_reserved_and_stream_id, be_u8)),
             |((exclusive, stream_dependency), weight)| Self {
@@ -389,6 +438,13 @@ impl PrioritySpec {
 
 #[derive(Clone, Copy)]
 pub struct ErrorCode(u32);
+
+impl ErrorCode {
+    /// Returns the underlying u32
+    pub fn as_repr(self) -> u32 {
+        self.0
+    }
+}
 
 impl fmt::Debug for ErrorCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -669,7 +725,7 @@ impl Settings {
 
     /// Encode these settings into (u16, u32) pairs as specified in
     /// https://httpwg.org/specs/rfc9113.html#SETTINGS
-    pub fn write_into(self, mut w: impl std::io::Write) -> eyre::Result<()> {
+    pub fn write_into(self, mut w: impl std::io::Write) -> std::io::Result<()> {
         use byteorder::{BigEndian, WriteBytesExt};
 
         for (id, value) in self.pairs() {
@@ -679,11 +735,88 @@ impl Settings {
 
         Ok(())
     }
+}
 
-    /// Same as `write_into` but uses a scratch [RollMut] to return a [Roll]
-    pub fn into_roll(self, mut scratch: &mut RollMut) -> eyre::Result<Roll> {
+impl IntoPiece for Settings {
+    fn into_piece(self, mut scratch: &mut RollMut) -> std::io::Result<Piece> {
         debug_assert_eq!(scratch.len(), 0);
         self.write_into(&mut scratch)?;
-        Ok(scratch.take_all())
+        Ok(scratch.take_all().into())
+    }
+}
+
+/// Payload for a GOAWAY frame
+pub struct GoAway {
+    pub last_stream_id: StreamId,
+    pub error_code: ErrorCode,
+    pub additional_debug_data: Piece,
+}
+
+impl IntoPiece for GoAway {
+    fn into_piece(self, scratch: &mut RollMut) -> std::io::Result<Piece> {
+        let roll = scratch
+            .put_to_roll(8 + self.additional_debug_data.len(), |mut slice| {
+                slice.write_u32::<BigEndian>(self.last_stream_id.0)?;
+                slice.write_u32::<BigEndian>(self.error_code.0)?;
+                slice.write_all(&self.additional_debug_data[..])?;
+
+                Ok(())
+            })
+            .unwrap();
+        Ok(roll.into())
+    }
+}
+
+impl GoAway {
+    pub fn parse(i: Roll) -> IResult<Roll, Self> {
+        let (rest, (last_stream_id, error_code)) = tuple((be_u32, be_u32))(i)?;
+
+        let i = Roll::empty();
+        Ok((
+            i,
+            Self {
+                last_stream_id: StreamId(last_stream_id),
+                error_code: ErrorCode(error_code),
+                additional_debug_data: rest.into(),
+            },
+        ))
+    }
+}
+
+/// Payload for a RST_STREAM frame
+pub struct RstStream {
+    pub error_code: ErrorCode,
+}
+
+impl IntoPiece for RstStream {
+    fn into_piece(self, scratch: &mut RollMut) -> std::io::Result<Piece> {
+        let roll = scratch
+            .put_to_roll(4, |mut slice| {
+                slice.write_u32::<BigEndian>(self.error_code.0)?;
+                Ok(())
+            })
+            .unwrap();
+        Ok(roll.into())
+    }
+}
+
+impl RstStream {
+    pub fn parse(i: Roll) -> IResult<Roll, Self> {
+        let (rest, error_code) = be_u32(i)?;
+        Ok((
+            rest,
+            Self {
+                error_code: ErrorCode(error_code),
+            },
+        ))
+    }
+}
+
+impl<T> IntoPiece for T
+where
+    Piece: From<T>,
+{
+    fn into_piece(self, _scratch: &mut RollMut) -> std::io::Result<Piece> {
+        Ok(self.into())
     }
 }

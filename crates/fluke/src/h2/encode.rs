@@ -2,11 +2,9 @@ use http::{StatusCode, Version};
 use tokio::sync::mpsc;
 use tracing::debug;
 
-use super::{
-    parse::StreamId,
-    types::{H2Event, H2EventPayload},
-};
+use super::types::{H2Event, H2EventPayload};
 use crate::{h1::body::BodyWriteMode, Encoder, Response};
+use fluke_h2_parse::StreamId;
 
 pub(crate) enum EncoderState {
     ExpectResponseHeaders,

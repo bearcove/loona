@@ -4,8 +4,6 @@
 mod server;
 pub use server::*;
 
-pub(crate) mod parse;
-
 mod body;
 mod encode;
 mod types;

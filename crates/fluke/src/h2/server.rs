@@ -2,21 +2,24 @@ use std::{
     borrow::Cow,
     collections::HashSet,
     io::Write,
-    net::Shutdown,
     rc::Rc,
     sync::atomic::{AtomicU32, Ordering},
 };
 
 use byteorder::{BigEndian, WriteBytesExt};
-use enumflags2::BitFlags;
 use eyre::Context;
 use fluke_buffet::{Piece, PieceList, PieceStr, ReadOwned, Roll, RollMut, WriteOwned};
+use fluke_h2_parse::{
+    self as parse, enumflags2::BitFlags, nom::Finish, parse_reserved_and_u31, ContinuationFlags,
+    DataFlags, Frame, FrameType, HeadersFlags, PingFlags, PrioritySpec, Settings, SettingsFlags,
+    StreamId,
+};
 use http::{
     header,
     uri::{Authority, PathAndQuery, Scheme},
     HeaderName, Version,
 };
-use nom::Finish;
+use parse::IntoPiece;
 use smallvec::{smallvec, SmallVec};
 use tokio::sync::mpsc;
 use tracing::{debug, trace};
@@ -25,10 +28,6 @@ use crate::{
     h2::{
         body::{H2Body, PieceOrTrailers, StreamIncoming, StreamIncomingItem},
         encode::{EncoderState, H2Encoder},
-        parse::{
-            self, parse_reserved_and_u31, ContinuationFlags, DataFlags, Frame, FrameType,
-            HeadersFlags, PingFlags, PrioritySpec, Settings, SettingsFlags, StreamId,
-        },
         types::{
             BodyOutgoing, ConnState, H2ConnectionError, H2Event, H2EventPayload, H2StreamError,
             HeadersOrTrailers, HeadersOutgoing, StreamOutgoing, StreamState,
@@ -62,7 +61,7 @@ pub async fn serve(
 
     let mut cx = ServerContext::new(driver.clone(), state, transport_w)?;
     cx.work(client_buf, transport_r).await?;
-    cx.transport_w.shutdown(Shutdown::Both).await?;
+    cx.transport_w.shutdown().await?;
 
     debug!("finished serving");
     Ok(())
@@ -119,7 +118,6 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
     ) -> eyre::Result<()> {
         // first read the preface
         {
-            debug!("Reading preface");
             (client_buf, _) = match read_and_parse(
                 parse::preface,
                 &mut transport_r,
@@ -134,13 +132,12 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     return Ok(());
                 }
             };
-            debug!("Reading preface: done");
         }
 
         // then send our initial settings
         {
             debug!("Sending initial settings");
-            let payload = self.state.self_settings.into_roll(&mut self.out_scratch)?;
+            let payload = self.state.self_settings.into_piece(&mut self.out_scratch)?;
             let frame = Frame::new(
                 FrameType::Settings(Default::default()),
                 StreamId::CONNECTION,
@@ -172,22 +169,33 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 res = &mut deframe_task => {
                     debug!(?res, "h2 deframe task finished");
 
-                    if let Err(H2ConnectionError::ReadError(e)) = res {
-                        let mut should_ignore_err = false;
+                    if let Err(e) = res {
+                        match e {
+                            H2ConnectionError::ReadError(e) => {
+                                let mut should_ignore_err = false;
 
-                        // if this is a connection reset and we've sent a goaway, ignore it
-                        if let Some(io_error) = e.root_cause().downcast_ref::<std::io::Error>() {
-                            if io_error.kind() == std::io::ErrorKind::ConnectionReset {
-                                should_ignore_err = true;
+                                // if this is a connection reset and we've sent a goaway, ignore it
+                                if let Some(io_error) = e.root_cause().downcast_ref::<std::io::Error>() {
+                                    if io_error.kind() == std::io::ErrorKind::ConnectionReset {
+                                        should_ignore_err = true;
+                                    }
+                                }
+
+                                debug!(%should_ignore_err, "deciding whether or not to propagate deframer error");
+                                if !should_ignore_err {
+                                    return Err(e.wrap_err("h2 io"));
+                                }
+                            },
+                            e => {
+                                debug!("turning error into GOAWAY");
+                                goaway_err = Some(e)
                             }
-                        }
-
-                        if !should_ignore_err {
-                            return Err(e.wrap_err("h2 io"));
                         }
                     }
 
                     if let Err(e) = (&mut process_task).await {
+                        // what about the GOAWAY?
+
                         debug!("h2 process task finished with error: {e}");
                         return Err(e).wrap_err("h2 process");
                     }
@@ -746,18 +754,20 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 max_frame_size: u32::MAX,
             })?;
         debug!(?frame, ">");
-        let frame_roll = frame.into_roll(&mut self.out_scratch)?;
+        let frame_roll = frame
+            .into_piece(&mut self.out_scratch)
+            .map_err(|e| eyre::eyre!(e))?;
 
         if payload.is_empty() {
             trace!("Writing frame without payload");
             self.transport_w
-                .write_all(frame_roll.into())
+                .write_all_owned(frame_roll)
                 .await
                 .map_err(H2ConnectionError::WriteError)?;
         } else {
             trace!("Writing frame with payload");
             self.transport_w
-                .writev_all(payload.preceded_by(frame_roll))
+                .writev_all_owned(payload.preceded_by(frame_roll))
                 .await
                 .map_err(H2ConnectionError::WriteError)?;
         }
@@ -1199,10 +1209,13 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         debug!("Sending rst because: {e} (known error code: {error_code:?})");
 
         debug!(%stream_id, ?error_code, "Sending RstStream");
-        let payload = self.out_scratch.put_to_roll(4, |mut slice| {
-            slice.write_u32::<BigEndian>(error_code.repr())?;
-            Ok(())
-        })?;
+        let payload = self
+            .out_scratch
+            .put_to_roll(4, |mut slice| {
+                slice.write_u32::<BigEndian>(error_code.repr())?;
+                Ok(())
+            })
+            .unwrap();
 
         let frame = Frame::new(FrameType::RstStream, stream_id)
             .with_len((payload.len()).try_into().unwrap());

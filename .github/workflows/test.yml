@@ -52,17 +52,11 @@ jobs:
           rustc --version
       - uses: taiki-e/install-action@v2
         with:
-          tool: just,cargo-nextest
-      - name: Run unit tests and h2spec
+          tool: just,cargo-nextest,cargo-llvm-cov
+      - name: Run tests
         run: |
           cd ${{ github.workspace }}
           cargo clippy
-          mkdir tools
-          export PATH=$PATH:${PWD}/tools
-          # (pushd tools && curl -L https://github.com/summerwind/h2spec/releases/download/v2.6.0/h2spec_linux_amd64.tar.gz | tar -xz && popd)
-          # Uses https://github.com/summerwind/h2spec/pull/123, more precisely
-          # https://github.com/fasterthanlime/h2spec/commit/72a6b9b2b01133d292bd74e019fde86c3638094a
-          (pushd tools && curl -fL https://github.com/bearcove/h2spec-binaries/releases/download/72a6b9b/h2spec -o h2spec && chmod +x h2spec && popd)
           just ci-test
       - name: Upload coverage information
         uses: codecov/codecov-action@v4

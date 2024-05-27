@@ -1,7 +1,7 @@
 mod helpers;
 
 use bytes::BytesMut;
-use fluke::buffet::{ChanRead, ChanWrite, IntoHalves};
+use fluke::buffet::{IntoHalves, ReadOwned, WriteOwned};
 use fluke::{
     buffet::{PieceCore, RollMut},
     h1, h2, Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, HeadersExt, Method, Request,
@@ -12,10 +12,8 @@ use httparse::{Status, EMPTY_HEADER};
 use pretty_assertions::assert_eq;
 use pretty_hex::PrettyHex;
 use std::{future::Future, net::SocketAddr, process::Command, rc::Rc, time::Duration};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
-};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 use tracing::debug;
 
 mod proxy;
@@ -82,17 +80,30 @@ fn serve_api() {
             }
         }
 
-        let (tx, read) = ChanRead::new();
-        let (mut rx, write) = ChanWrite::new();
+        let (mut client_write, server_read) = fluke::buffet::pipe();
+        let (server_write, mut client_read) = fluke::buffet::pipe();
         let client_buf = RollMut::alloc()?;
         let driver = TestDriver;
-        let serve_fut = fluke::buffet::spawn(h1::serve((read, write), conf, client_buf, driver));
+        let serve_fut = fluke::buffet::spawn(h1::serve(
+            (server_read, server_write),
+            conf,
+            client_buf,
+            driver,
+        ));
 
-        tx.send("GET / HTTP/1.1\r\n\r\n").await?;
+        client_write
+            .write_all_owned("GET / HTTP/1.1\r\n\r\n")
+            .await?;
         let mut res_buf = BytesMut::new();
-        while let Some(chunk) = rx.recv().await {
+        let mut buf = vec![0u8; 1024];
+        loop {
+            let res;
+            (res, buf) = client_read.read_owned(buf).await;
+            let n = res.unwrap();
+            let chunk = &buf[..n];
+
             debug!("Got a chunk:\n{:?}", chunk.hex_dump());
-            res_buf.extend_from_slice(&chunk[..]);
+            res_buf.extend_from_slice(chunk);
 
             let mut headers = [EMPTY_HEADER; 16];
             let mut res = httparse::Response::new(&mut headers[..]);
@@ -119,7 +130,7 @@ fn serve_api() {
             }
         }
 
-        drop(tx);
+        drop(client_write);
 
         tokio::time::timeout(Duration::from_secs(5), serve_fut).await???;
 
@@ -130,8 +141,8 @@ fn serve_api() {
 #[test]
 fn request_api() {
     helpers::run(async move {
-        let (tx, read) = ChanRead::new();
-        let (mut rx, write) = ChanWrite::new();
+        let (mut server_write, client_read) = fluke::buffet::pipe();
+        let (client_write, mut server_read) = fluke::buffet::pipe();
 
         let req = Request {
             method: Method::Get,
@@ -171,13 +182,18 @@ fn request_api() {
         let request_fut = fluke::buffet::spawn(async {
             #[allow(clippy::let_unit_value)]
             let mut body = ();
-            h1::request((read, write), req, &mut body, driver).await
+            h1::request((client_read, client_write), req, &mut body, driver).await
         });
 
         let mut req_buf = BytesMut::new();
-        while let Some(chunk) = rx.recv().await {
+        let mut buf = vec![0u8; 1024];
+        loop {
+            let res;
+            (res, buf) = server_read.read_owned(buf).await;
+            let n = res.unwrap();
+            let chunk = &buf[..n];
             debug!("Got a chunk:\n{:?}", chunk.hex_dump());
-            req_buf.extend_from_slice(&chunk[..]);
+            req_buf.extend_from_slice(chunk);
 
             let mut headers = [EMPTY_HEADER; 16];
             let mut req = httparse::Request::new(&mut headers[..]);
@@ -197,12 +213,13 @@ fn request_api() {
 
         let body = "Hi there";
         let body_len = body.len();
-        tx.send(format!(
-            "HTTP/1.1 200 OK\r\ncontent-length: {body_len}\r\n\r\n"
-        ))
-        .await?;
-        tx.send(body).await?;
-        drop(tx);
+        server_write
+            .write_all_owned(
+                format!("HTTP/1.1 200 OK\r\ncontent-length: {body_len}\r\n\r\n").into_bytes(),
+            )
+            .await?;
+        server_write.write_all_owned(body).await?;
+        drop(server_write);
 
         tokio::time::timeout(Duration::from_secs(5), request_fut).await???;
 
@@ -222,7 +239,7 @@ fn proxy_statuses() {
         for status in [200, 400, 500] {
             debug!("Asking for a {status}");
             socket
-                .write_all(format!("GET /status/{status} HTTP/1.1\r\n\r\n").as_bytes())
+                .write_all_owned(format!("GET /status/{status} HTTP/1.1\r\n\r\n").into_bytes())
                 .await?;
 
             socket.flush().await?;
@@ -283,14 +300,14 @@ fn proxy_echo_body_content_len() {
 
         let send_fut = async move {
             write
-                .write_all(
+                .write_all_owned(
                     format!("POST /echo-body HTTP/1.1\r\ncontent-length: {content_len}\r\n\r\n")
-                        .as_bytes(),
+                        .into_bytes(),
                 )
                 .await?;
             write.flush().await?;
 
-            write.write_all(body.as_bytes()).await?;
+            write.write_all_owned(body.as_bytes()).await?;
             write.flush().await?;
 
             Ok::<(), eyre::Report>(())
@@ -384,7 +401,9 @@ fn proxy_echo_body_chunked() {
 
         let send_fut = async move {
             write
-                .write_all(b"POST /echo-body HTTP/1.1\r\ntransfer-encoding: chunked\r\n\r\n")
+                .write_all_owned(
+                    &b"POST /echo-body HTTP/1.1\r\ntransfer-encoding: chunked\r\n\r\n"[..],
+                )
                 .await?;
             write.flush().await?;
 
@@ -392,12 +411,12 @@ fn proxy_echo_body_chunked() {
             for chunk in chunks {
                 let chunk_len = chunk.len();
                 write
-                    .write_all(format!("{chunk_len:x}\r\n{chunk}\r\n").as_bytes())
+                    .write_all_owned(format!("{chunk_len:x}\r\n{chunk}\r\n").into_bytes())
                     .await?;
                 write.flush().await?;
             }
 
-            write.write_all(b"0\r\n\r\n").await?;
+            write.write_all_owned(&b"0\r\n\r\n"[..]).await?;
             write.flush().await?;
 
             Ok::<(), eyre::Report>(())

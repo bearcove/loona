@@ -1,8 +1,10 @@
 coverage
 target
 target-cov
+target-codegen
 *.lcov
 lcov.info
 junit.xml
 .direnv
 .DS_Store
+/vendor

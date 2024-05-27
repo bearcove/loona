@@ -31,6 +31,9 @@ pub enum Error {
 
     #[error("out of memory")]
     OutOfMemory,
+
+    #[error("slice does not fit into this RollMut")]
+    DoesNotFit,
 }
 
 /// A buffer pool
