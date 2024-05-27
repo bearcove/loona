@@ -39,6 +39,7 @@ pub enum ItemInner {
     AssocConst(AssocConst),
     Struct(Struct),
     Constant(Constant),
+    TypeAlias(TypeAlias),
 }
 
 #[derive(Deserialize)]
@@ -72,3 +73,6 @@ pub struct Struct {}
 
 #[derive(Deserialize)]
 pub struct Constant {}
+
+#[derive(Deserialize)]
+pub struct TypeAlias {}
