@@ -13,17 +13,17 @@ Nothing in this repo is final yet, look around, but please do not use.
 
 Thanks to Shopify for funding fluke's development:
 
-[![Shopify](./static/shopify-d.svg)](https://shopify.github.io/)
+<a href="https://shopify.github.io/"><img src="./static/shopify-d.svg" height="40"></a>
 
 Thanks to Namespace for providing fast GitHub Actions workers:
 
-[![Namespace](./static/namespace-d.svg)](https://namespace.so)
+<a href="https://namespace.so"><img src="./static/namespace-d.svg" height="40"></a>
 
-Thanks to all my [individual sponsors](https://fasterthanli.me/donate).
+Thanks to all my <a href="https://fasterthanli.me/donate">individual sponsors</a>.
 
 And finally, thanks to fly for their past funding:
 
-[![fly.io](./static/flyio-d.svg)](https://fly.io/docs/about/open-source/)
+<a href="https://fly.io/docs/about/open-source/"><img src="./static/flyio-d.svg" height="40"></a>
 
 ## License
 
