@@ -25,7 +25,6 @@ fn main() {
     cmd.args(["--output-format", "json"]);
     cmd.args(["--package", "httpwg"]);
     cmd.args(["--target-dir", "target-codegen"]);
-    cmd.arg("--frozen");
     cmd.env("RUSTC_BOOTSTRAP", "1");
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
