@@ -2,6 +2,14 @@
 name = "httpwg"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bearcove/fluke"
+documentation = "https://docs.rs/httpwg"
+readme = "README.md"
+description = """
+Test cases for RFC 9113 (HTTP/2)
+"""
+rust-version = "1.75"
 
 [dependencies]
 bytes = "1.5.0"

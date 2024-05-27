@@ -3,6 +3,7 @@ name = "httpwg-gen"
 version = "0.1.0"
 edition = "2021"
 description = "Generates httpwg-macros from rustdoc's JSON output"
+publish = false
 
 [dependencies]
 serde = { version = "1.0.197", features = ["derive"] }
