@@ -62,3 +62,4 @@ libc = "0.2.153"
 httpwg = { path = "../httpwg" }
 color-eyre = "0.6.3"
 httpwg-macros = { path = "../httpwg-macros" }
+cargo-husky = { version = "1", features = ["user-hooks"] }
