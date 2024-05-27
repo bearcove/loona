@@ -10,7 +10,13 @@ ci-test:
     just cov
 
 cov:
-	scripts/cov.sh
+    #!/bin/bash -eux
+    just build-testbed
+    export RUSTUP_TOOLCHAIN=nightly-2024-05-26
+    rm -rf coverage
+    mkdir -p coverage
+    cargo llvm-cov nextest --branch --ignore-filename-regex '.*crates/(httpwg|fluke-hyper-testbed|fluke-tls-sample|fluke-sample-h2-server).*' --html --output-dir=coverage
+    cargo llvm-cov report --lcov --output-path 'coverage/lcov.info'
 
 # Run all tests with cargo nextest
 test *args:
