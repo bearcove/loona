@@ -11,11 +11,19 @@ Nothing in this repo is final yet, look around, but please do not use.
 
 ### Funding
 
-Thanks to these companies for supporting my work on fluke:
+Thanks to Shopify for funding fluke's development:
 
-[![Shopify](./static/shopify-c.svg)](https://shopify.github.io/) [![fly.io](./static/flyio-c.svg)](https://fly.io/docs/about/open-source/)
+[![Shopify](./static/shopify-d.svg)](https://shopify.github.io/)
 
-And thanks to all my [individual sponsors](https://fasterthanli.me/donate).
+Thanks to Namespace for providing fast GitHub Actions workers:
+
+[![Namespace](./static/namespace-d.svg)](https://namespace.so)
+
+Thanks to all my [individual sponsors](https://fasterthanli.me/donate).
+
+And finally, thanks to fly for their past funding:
+
+[![fly.io](./static/flyio-d.svg)](https://fly.io/docs/about/open-source/)
 
 ## License
 
