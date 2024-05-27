@@ -1,5 +1,4 @@
 ignore:
-  - "crates/fluke-h2spec/**"
   - "crates/fluke-tls-sample/**"
   - "crates/fluke-hyper-testbed/**"
   - "crates/fluke-curl-tests/**"

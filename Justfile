@@ -12,9 +12,6 @@ ci-test:
 cov:
 	scripts/cov.sh
 
-quick-cov:
-	SKIP_H2SPEC=1 scripts/cov.sh
-
 # Run all tests with cargo nextest
 test *args:
 	just build-testbed
@@ -26,12 +23,6 @@ build-testbed:
 
 single-test *args:
 	just test --no-capture {{args}}
-
-h2spec *args:
-	#!/bin/bash -eux
-	export RUST_LOG="${RUST_LOG:-fluke=debug,fluke_hpack=info}"
-	export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
-	cargo run -p fluke-h2spec -- {{args}}
 
 check:
 	#!/bin/bash -eu

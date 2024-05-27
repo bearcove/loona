@@ -1,6 +1,6 @@
 #!/bin/bash -eux
 
-export RUSTUP_TOOLCHAIN=nightly-2024-05-09
+export RUSTUP_TOOLCHAIN=nightly-2024-05-26
 export RUSTFLAGS='-C instrument-coverage -Z coverage-options=branch --cfg=coverage --cfg=trybuild_no_target'
 
 export CARGO_INCREMENTAL=0
@@ -38,16 +38,6 @@ LLVM_COV="${LLVM_TOOLS_PATH}/llvm-cov"
 
 cargo nextest run --verbose --profile ci --cargo-profile ci --features fluke-hpack/interop-tests
 
-cargo build --profile ci --manifest-path crates/fluke-h2spec/Cargo.toml
-# skip if SKIP_H2SPEC is set to 1
-if [[ "${SKIP_H2SPEC:-0}" == "1" ]]; then
-  echo "Skipping h2spec suites"
-else
-  for suite in generic hpack http2; do
-    "${CARGO_TARGET_DIR}"/ci/fluke-h2spec "${suite}" -j "target/h2spec-${suite}.xml"
-  done
-fi
-
 # merge all profiles
 "${LLVM_PROFDATA}" merge -sparse "${COVERAGE_DIR}/raw"/*.profraw -o "${COVERAGE_DIR}/fluke.profdata"
 
@@ -55,7 +45,6 @@ fi
 cover_args=()
 cover_args+=(--instr-profile "${COVERAGE_DIR}/fluke.profdata")
 cover_args+=(--ignore-filename-regex "rustc|.cargo|non_uring")
-cover_args+=("${CARGO_TARGET_DIR}"/ci/fluke-h2spec)
 
 set +x
 objects=("${CARGO_TARGET_DIR}"/ci/deps/*)
