@@ -65,3 +65,35 @@ jobs:
           fail_ci_if_error: true
           verbose: true
           file: coverage/lcov.info
+  httpwg-gen:
+    env:
+      CARGO_TERM_COLOR: always
+    runs-on:
+      - namespace-profile-linux-amd64
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Setup cargo cache
+        uses: namespacelabs/nscloud-cache-action@v1
+        with:
+          path: |
+            ./target
+            ./target-cov
+            ~/.cargo/git
+            ~/.cargo/registry
+            ~/.rustup
+      - name: Install Rust specified toolchain
+        run: |
+          rustc --version
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-nextest,cargo-llvm-cov
+      - name: Generate httpwg-macros
+        run: |
+          cd ${{ github.workspace }}
+          just httpwg-gen
+      - name: Assert there are no changes
+        run: |
+          git diff --exit-code
