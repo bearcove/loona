@@ -52,7 +52,7 @@ jobs:
           rustc --version
       - uses: taiki-e/install-action@v2
         with:
-          tool: just,cargo-nextest
+          tool: just,cargo-nextest,cargo-llvm-cov
       - name: Run tests
         run: |
           cd ${{ github.workspace }}
