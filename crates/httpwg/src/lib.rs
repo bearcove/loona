@@ -1,4 +1,5 @@
 use eyre::eyre;
+use http::HeaderMap;
 use std::{rc::Rc, time::Duration};
 
 use enumflags2::{bitflags, BitFlags};
@@ -6,8 +7,8 @@ use fluke_buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
     enumflags2,
     nom::{self, Finish},
-    Frame, FrameType, GoAway, IntoPiece, KnownErrorCode, RstStream, Settings, SettingsFlags,
-    StreamId, PREFACE,
+    Frame, FrameType, GoAway, HeadersFlags, IntoPiece, KnownErrorCode, RstStream, Settings,
+    SettingsFlags, StreamId, PREFACE,
 };
 use tokio::time::Instant;
 use tracing::debug;
@@ -15,6 +16,8 @@ use tracing::debug;
 use crate::rfc9113::default_settings;
 
 pub mod rfc9113;
+
+pub type Headers = HeaderMap<Piece>;
 
 pub struct Conn<IO: IntoHalves + 'static> {
     w: <IO as IntoHalves>::Write,
@@ -441,17 +444,67 @@ impl<IO: IntoHalves> Conn<IO> {
             }
         }
     }
+
+    fn common_headers(&self) -> Headers {
+        let (scheme, default_port) = if self.config.tls {
+            ("https", self.config.port == 443)
+        } else {
+            ("http", self.config.port == 80)
+        };
+
+        let authority = if default_port {
+            self.config.host.clone()
+        } else {
+            format!("{}:{}", self.config.host, self.config.port)
+        };
+
+        let mut headers = Headers::default();
+        headers.insert(":method", "POST".into());
+        headers.insert(":scheme", scheme.into());
+        headers.insert(":path", self.config.path.clone().into_bytes().into());
+        headers.insert(":authority", authority.into_bytes().into());
+        headers
+    }
+
+    pub fn encode_headers(&mut self) -> eyre::Result<Piece> {}
+
+    pub async fn write_headers(
+        &mut self,
+        block_fragment: Piece,
+        flags: impl Into<Option<BitFlags<HeadersFlags>>>,
+    ) -> eyre::Result<()> {
+        let flags = flags.into().unwrap_or_default();
+        let frame = Frame::new(FrameType::Headers(flags), StreamId::CONNECTION);
+        self.write_frame(frame, block_fragment).await?;
+        Ok(())
+    }
 }
 
 /// Parameters for tests
 pub struct Config {
+    /// which host to connect to
+    pub host: String,
+
+    /// which port to connect to
+    pub port: u16,
+
+    /// whether to use TLS
+    pub tls: bool,
+
+    /// which path to request
+    pub path: String,
+
     /// how long to wait for a frame
-    timeout: Duration,
+    pub timeout: Duration,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
+            host: "localhost".into(),
+            port: 80,
+            tls: false,
+
             timeout: Duration::from_secs(1),
         }
     }
