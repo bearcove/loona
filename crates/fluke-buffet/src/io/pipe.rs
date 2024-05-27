@@ -104,7 +104,7 @@ impl WriteOwned for PipeWrite {
             // ignore 0-length writes
         }
 
-        if let Err(_) = self.tx.send(PipeEvent::Piece(buf.clone())).await {
+        if self.tx.send(PipeEvent::Piece(buf.clone())).await.is_err() {
             let err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "simulated broken pipe");
             return (Err(err), buf);
         }

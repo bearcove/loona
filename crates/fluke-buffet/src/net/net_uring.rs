@@ -1,6 +1,6 @@
 use std::{
     mem::ManuallyDrop,
-    net::{Shutdown, SocketAddr},
+    net::SocketAddr,
     os::fd::{AsRawFd, FromRawFd, RawFd},
     rc::Rc,
 };
@@ -113,7 +113,7 @@ impl TcpListener {
 pub struct TcpReadHalf(Rc<TcpStream>);
 
 impl ReadOwned for TcpReadHalf {
-    async fn read<B: IoBufMut>(&mut self, mut buf: B) -> BufResult<usize, B> {
+    async fn read_owned<B: IoBufMut>(&mut self, mut buf: B) -> BufResult<usize, B> {
         let sqe = Read::new(
             io_uring::types::Fd(self.0.fd),
             buf.io_buf_mut_stable_mut_ptr(),
@@ -132,7 +132,8 @@ impl ReadOwned for TcpReadHalf {
 pub struct TcpWriteHalf(Rc<TcpStream>);
 
 impl WriteOwned for TcpWriteHalf {
-    async fn write(&mut self, buf: Piece) -> BufResult<usize, Piece> {
+    async fn write_owned(&mut self, buf: impl Into<Piece>) -> BufResult<usize, Piece> {
+        let buf = buf.into();
         let sqe = Write::new(
             io_uring::types::Fd(self.0.fd),
             buf.as_ref().as_ptr(),
@@ -225,10 +226,10 @@ mod tests {
 
             let (mut r, mut w) = stream.into_halves();
             // write bye
-            w.write_all("howdy".into()).await?;
+            w.write_all_owned("howdy").await?;
 
             let buf = vec![0u8; 1024];
-            let (res, buf) = r.read(buf).await;
+            let (res, buf) = r.read_owned(buf).await;
             let n = res?;
             let slice = &buf[..n];
             println!(

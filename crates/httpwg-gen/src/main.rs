@@ -142,7 +142,7 @@ fn main() {
                     match &item.inner {
                         ast::ItemInner::Module(module) => {
                             let group_name = item.name.clone().unwrap();
-                            if group_name.starts_with("_") {
+                            if group_name.starts_with('_') {
                                 // good!
                             } else {
                                 // skip

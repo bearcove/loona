@@ -11,7 +11,7 @@ use crate::{rfc9113::default_settings, Conn, ErrorC, FrameT};
 pub async fn sends_client_connection_preface<IO: IntoHalves + 'static>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
-    conn.send(&PREFACE[..]).await?;
+    conn.send(PREFACE).await?;
 
     let settings = default_settings();
     conn.write_settings(settings).await?;

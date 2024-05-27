@@ -227,7 +227,7 @@ impl PieceList {
     pub fn push_back(&mut self, chunk: impl Into<Piece>) {
         let chunk = chunk.into();
         if !chunk.is_empty() {
-            self.pieces.push_back(chunk.into());
+            self.pieces.push_back(chunk);
         }
     }
 
@@ -235,7 +235,7 @@ impl PieceList {
     pub fn push_front(&mut self, chunk: impl Into<Piece>) {
         let chunk = chunk.into();
         if !chunk.is_empty() {
-            self.pieces.push_front(chunk.into());
+            self.pieces.push_front(chunk);
         }
     }
 

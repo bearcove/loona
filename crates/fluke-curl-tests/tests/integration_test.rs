@@ -103,7 +103,7 @@ fn serve_api() {
             let chunk = &buf[..n];
 
             debug!("Got a chunk:\n{:?}", chunk.hex_dump());
-            res_buf.extend_from_slice(&chunk[..]);
+            res_buf.extend_from_slice(chunk);
 
             let mut headers = [EMPTY_HEADER; 16];
             let mut res = httparse::Response::new(&mut headers[..]);
@@ -193,7 +193,7 @@ fn request_api() {
             let n = res.unwrap();
             let chunk = &buf[..n];
             debug!("Got a chunk:\n{:?}", chunk.hex_dump());
-            req_buf.extend_from_slice(&chunk[..]);
+            req_buf.extend_from_slice(chunk);
 
             let mut headers = [EMPTY_HEADER; 16];
             let mut req = httparse::Request::new(&mut headers[..]);
