@@ -31,7 +31,3 @@ pub async fn frame_exceeding_max_size<IO: IntoHalves + 'static>(
 
     Ok(())
 }
-
-pub async fn dummy_test<IO: IntoHalves + 'static>(mut conn: Conn<IO>) -> eyre::Result<()> {
-    Ok(())
-}
