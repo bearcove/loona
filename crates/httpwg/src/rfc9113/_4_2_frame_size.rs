@@ -1,9 +1,9 @@
 //! Section 4.2: Frame Size
 
-use fluke_buffet::{IntoHalves, Piece};
-use fluke_h2_parse::{Frame, FrameType, StreamId};
+use fluke_buffet::IntoHalves;
+use fluke_h2_parse::{HeadersFlags, StreamId};
 
-use crate::{Conn, ErrorC, Headers};
+use crate::{dummy_bytes, Conn, ErrorC};
 
 /// An endpoint MUST send an error code of FRAME_SIZE_ERROR if a frame
 /// exceeds the size defined in SETTINGS_MAX_FRAME_SIZE, exceeds any
@@ -15,22 +15,19 @@ pub async fn frame_exceeding_max_size<IO: IntoHalves + 'static>(
 
     conn.handshake().await?;
 
-    let mut headers = common_headers();
-    headers;
+    let mut headers = conn.common_headers();
+    headers.insert(":method", "POST".into());
+    let block_fragment = conn.encode_headers(&headers)?;
 
-    // FIXME: here, h2spec sends a POST request, and then the DATA frame is too large.
-    // This ends up resetting the stream only (for some implementations)
+    conn.write_headers(block_fragment, stream_id, HeadersFlags::EndHeaders)
+        .await?;
 
-    let f = Frame::new(FrameType::Headers(Default::default()), StreamId(1));
-    _ = conn.write_frame(f, vec![0u8; 16384 + 1]).await;
+    // this is okay if it fails
+    _ = conn
+        .write_data(stream_id, true, dummy_bytes(conn.max_frame_size + 1))
+        .await;
 
     conn.verify_stream_error(ErrorC::FrameSizeError).await?;
 
     Ok(())
-}
-
-fn common_headers() -> Headers {
-    let mut headers = Headers::default();
-    headers.insert(":method", "POST".into());
-    headers
 }

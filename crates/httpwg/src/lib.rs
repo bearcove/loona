@@ -1,5 +1,6 @@
 use eyre::eyre;
 use http::HeaderMap;
+use rfc9113::DEFAULT_FRAME_SIZE;
 use std::{rc::Rc, time::Duration};
 
 use enumflags2::{bitflags, BitFlags};
@@ -7,8 +8,8 @@ use fluke_buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
     enumflags2,
     nom::{self, Finish},
-    Frame, FrameType, GoAway, HeadersFlags, IntoPiece, KnownErrorCode, RstStream, Settings,
-    SettingsFlags, StreamId, PREFACE,
+    DataFlags, Frame, FrameType, GoAway, HeadersFlags, IntoPiece, KnownErrorCode, RstStream,
+    Settings, SettingsFlags, StreamId, PREFACE,
 };
 use tokio::time::Instant;
 use tracing::debug;
@@ -24,6 +25,9 @@ pub struct Conn<IO: IntoHalves + 'static> {
     scratch: RollMut,
     pub ev_rx: tokio::sync::mpsc::Receiver<Ev>,
     config: Rc<Config>,
+    hpack_enc: fluke_hpack::Encoder<'static>,
+    hpack_dec: fluke_hpack::Decoder<'static>,
+    pub max_frame_size: usize,
 }
 
 pub enum Ev {
@@ -242,6 +246,9 @@ impl<IO: IntoHalves> Conn<IO> {
             scratch: RollMut::alloc().unwrap(),
             ev_rx,
             config,
+            hpack_enc: Default::default(),
+            hpack_dec: Default::default(),
+            max_frame_size: DEFAULT_FRAME_SIZE as usize,
         }
     }
 
@@ -314,11 +321,17 @@ impl<IO: IntoHalves> Conn<IO> {
 
         self.write_settings(default_settings()).await?;
 
-        let (frame, _payload) = self.wait_for_frame(FrameT::Settings).await.unwrap();
+        let (frame, payload) = self.wait_for_frame(FrameT::Settings).await.unwrap();
         assert!(
             !frame.is_ack(),
             "server should send their settings first thing (no ack)"
         );
+
+        {
+            // parse settings
+            let (_rest, settings) = Settings::parse(payload).finish().unwrap();
+            self.max_frame_size = settings.max_frame_size as _;
+        }
 
         self.write_frame(
             Frame::new(
@@ -331,7 +344,7 @@ impl<IO: IntoHalves> Conn<IO> {
 
         // and wait until the server acknowledges our settings
         let (frame, _payload) = self.wait_for_frame(FrameT::Settings).await.unwrap();
-        assert!(frame.is_ack(), "server shoudl acknowledge our settings");
+        assert!(frame.is_ack(), "server should acknowledge our settings");
 
         Ok(())
     }
@@ -466,16 +479,43 @@ impl<IO: IntoHalves> Conn<IO> {
         headers
     }
 
-    pub fn encode_headers(&mut self) -> eyre::Result<Piece> {}
+    pub fn encode_headers(&mut self, headers: &Headers) -> eyre::Result<Piece> {
+        // wasteful, but we're doing tests so shrug.
+        let mut fragment = Vec::new();
+        for (k, v) in headers.iter() {
+            self.hpack_enc
+                .encode_header_into((k.as_ref(), v.as_ref()), &mut fragment)?;
+        }
+        Ok(fragment.into())
+    }
 
     pub async fn write_headers(
         &mut self,
         block_fragment: Piece,
-        flags: impl Into<Option<BitFlags<HeadersFlags>>>,
+        stream_id: StreamId,
+        flags: impl Into<BitFlags<HeadersFlags>>,
     ) -> eyre::Result<()> {
-        let flags = flags.into().unwrap_or_default();
-        let frame = Frame::new(FrameType::Headers(flags), StreamId::CONNECTION);
+        let flags = flags.into();
+        let frame = Frame::new(FrameType::Headers(flags), stream_id);
         self.write_frame(frame, block_fragment).await?;
+        Ok(())
+    }
+
+    pub async fn write_data(
+        &mut self,
+        stream_id: StreamId,
+        end_stream: bool,
+        data: impl Into<Piece>,
+    ) -> eyre::Result<()> {
+        let frame = Frame::new(
+            FrameType::Data(if end_stream {
+                DataFlags::EndStream.into()
+            } else {
+                Default::default()
+            }),
+            stream_id,
+        );
+        self.write_frame(frame, data.into()).await?;
         Ok(())
     }
 }
@@ -488,11 +528,11 @@ pub struct Config {
     /// which port to connect to
     pub port: u16,
 
-    /// whether to use TLS
-    pub tls: bool,
-
     /// which path to request
     pub path: String,
+
+    /// whether to use TLS
+    pub tls: bool,
 
     /// how long to wait for a frame
     pub timeout: Duration,
@@ -503,9 +543,20 @@ impl Default for Config {
         Self {
             host: "localhost".into(),
             port: 80,
+            path: "/".into(),
             tls: false,
 
             timeout: Duration::from_secs(1),
         }
     }
+}
+
+// DummyString returns a dummy string with specified length.
+pub fn dummy_string(len: usize) -> String {
+    "x".repeat(len)
+}
+
+// DummyBytes returns an array of bytes with specified length.
+pub fn dummy_bytes(len: usize) -> Vec<u8> {
+    vec![b'x'; len]
 }

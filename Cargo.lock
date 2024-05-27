@@ -585,6 +585,7 @@ dependencies = [
  "eyre",
  "fluke-buffet",
  "fluke-h2-parse",
+ "fluke-hpack",
  "futures-util",
  "http 1.1.0",
  "pretty-hex",
