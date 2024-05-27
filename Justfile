@@ -41,4 +41,4 @@ tls-sample:
 	cargo run -p fluke-tls-sample
 
 httpwg-gen:
-    cargo run -p httpwg-gen
+    cargo run --release --package httpwg-gen
