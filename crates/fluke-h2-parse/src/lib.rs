@@ -783,6 +783,35 @@ impl GoAway {
     }
 }
 
+/// Payload for a RST_STREAM frame
+pub struct RstStream {
+    pub error_code: ErrorCode,
+}
+
+impl IntoPiece for RstStream {
+    fn into_piece(self, scratch: &mut RollMut) -> std::io::Result<Piece> {
+        let roll = scratch
+            .put_to_roll(4, |mut slice| {
+                slice.write_u32::<BigEndian>(self.error_code.0)?;
+                Ok(())
+            })
+            .unwrap();
+        Ok(roll.into())
+    }
+}
+
+impl RstStream {
+    pub fn parse(i: Roll) -> IResult<Roll, Self> {
+        let (rest, error_code) = be_u32(i)?;
+        Ok((
+            rest,
+            Self {
+                error_code: ErrorCode(error_code),
+            },
+        ))
+    }
+}
+
 impl<T> IntoPiece for T
 where
     Piece: From<T>,

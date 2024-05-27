@@ -6,8 +6,8 @@ use fluke_buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
     enumflags2,
     nom::{self, Finish},
-    Frame, FrameType, GoAway, IntoPiece, KnownErrorCode, Settings, SettingsFlags, StreamId,
-    PREFACE,
+    Frame, FrameType, GoAway, IntoPiece, KnownErrorCode, RstStream, Settings, SettingsFlags,
+    StreamId, PREFACE,
 };
 use tokio::time::Instant;
 use tracing::debug;
@@ -407,11 +407,11 @@ impl<IO: IntoHalves> Conn<IO> {
                         }
                     }
                     FrameType::RstStream => {
-                        // FIXME: implement `RstStream` struct with parsing, like `GoAway`
-                        let error_code = KnownErrorCode::try_from(frame.error_code)
+                        let (_, rststream) = RstStream::parse(payload).finish().unwrap();
+                        let error_code = KnownErrorCode::try_from(rststream.error_code)
                             .map_err(|_| eyre::eyre!(
                                 "Expected GOAWAY or RSTSTREAM with one of {codes:?}, but got unknown error code {} (0x{:x})",
-                                frame.error_code.as_repr(), frame.error_code.as_repr()
+                                rststream.error_code.as_repr(), rststream.error_code.as_repr()
                             ))?;
 
                         let error_c: ErrorC = error_code.into();
