@@ -2,3 +2,13 @@
 name = "fluke-h2-parse"
 semver_check = true
 publish_no_verify = true
+
+[[package]]
+name = "httpwg"
+semver_check = true
+publish_no_verify = true
+
+[[package]]
+name = "httpwg-macros"
+semver_check = true
+publish_no_verify = true
