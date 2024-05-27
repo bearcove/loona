@@ -1,5 +1,5 @@
 use eyre::eyre;
-use http::HeaderMap;
+use multimap::MultiMap;
 use rfc9113::DEFAULT_FRAME_SIZE;
 use std::{rc::Rc, time::Duration};
 
@@ -18,7 +18,7 @@ use crate::rfc9113::default_settings;
 
 pub mod rfc9113;
 
-pub type Headers = HeaderMap<Piece>;
+pub type Headers = MultiMap<&'static str, Piece>;
 
 pub struct Conn<IO: IntoHalves + 'static> {
     w: <IO as IntoHalves>::Write,
@@ -26,6 +26,9 @@ pub struct Conn<IO: IntoHalves + 'static> {
     pub ev_rx: tokio::sync::mpsc::Receiver<Ev>,
     config: Rc<Config>,
     hpack_enc: fluke_hpack::Encoder<'static>,
+    // FIXME: we should decode header fragments for _all_ HEADERS frames,
+    // even the ones we discard. I don't know if test cases should be
+    // responsible for that, or the connection itself.
     hpack_dec: fluke_hpack::Decoder<'static>,
     pub max_frame_size: usize,
 }
