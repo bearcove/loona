@@ -2,6 +2,14 @@
 name = "fluke-h2-parse"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bearcove/fluke"
+documentation = "https://docs.rs/fluke-h2-parse"
+readme = "README.md"
+description = """
+HTTP/2 parser and base types
+"""
+rust-version = "1.75"
 
 [dependencies]
 enum-repr = "0.2.6"
