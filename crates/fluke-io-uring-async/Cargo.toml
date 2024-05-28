@@ -8,8 +8,10 @@ publish = false
 
 [dependencies]
 tokio = { version = "1.2", features = ["rt", "net"] }
-io-uring = { version = "0.6.3" }
 slab = { version = "0.4" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+io-uring = { version = "0.6.3" }
 
 [dev-dependencies]
 send_wrapper = { version = "0.6.0" }
