@@ -2,7 +2,14 @@
 name = "fluke-io-uring-async"
 version = "0.1.0"
 edition = "2021"
-publish = false
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bearcove/fluke"
+documentation = "https://docs.rs/fluke-io-uring-async"
+readme = "README.md"
+description = """
+An abstraction on top of io-uring
+"""
+rust-version = "1.75"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

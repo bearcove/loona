@@ -1,5 +1,12 @@
+# IoUringAsync (fluke fork)
+
+This is the fluke fork of <https://github.com/thomasbarrett/io-uring-async>
+
+The original README follows.
+
 # IoUringAsync
-IoUringAsync is a thin async compatability layer over the commonly used 
+
+IoUringAsync is a thin async compatability layer over the commonly used
 [io-uring](https://github.com/tokio-rs/io-uring) library that makes it
 easier to use with the [Tokio](https://github.com/tokio-rs/tokio) runtime.
 
@@ -37,7 +44,7 @@ fn main() {
     let runtime = tokio::runtime::Builder::new_current_thread().
         on_thread_park(move || { uring_clone.submit().unwrap(); }).
         enable_all().
-        build().unwrap();  
+        build().unwrap();
 
     runtime.block_on(async move {
         tokio::task::LocalSet::new().run_until(async {
@@ -46,8 +53,8 @@ fn main() {
             tokio::task::spawn_local(IoUringAsync::listen(uring.clone()));
 
             let cqe = uring.push(Nop::new().build()).await;
-            assert!(cqe.result() >= 0, "nop error: {}", cqe.result()); 
-        }).await; 
+            assert!(cqe.result() >= 0, "nop error: {}", cqe.result());
+        }).await;
     });
 }
 ```
