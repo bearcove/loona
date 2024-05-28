@@ -37,6 +37,7 @@ tokio = { version = "1.36.0", features = [
     "rt",
     "io-util",
     "net",
+    "time",
 ] }
 tracing = "0.1.40"
 nix = "0.28.0"
