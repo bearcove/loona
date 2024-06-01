@@ -8,11 +8,11 @@ use fluke_buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
     enumflags2,
     nom::{self, Finish},
-    DataFlags, Frame, FrameType, GoAway, HeadersFlags, IntoPiece, KnownErrorCode, RstStream,
-    Settings, SettingsFlags, StreamId, PREFACE,
+    DataFlags, Frame, FrameType, GoAway, HeadersFlags, IntoPiece, KnownErrorCode, PingFlags,
+    RstStream, Settings, SettingsFlags, StreamId, PREFACE,
 };
 use tokio::time::Instant;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::rfc9113::default_settings;
 
@@ -180,7 +180,7 @@ impl<IO: IntoHalves> Conn<IO> {
                         debug!("reached EOF");
                         eof = true;
                     } else {
-                        debug!(%n, "read bytes (reading frame header)");
+                        trace!(%n, "read bytes (reading frame header)");
                     }
                 }
 
@@ -201,7 +201,7 @@ impl<IO: IntoHalves> Conn<IO> {
                             let res;
                             (res, res_buf) = res_buf.read_into(16384, &mut r).await;
                             let n = res?;
-                            debug!(%n, len = %res_buf.len(), "read bytes (reading frame payload)");
+                            trace!(%n, len = %res_buf.len(), "read bytes (reading frame payload)");
 
                             if n == 0 {
                                 eof = true;
@@ -220,7 +220,7 @@ impl<IO: IntoHalves> Conn<IO> {
                         };
                         assert_eq!(payload.len(), frame_len);
 
-                        debug!(%frame_len, "got frame payload");
+                        trace!(%frame_len, "got frame payload");
                         ev_tx.send(Ev::Frame { frame, payload }).await.unwrap();
                     }
                     Err(nom::Err::Incomplete(_)) => {
@@ -264,6 +264,19 @@ impl<IO: IntoHalves> Conn<IO> {
             .writev_all_owned(PieceList::single(header).followed_by(payload))
             .await?;
         Ok(())
+    }
+
+    pub async fn write_ping(&mut self, ack: bool, payload: impl IntoPiece) -> eyre::Result<()> {
+        self.write_frame(
+            FrameType::Ping(if ack {
+                PingFlags::Ack.into()
+            } else {
+                Default::default()
+            })
+            .into_frame(StreamId::CONNECTION),
+            payload,
+        )
+        .await
     }
 
     pub async fn write_settings(&mut self, settings: Settings) -> eyre::Result<()> {
@@ -316,6 +329,18 @@ impl<IO: IntoHalves> Conn<IO> {
                 },
             }
         }
+    }
+
+    /// Waits for a PING frame with Ack flag and the specified payload.
+    /// It will NOT ignore other PING frames, if the first frame it
+    /// receives doesn't have the expected payload, it will return an error.
+    pub async fn verify_ping_frame_with_ack(&mut self, payload: &[u8]) -> eyre::Result<()> {
+        let (frame, received_payload) = self.wait_for_frame(FrameT::Ping).await.unwrap();
+        assert!(frame.is_ack(), "expected PING frame to have ACK flag");
+
+        assert_eq!(received_payload, payload, "unexpected PING payload");
+
+        Ok(())
     }
 
     pub async fn handshake(&mut self) -> eyre::Result<()> {

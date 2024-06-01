@@ -20,7 +20,7 @@ cov:
 
 # Run all tests with cargo nextest
 test *args:
-	just build-testbed
+	just build-testbed httpwg-gen
 	export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 	cargo nextest run {{args}}
 

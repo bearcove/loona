@@ -47,6 +47,17 @@ macro_rules! tests {
                 }
             }
 
+            /// Section 4.1: Frame Format
+            mod _4_1_frame_format {
+                use super::__suite::_4_1_frame_format as __group;
+
+                #[test]
+                fn sends_frame_with_unknown_type() {
+                    use __group::sends_frame_with_unknown_type as test;
+                    $body
+                }
+            }
+
             /// Section 4.2: Frame Size
             mod _4_2_frame_size {
                 use super::__suite::_4_2_frame_size as __group;

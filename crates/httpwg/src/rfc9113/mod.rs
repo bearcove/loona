@@ -24,4 +24,5 @@ pub fn default_settings() -> Settings {
 }
 
 pub mod _3_starting_http2;
+pub mod _4_1_frame_format;
 pub mod _4_2_frame_size;
