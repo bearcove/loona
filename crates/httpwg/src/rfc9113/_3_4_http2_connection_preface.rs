@@ -1,4 +1,4 @@
-//! Section 3: Starting HTTP/2
+//! Section 3.4: HTTP/2 connection preface
 
 use fluke_buffet::IntoHalves;
 use fluke_h2_parse::PREFACE;
