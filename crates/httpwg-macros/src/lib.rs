@@ -557,6 +557,22 @@ fn sends_settings_frame_with_unknown_identifier() {
 use __group::sends_settings_frame_with_unknown_identifier as test;
 $body
 }
+
+/// The values in the SETTINGS frame MUST be processed in the order
+/// they appear, with no other frame processing between values.
+#[test]
+fn sends_multiple_values_of_settings_initial_window_size() {
+use __group::sends_multiple_values_of_settings_initial_window_size as test;
+$body
+}
+
+/// Once all values have been processed, the recipient MUST
+/// immediately emit a SETTINGS frame with the ACK flag set.
+#[test]
+fn sends_settings_frame_without_ack_flag() {
+use __group::sends_settings_frame_without_ack_flag as test;
+$body
+}
 }
 }
 }

@@ -54,11 +54,14 @@ impl fluke::ServerDriver for TestDriver {
             }
         }
 
-        let res = res
+        let mut res = res
             .write_final_response(Response {
                 status: StatusCode::OK,
                 ..Default::default()
             })
+            .await?;
+
+        res.write_chunk("it's less dire to lose, than to lose oneself".into())
             .await?;
 
         let res = res.finish_body(None).await?;

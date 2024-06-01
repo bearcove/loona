@@ -753,6 +753,14 @@ impl<IO: IntoHalves> Conn<IO> {
         self.write_frame(FrameType::WindowUpdate.into_frame(stream_id), window_update)
             .await
     }
+
+    // verify_settings_frame_with_ack verifies whether a SETTINGS frame with
+    // ACK flag was received.
+    async fn verify_settings_frame_with_ack(&mut self) -> eyre::Result<()> {
+        let (frame, _payload) = self.wait_for_frame(FrameT::Settings).await.unwrap();
+        assert!(frame.is_ack());
+        Ok(())
+    }
 }
 
 /// Parameters for tests

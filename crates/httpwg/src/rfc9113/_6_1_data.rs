@@ -6,7 +6,7 @@ use fluke_h2_parse::{
     SettingsFlags, StreamId,
 };
 
-use crate::{Conn, ErrorC};
+use crate::{Conn, ErrorC, FrameT};
 
 /// DATA frames MUST be associated with a stream. If a DATA frame is
 /// received whose stream identifier field is 0x0, the recipient
@@ -473,6 +473,70 @@ pub async fn sends_settings_frame_with_unknown_identifier<IO: IntoHalves + 'stat
     conn.write_ping(false, data.to_vec()).await?;
 
     conn.verify_ping_frame_with_ack(&data).await?;
+
+    Ok(())
+}
+
+//------------- 6.5.3
+
+/// The values in the SETTINGS frame MUST be processed in the order
+/// they appear, with no other frame processing between values.
+pub async fn sends_multiple_values_of_settings_initial_window_size<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+
+    conn.handshake().await?;
+
+    conn.write_frame(
+        Frame::new(
+            FrameType::Settings(Default::default()),
+            StreamId::CONNECTION,
+        ),
+        SettingPairs(&[
+            (SettingCode::InitialWindowSize, 100),
+            (SettingCode::InitialWindowSize, 1),
+        ]),
+    )
+    .await?;
+
+    conn.verify_settings_frame_with_ack().await?;
+
+    let mut headers = conn.common_headers();
+    headers.insert(":method".into(), "POST".into());
+
+    let block_fragment = conn.encode_headers(&headers)?;
+
+    conn.write_headers(
+        stream_id,
+        HeadersFlags::EndStream | HeadersFlags::EndHeaders,
+        block_fragment,
+    )
+    .await?;
+
+    let (frame, _payload) = conn.wait_for_frame(FrameT::Data).await.unwrap();
+    assert_eq!(frame.len, 1);
+
+    Ok(())
+}
+
+/// Once all values have been processed, the recipient MUST
+/// immediately emit a SETTINGS frame with the ACK flag set.
+pub async fn sends_settings_frame_without_ack_flag<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    conn.write_frame(
+        Frame::new(
+            FrameType::Settings(Default::default()),
+            StreamId::CONNECTION,
+        ),
+        SettingPairs(&[(SettingCode::EnablePush, 0)]),
+    )
+    .await?;
+
+    conn.verify_settings_frame_with_ack().await?;
 
     Ok(())
 }
