@@ -350,6 +350,20 @@ macro_rules! tests {
                     $body
                 }
             }
+
+            /// Section 5.5: Extending HTTP/2
+            mod _5_5_extending_http2 {
+                use super::__suite::_5_5_extending_http2 as __group;
+
+                /// Extension frames that appear in the middle of a header block
+                /// (Section 4.3) are not permitted; these MUST be treated as
+                /// a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+                #[test]
+                fn unknown_extension_frame_in_header_block() {
+                    use __group::unknown_extension_frame_in_header_block as test;
+                    $body
+                }
+            }
         }
     };
 }

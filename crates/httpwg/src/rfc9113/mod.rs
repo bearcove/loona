@@ -37,3 +37,5 @@ pub mod _5_1_2_stream_concurrency;
 pub mod _5_3_1_stream_dependencies;
 
 pub mod _5_4_1_connection_error_handling;
+
+pub mod _5_5_extending_http2;
