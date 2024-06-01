@@ -6,7 +6,7 @@ use fluke_h2_parse::{
     SettingsFlags, StreamId,
 };
 
-use crate::{Conn, ErrorC, FrameT};
+use crate::{dummy_bytes, Conn, ErrorC, FrameT};
 
 /// DATA frames MUST be associated with a stream. If a DATA frame is
 /// received whose stream identifier field is 0x0, the recipient
@@ -537,6 +537,79 @@ pub async fn sends_settings_frame_without_ack_flag<IO: IntoHalves + 'static>(
     .await?;
 
     conn.verify_settings_frame_with_ack().await?;
+
+    Ok(())
+}
+
+//----------------- 6.7
+
+/// Receivers of a PING frame that does not include an ACK flag MUST
+/// send a PING frame with the ACK flag set in response, with an
+/// identical payload.
+pub async fn sends_ping_frame<IO: IntoHalves + 'static>(mut conn: Conn<IO>) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let data = b"h2spec\0\0";
+    conn.write_ping(false, data.to_vec()).await?;
+
+    conn.verify_ping_frame_with_ack(data).await?;
+
+    Ok(())
+}
+
+/// ACK (0x1):
+/// When set, bit 0 indicates that this PING frame is a PING
+/// response. An endpoint MUST set this flag in PING responses.
+/// An endpoint MUST NOT respond to PING frames containing this
+/// flag.
+pub async fn sends_ping_frame_with_ack<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let unexpected_data = b"invalid\0";
+    let expected_data = b"h2spec\0\0";
+    conn.write_ping(true, unexpected_data.to_vec()).await?;
+    conn.write_ping(false, expected_data.to_vec()).await?;
+
+    conn.verify_ping_frame_with_ack(expected_data).await?;
+
+    Ok(())
+}
+
+/// If a PING frame is received with a stream identifier field value
+/// other than 0x0, the recipient MUST respond with a connection
+/// error (Section 5.4.1) of type PROTOCOL_ERROR.
+pub async fn sends_ping_frame_with_non_zero_stream_id<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    conn.write_frame(
+        Frame::new(FrameType::Ping(Default::default()), StreamId(1)),
+        dummy_bytes(8),
+    )
+    .await?;
+
+    conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+/// Receipt of a PING frame with a length field value other than 8
+/// MUST be treated as a connection error (Section 5.4.1) of type
+/// FRAME_SIZE_ERROR.
+pub async fn sends_ping_frame_with_invalid_length<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let frame = Frame::new(FrameType::Ping(Default::default()), StreamId::CONNECTION).with_len(6);
+    let frame_header = frame.into_piece(&mut conn.scratch)?;
+    conn.send(frame_header).await?;
+    conn.send(dummy_bytes(6)).await?;
+
+    conn.verify_connection_error(ErrorC::FrameSizeError).await?;
 
     Ok(())
 }

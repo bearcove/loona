@@ -573,6 +573,44 @@ fn sends_settings_frame_without_ack_flag() {
 use __group::sends_settings_frame_without_ack_flag as test;
 $body
 }
+
+/// Receivers of a PING frame that does not include an ACK flag MUST
+/// send a PING frame with the ACK flag set in response, with an
+/// identical payload.
+#[test]
+fn sends_ping_frame() {
+use __group::sends_ping_frame as test;
+$body
+}
+
+/// ACK (0x1):
+/// When set, bit 0 indicates that this PING frame is a PING
+/// response. An endpoint MUST set this flag in PING responses.
+/// An endpoint MUST NOT respond to PING frames containing this
+/// flag.
+#[test]
+fn sends_ping_frame_with_ack() {
+use __group::sends_ping_frame_with_ack as test;
+$body
+}
+
+/// If a PING frame is received with a stream identifier field value
+/// other than 0x0, the recipient MUST respond with a connection
+/// error (Section 5.4.1) of type PROTOCOL_ERROR.
+#[test]
+fn sends_ping_frame_with_non_zero_stream_id() {
+use __group::sends_ping_frame_with_non_zero_stream_id as test;
+$body
+}
+
+/// Receipt of a PING frame with a length field value other than 8
+/// MUST be treated as a connection error (Section 5.4.1) of type
+/// FRAME_SIZE_ERROR.
+#[test]
+fn sends_ping_frame_with_invalid_length() {
+use __group::sends_ping_frame_with_invalid_length as test;
+$body
+}
 }
 }
 }
