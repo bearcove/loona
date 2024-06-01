@@ -1,7 +1,10 @@
 //! Section 6.1: DATA
 
 use fluke_buffet::IntoHalves;
-use fluke_h2_parse::{Frame, FrameType, HeadersFlags, IntoPiece, PrioritySpec, StreamId};
+use fluke_h2_parse::{
+    Frame, FrameType, HeadersFlags, IntoPiece, PrioritySpec, SettingCode, SettingPairs,
+    SettingsFlags, StreamId,
+};
 
 use crate::{Conn, ErrorC};
 
@@ -256,6 +259,84 @@ pub async fn sends_rst_stream_frame_with_invalid_length<IO: IntoHalves + 'static
     conn.send(b"\x00\x00\x00").await?;
 
     conn.verify_stream_error(ErrorC::FrameSizeError).await?;
+
+    Ok(())
+}
+
+//------------- 6.5
+
+/// ACK (0x1):
+/// When set, bit 0 indicates that this frame acknowledges receipt
+/// and application of the peer's SETTINGS frame. When this bit is
+/// set, the payload of the SETTINGS frame MUST be empty. Receipt of
+/// a SETTINGS frame with the ACK flag set and a length field value
+/// other than 0 MUST be treated as a connection error (Section 5.4.1)
+/// of type FRAME_SIZE_ERROR.
+pub async fn sends_settings_frame_with_ack_and_payload<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let frame = Frame::new(
+        FrameType::Settings(SettingsFlags::Ack.into()),
+        StreamId::CONNECTION,
+    )
+    .with_len(1);
+    let frame_header = frame.into_piece(&mut conn.scratch)?;
+    conn.send(frame_header).await?;
+    // this may fail, we already broke the protocol
+    _ = conn.send(b"\x00").await;
+
+    conn.verify_connection_error(ErrorC::FrameSizeError).await?;
+
+    Ok(())
+}
+
+/// SETTINGS frames always apply to a connection, never a single
+/// stream. The stream identifier for a SETTINGS frame MUST be
+/// zero (0x0). If an endpoint receives a SETTINGS frame whose
+/// stream identifier field is anything other than 0x0, the
+/// endpoint MUST respond with a connection error (Section 5.4.1)
+/// of type PROTOCOL_ERROR.
+pub async fn sends_settings_frame_with_non_zero_stream_id<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    conn.write_frame(
+        Frame::new(FrameType::Settings(Default::default()), StreamId(1)).with_len(6),
+        SettingPairs(&[(SettingCode::MaxConcurrentStreams, 0x64)]),
+    )
+    .await?;
+
+    conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+/// The SETTINGS frame affects connection state. A badly formed or
+/// incomplete SETTINGS frame MUST be treated as a connection error
+/// (Section 5.4.1) of type PROTOCOL_ERROR.
+///
+/// A SETTINGS frame with a length other than a multiple of 6 octets
+/// MUST be treated as a connection error (Section 5.4.1) of type
+/// FRAME_SIZE_ERROR.
+pub async fn sends_settings_frame_with_invalid_length<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let frame = Frame::new(
+        FrameType::Settings(Default::default()),
+        StreamId::CONNECTION,
+    )
+    .with_len(3);
+    let frame = frame.into_piece(&mut conn.scratch)?;
+    conn.send(frame).await?;
+    // this may fail, we already broke the protocol
+    _ = conn.send(b"\x00\x03\x00").await;
+
+    conn.verify_connection_error(ErrorC::FrameSizeError).await?;
 
     Ok(())
 }

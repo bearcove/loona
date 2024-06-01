@@ -1028,10 +1028,16 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     });
                 }
 
+                if payload.len() % 6 != 0 {
+                    return Err(H2ConnectionError::SettingsInvalidLength {
+                        len: payload.len() as _,
+                    });
+                }
+
                 if s.contains(SettingsFlags::Ack) {
                     debug!("Peer has acknowledged our settings, cool");
                     if !payload.is_empty() {
-                        return Err(H2ConnectionError::SettingsAckWithPayload {
+                        return Err(H2ConnectionError::SettingsInvalidLength {
                             len: payload.len() as _,
                         });
                     }

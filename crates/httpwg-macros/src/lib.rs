@@ -466,6 +466,44 @@ macro_rules! tests {
                     use __group::sends_rst_stream_frame_with_invalid_length as test;
                     $body
                 }
+
+                /// ACK (0x1):
+                /// When set, bit 0 indicates that this frame acknowledges receipt
+                /// and application of the peer's SETTINGS frame. When this bit is
+                /// set, the payload of the SETTINGS frame MUST be empty. Receipt of
+                /// a SETTINGS frame with the ACK flag set and a length field value
+                /// other than 0 MUST be treated as a connection error (Section 5.4.1)
+                /// of type FRAME_SIZE_ERROR.
+                #[test]
+                fn sends_settings_frame_with_ack_and_payload() {
+                    use __group::sends_settings_frame_with_ack_and_payload as test;
+                    $body
+                }
+
+                /// SETTINGS frames always apply to a connection, never a single
+                /// stream. The stream identifier for a SETTINGS frame MUST be
+                /// zero (0x0). If an endpoint receives a SETTINGS frame whose
+                /// stream identifier field is anything other than 0x0, the
+                /// endpoint MUST respond with a connection error (Section 5.4.1)
+                /// of type PROTOCOL_ERROR.
+                #[test]
+                fn sends_settings_frame_with_non_zero_stream_id() {
+                    use __group::sends_settings_frame_with_non_zero_stream_id as test;
+                    $body
+                }
+
+                /// The SETTINGS frame affects connection state. A badly formed or
+                /// incomplete SETTINGS frame MUST be treated as a connection error
+                /// (Section 5.4.1) of type PROTOCOL_ERROR.
+                ///
+                /// A SETTINGS frame with a length other than a multiple of 6 octets
+                /// MUST be treated as a connection error (Section 5.4.1) of type
+                /// FRAME_SIZE_ERROR.
+                #[test]
+                fn sends_settings_frame_with_invalid_length() {
+                    use __group::sends_settings_frame_with_invalid_length as test;
+                    $body
+                }
             }
         }
     };

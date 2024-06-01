@@ -654,7 +654,7 @@ impl Default for Settings {
 
 #[EnumRepr(type = "u16")]
 #[derive(Debug, Clone, Copy)]
-pub enum SettingIdentifier {
+pub enum SettingCode {
     HeaderTableSize = 0x01,
     EnablePush = 0x02,
     MaxConcurrentStreams = 0x03,
@@ -675,15 +675,15 @@ impl Settings {
             while !i.is_empty() {
                 let (rest, (id, value)) = tuple((be_u16, be_u32))(i)?;
                 tracing::trace!(%id, %value, "Got setting pair");
-                match SettingIdentifier::from_repr(id) {
+                match SettingCode::from_repr(id) {
                     None => {
                         // ignore unknown settings
                     }
                     Some(id) => match id {
-                        SettingIdentifier::HeaderTableSize => {
+                        SettingCode::HeaderTableSize => {
                             settings.header_table_size = value;
                         }
-                        SettingIdentifier::EnablePush => {
+                        SettingCode::EnablePush => {
                             settings.enable_push = match value {
                                 0 => false,
                                 1 => true,
@@ -695,10 +695,10 @@ impl Settings {
                                 }
                             }
                         }
-                        SettingIdentifier::MaxConcurrentStreams => {
+                        SettingCode::MaxConcurrentStreams => {
                             settings.max_concurrent_streams = Some(value);
                         }
-                        SettingIdentifier::InitialWindowSize => {
+                        SettingCode::InitialWindowSize => {
                             if value > Self::MAX_INITIAL_WINDOW_SIZE {
                                 return Err(nom::Err::Error(nom::error::Error::new(
                                     rest,
@@ -707,7 +707,7 @@ impl Settings {
                             }
                             settings.initial_window_size = value;
                         }
-                        SettingIdentifier::MaxFrameSize => {
+                        SettingCode::MaxFrameSize => {
                             if !Self::MAX_FRAME_SIZE_ALLOWED_RANGE.contains(&value) {
                                 return Err(nom::Err::Error(nom::error::Error::new(
                                     rest,
@@ -718,7 +718,7 @@ impl Settings {
                             }
                             settings.max_frame_size = value;
                         }
-                        SettingIdentifier::MaxHeaderListSize => {
+                        SettingCode::MaxHeaderListSize => {
                             settings.max_header_list_size = value;
                         }
                     },
@@ -733,30 +733,27 @@ impl Settings {
     /// Iterates over pairs of id/values
     pub fn pairs(&self) -> impl Iterator<Item = (u16, u32)> {
         [
-            (
-                SettingIdentifier::HeaderTableSize as u16,
-                self.header_table_size,
-            ),
+            (SettingCode::HeaderTableSize as u16, self.header_table_size),
             (
                 // note: as a server, we're free to omit this, but it doesn't
                 // hurt to send 0 there I guess.
-                SettingIdentifier::EnablePush as u16,
+                SettingCode::EnablePush as u16,
                 self.enable_push as u32,
             ),
             (
-                SettingIdentifier::InitialWindowSize as u16,
+                SettingCode::InitialWindowSize as u16,
                 self.initial_window_size,
             ),
-            (SettingIdentifier::MaxFrameSize as u16, self.max_frame_size),
+            (SettingCode::MaxFrameSize as u16, self.max_frame_size),
             (
-                SettingIdentifier::MaxHeaderListSize as u16,
+                SettingCode::MaxHeaderListSize as u16,
                 self.max_header_list_size,
             ),
         ]
         .into_iter()
         .chain(
             self.max_concurrent_streams
-                .map(|val| (SettingIdentifier::MaxConcurrentStreams as u16, val)),
+                .map(|val| (SettingCode::MaxConcurrentStreams as u16, val)),
         )
     }
 
@@ -782,7 +779,7 @@ impl IntoPiece for Settings {
     }
 }
 
-pub struct SettingPairs<'a>(pub &'a [(SettingIdentifier, u32)]);
+pub struct SettingPairs<'a>(pub &'a [(SettingCode, u32)]);
 
 impl<'a> IntoPiece for SettingPairs<'a> {
     fn into_piece(self, scratch: &mut RollMut) -> std::io::Result<Piece> {

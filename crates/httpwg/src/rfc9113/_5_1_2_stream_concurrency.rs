@@ -1,7 +1,7 @@
 //! Section 5.1.2: Stream Concurrency
 
 use fluke_buffet::IntoHalves;
-use fluke_h2_parse::{HeadersFlags, SettingIdentifier, SettingPairs, StreamId};
+use fluke_h2_parse::{HeadersFlags, SettingCode, SettingPairs, StreamId};
 
 use crate::{Conn, ErrorC};
 
@@ -17,7 +17,7 @@ pub async fn exceeds_concurrent_stream_limit<IO: IntoHalves + 'static>(
     };
 
     // Set INITIAL_WINDOW_SIZE to zero to prevent the peer from closing the stream.
-    conn.write_setting_pairs(SettingPairs(&[(SettingIdentifier::InitialWindowSize, 0)]))
+    conn.write_setting_pairs(SettingPairs(&[(SettingCode::InitialWindowSize, 0)]))
         .await?;
 
     let headers = conn.common_headers();

@@ -361,7 +361,7 @@ pub(crate) enum H2ConnectionError {
     PingFrameInvalidLength { len: u32 },
 
     #[error("received settings frame with invalid length {len}")]
-    SettingsAckWithPayload { len: u32 },
+    SettingsInvalidLength { len: u32 },
 
     #[error("received settings frame with non-zero stream id")]
     SettingsWithNonZeroStreamId { stream_id: StreamId },
@@ -392,7 +392,7 @@ impl H2ConnectionError {
             H2ConnectionError::FrameTooLarge { .. } => KnownErrorCode::FrameSizeError,
             H2ConnectionError::PaddedFrameEmpty { .. } => KnownErrorCode::FrameSizeError,
             H2ConnectionError::PingFrameInvalidLength { .. } => KnownErrorCode::FrameSizeError,
-            H2ConnectionError::SettingsAckWithPayload { .. } => KnownErrorCode::FrameSizeError,
+            H2ConnectionError::SettingsInvalidLength { .. } => KnownErrorCode::FrameSizeError,
             H2ConnectionError::WindowUpdateInvalidLength { .. } => KnownErrorCode::FrameSizeError,
             // flow control errors
             H2ConnectionError::WindowUpdateOverflow => KnownErrorCode::FlowControlError,
