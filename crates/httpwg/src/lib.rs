@@ -645,6 +645,33 @@ impl<IO: IntoHalves> Conn<IO> {
         Ok(())
     }
 
+    pub async fn write_headers_with_priority(
+        &mut self,
+        stream_id: StreamId,
+        flags: impl Into<BitFlags<HeadersFlags>>,
+        priority_spec: PrioritySpec,
+        block_fragment: Piece,
+    ) -> eyre::Result<()> {
+        let flags = flags.into() | HeadersFlags::Priority;
+        let frame = Frame::new(FrameType::Headers(flags), stream_id);
+
+        let payload = block_fragment.into_piece(&mut self.scratch)?;
+        let frame = frame.with_len(payload.len().try_into().unwrap());
+
+        let priority_spec_piece = priority_spec.into_piece(&mut self.scratch)?;
+
+        let header = frame.into_piece(&mut self.scratch)?;
+        self.w
+            .writev_all_owned(
+                PieceList::single(header)
+                    .followed_by(priority_spec_piece)
+                    .followed_by(payload),
+            )
+            .await?;
+
+        Ok(())
+    }
+
     pub async fn write_continuation(
         &mut self,
         stream_id: StreamId,

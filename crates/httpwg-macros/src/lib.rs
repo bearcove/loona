@@ -310,6 +310,27 @@ macro_rules! tests {
                     $body
                 }
             }
+
+            /// Section 5.3: Stream Dependencies
+            mod _5_3_1_stream_dependencies {
+                use super::__suite::_5_3_1_stream_dependencies as __group;
+
+                /// A stream cannot depend on itself. An endpoint MUST treat this
+                /// as a stream error (Section 5.4.2) of type PROTOCOL_ERROR.
+                #[test]
+                fn headers_frame_depends_on_itself() {
+                    use __group::headers_frame_depends_on_itself as test;
+                    $body
+                }
+
+                /// A stream cannot depend on itself. An endpoint MUST treat this
+                /// as a stream error (Section 5.4.2) of type PROTOCOL_ERROR.
+                #[test]
+                fn priority_frame_depends_on_itself() {
+                    use __group::priority_frame_depends_on_itself as test;
+                    $body
+                }
+            }
         }
     };
 }

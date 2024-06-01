@@ -32,3 +32,5 @@ pub mod _4_3_header_compression_and_decompression;
 pub mod _5_1_1_stream_identifiers;
 pub mod _5_1_2_stream_concurrency;
 pub mod _5_1_stream_states;
+
+pub mod _5_3_1_stream_dependencies;
