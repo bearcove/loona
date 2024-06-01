@@ -18,7 +18,7 @@ use crate::rfc9113::default_settings;
 
 pub mod rfc9113;
 
-pub type Headers = MultiMap<&'static str, Piece>;
+pub type Headers = MultiMap<Piece, Piece>;
 
 pub struct Conn<IO: IntoHalves + 'static> {
     w: <IO as IntoHalves>::Write,
@@ -507,10 +507,10 @@ impl<IO: IntoHalves> Conn<IO> {
         };
 
         let mut headers = Headers::default();
-        headers.insert(":method", "POST".into());
-        headers.insert(":scheme", scheme.into());
-        headers.insert(":path", self.config.path.clone().into_bytes().into());
-        headers.insert(":authority", authority.into_bytes().into());
+        headers.insert(":method".into(), "POST".into());
+        headers.insert(":scheme".into(), scheme.into());
+        headers.insert(":path".into(), self.config.path.clone().into_bytes().into());
+        headers.insert(":authority".into(), authority.into_bytes().into());
         headers
     }
 
@@ -553,6 +553,18 @@ impl<IO: IntoHalves> Conn<IO> {
         self.write_frame(frame, data.into()).await?;
         Ok(())
     }
+
+    fn dummy_headers(&self, len: usize) -> Headers {
+        let mut headers = Headers::default();
+        let dummy = dummy_bytes(self.config.max_header_len);
+
+        for i in 0..len {
+            let name = format!("x-dummy{}", i);
+            headers.insert(name.into_bytes().into(), dummy.clone().into());
+        }
+
+        headers
+    }
 }
 
 /// Parameters for tests
@@ -571,6 +583,9 @@ pub struct Config {
 
     /// how long to wait for a frame
     pub timeout: Duration,
+
+    /// maximum length of a header
+    pub max_header_len: usize,
 }
 
 impl Default for Config {
@@ -580,6 +595,8 @@ impl Default for Config {
             port: 80,
             path: "/".into(),
             tls: false,
+
+            max_header_len: 4000,
 
             timeout: Duration::from_secs(1),
         }

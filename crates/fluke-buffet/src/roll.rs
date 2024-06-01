@@ -2,6 +2,7 @@ use std::{
     borrow::Cow,
     cell::UnsafeCell,
     fmt::{Debug, Formatter},
+    hash::{Hash, Hasher},
     iter::Enumerate,
     ops::{Bound, Deref, RangeBounds},
     rc::Rc,
@@ -481,6 +482,12 @@ where
 }
 
 impl Eq for Roll {}
+
+impl Hash for Roll {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self[..].hash(state)
+    }
+}
 
 impl From<RollInner> for Roll {
     fn from(inner: RollInner) -> Self {

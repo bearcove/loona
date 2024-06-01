@@ -16,7 +16,7 @@ pub async fn data_frame_with_max_length<IO: IntoHalves + 'static>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers();
-    headers.insert(":method", "POST".into());
+    headers.insert(":method".into(), "POST".into());
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(block_fragment, stream_id, HeadersFlags::EndHeaders)
@@ -41,7 +41,7 @@ pub async fn frame_exceeding_max_size<IO: IntoHalves + 'static>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers();
-    headers.insert(":method", "POST".into());
+    headers.insert(":method".into(), "POST".into());
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(block_fragment, stream_id, HeadersFlags::EndHeaders)
@@ -53,6 +53,32 @@ pub async fn frame_exceeding_max_size<IO: IntoHalves + 'static>(
         .await;
 
     conn.verify_stream_error(ErrorC::FrameSizeError).await?;
+
+    Ok(())
+}
+
+/// A frame size error in a frame that could alter the state of
+/// the entire connection MUST be treated as a connection error
+/// (Section 5.4.1); this includes any frame carrying a header block
+/// (Section 4.3) (that is, HEADERS, PUSH_PROMISE, and CONTINUATION),
+/// SETTINGS, and any frame with a stream identifier of 0.
+pub async fn large_headers_frame_exceeding_max_size<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+
+    conn.handshake().await?;
+
+    let mut headers = conn.common_headers();
+    headers.extend(conn.dummy_headers(5));
+    let block_fragment = conn.encode_headers(&headers)?;
+
+    // this is okay if it fails
+    _ = conn
+        .write_headers(block_fragment, stream_id, HeadersFlags::EndHeaders)
+        .await;
+
+    conn.verify_connection_error(ErrorC::FrameSizeError).await?;
 
     Ok(())
 }

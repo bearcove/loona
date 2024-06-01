@@ -94,6 +94,17 @@ macro_rules! tests {
                     use __group::frame_exceeding_max_size as test;
                     $body
                 }
+
+                /// A frame size error in a frame that could alter the state of
+                /// the entire connection MUST be treated as a connection error
+                /// (Section 5.4.1); this includes any frame carrying a header block
+                /// (Section 4.3) (that is, HEADERS, PUSH_PROMISE, and CONTINUATION),
+                /// SETTINGS, and any frame with a stream identifier of 0.
+                #[test]
+                fn large_headers_frame_exceeding_max_size() {
+                    use __group::large_headers_frame_exceeding_max_size as test;
+                    $body
+                }
             }
         }
     };

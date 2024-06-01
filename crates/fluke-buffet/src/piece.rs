@@ -7,7 +7,7 @@ use crate::{Roll, RollStr};
 
 /// A piece of data (arbitrary bytes) with a stable address, suitable for
 /// passing to the kernel (io_uring writes).
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Piece {
     Full {
         core: PieceCore,
@@ -28,7 +28,7 @@ impl Piece {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum PieceCore {
     Static(&'static [u8]),
     Vec(Rc<Vec<u8>>),
