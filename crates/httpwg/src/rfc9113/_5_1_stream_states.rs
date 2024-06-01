@@ -124,11 +124,19 @@ pub async fn half_closed_remote_sends_headers_frame<IO: IntoHalves + 'static>(
     let headers = conn.common_headers();
     let block_fragment = conn.encode_headers(&headers)?;
 
-    conn.write_headers(stream_id, HeadersFlags::EndHeaders, block_fragment.clone())
-        .await?;
+    conn.write_headers(
+        stream_id,
+        HeadersFlags::EndStream | HeadersFlags::EndHeaders,
+        block_fragment.clone(),
+    )
+    .await?;
 
-    conn.write_headers(stream_id, HeadersFlags::EndHeaders, block_fragment)
-        .await?;
+    conn.write_headers(
+        stream_id,
+        HeadersFlags::EndStream | HeadersFlags::EndHeaders,
+        block_fragment,
+    )
+    .await?;
 
     conn.verify_stream_error(ErrorC::StreamClosed).await?;
 
@@ -150,13 +158,23 @@ pub async fn half_closed_remote_sends_continuation_frame<IO: IntoHalves + 'stati
     let headers = conn.common_headers();
     let block_fragment = conn.encode_headers(&headers)?;
 
-    conn.write_headers(stream_id, HeadersFlags::EndHeaders, block_fragment.clone())
-        .await?;
+    conn.write_headers(
+        stream_id,
+        HeadersFlags::EndStream | HeadersFlags::EndHeaders,
+        block_fragment.clone(),
+    )
+    .await?;
 
     conn.write_continuation(stream_id, ContinuationFlags::EndHeaders, block_fragment)
         .await?;
 
-    conn.verify_stream_error(ErrorC::StreamClosed).await?;
+    // In 6.10, the spec allows PROTOCOL_ERROR as well as STREAM_CLOSED:
+    // A CONTINUATION frame MUST be preceded by a HEADERS, PUSH_PROMISE or
+    // CONTINUATION frame without the END_HEADERS flag set. A recipient that
+    // observes violation of this rule MUST respond with a connection error
+    // (Section 5.4.1) of type PROTOCOL_ERROR.
+    conn.verify_stream_error(ErrorC::StreamClosed | ErrorC::ProtocolError)
+        .await?;
 
     Ok(())
 }
@@ -206,8 +224,12 @@ pub async fn closed_sends_headers_frame_after_rst_stream<IO: IntoHalves + 'stati
 
     conn.write_rst_stream(stream_id, ErrorC::Cancel).await?;
 
-    conn.write_headers(stream_id, HeadersFlags::EndHeaders, block_fragment)
-        .await?;
+    conn.write_headers(
+        stream_id,
+        HeadersFlags::EndHeaders | HeadersFlags::EndStream,
+        block_fragment,
+    )
+    .await?;
 
     conn.verify_stream_error(ErrorC::StreamClosed).await?;
 
@@ -243,7 +265,13 @@ pub async fn closed_sends_continuation_frame_after_rst_stream<IO: IntoHalves + '
     )
     .await?;
 
-    conn.verify_stream_error(ErrorC::StreamClosed).await?;
+    // In 6.10, the spec allows PROTOCOL_ERROR as well as STREAM_CLOSED:
+    // A CONTINUATION frame MUST be preceded by a HEADERS, PUSH_PROMISE or
+    // CONTINUATION frame without the END_HEADERS flag set. A recipient that
+    // observes violation of this rule MUST respond with a connection error
+    // (Section 5.4.1) of type PROTOCOL_ERROR.
+    conn.verify_stream_error(ErrorC::StreamClosed | ErrorC::ProtocolError)
+        .await?;
 
     Ok(())
 }
@@ -262,8 +290,12 @@ pub async fn closed_sends_data_frame<IO: IntoHalves + 'static>(
     let headers = conn.common_headers();
     let block_fragment = conn.encode_headers(&headers)?;
 
-    conn.write_headers(stream_id, HeadersFlags::EndStream, block_fragment)
-        .await?;
+    conn.write_headers(
+        stream_id,
+        HeadersFlags::EndStream | HeadersFlags::EndHeaders,
+        block_fragment,
+    )
+    .await?;
 
     conn.verify_stream_close(stream_id).await?;
 
@@ -288,13 +320,21 @@ pub async fn closed_sends_headers_frame<IO: IntoHalves + 'static>(
     let headers = conn.common_headers();
     let block_fragment = conn.encode_headers(&headers)?;
 
-    conn.write_headers(stream_id, HeadersFlags::EndStream, block_fragment.clone())
-        .await?;
+    conn.write_headers(
+        stream_id,
+        HeadersFlags::EndStream | HeadersFlags::EndHeaders,
+        block_fragment.clone(),
+    )
+    .await?;
 
     conn.verify_stream_close(stream_id).await?;
 
-    conn.write_headers(stream_id, HeadersFlags::EndStream, block_fragment)
-        .await?;
+    conn.write_headers(
+        stream_id,
+        HeadersFlags::EndStream | HeadersFlags::EndHeaders,
+        block_fragment,
+    )
+    .await?;
 
     conn.verify_connection_error(ErrorC::StreamClosed).await?;
 
@@ -315,8 +355,12 @@ pub async fn closed_sends_continuation_frame<IO: IntoHalves + 'static>(
     let headers = conn.common_headers();
     let block_fragment = conn.encode_headers(&headers)?;
 
-    conn.write_headers(stream_id, HeadersFlags::EndStream, block_fragment)
-        .await?;
+    conn.write_headers(
+        stream_id,
+        HeadersFlags::EndStream | HeadersFlags::EndHeaders,
+        block_fragment,
+    )
+    .await?;
 
     conn.verify_stream_close(stream_id).await?;
 
@@ -330,7 +374,9 @@ pub async fn closed_sends_continuation_frame<IO: IntoHalves + 'static>(
     )
     .await?;
 
-    conn.verify_connection_error(ErrorC::StreamClosed).await?;
+    // In 6.10, the spec allows PROTOCOL_ERROR as well as STREAM_CLOSED
+    conn.verify_connection_error(ErrorC::StreamClosed | ErrorC::ProtocolError)
+        .await?;
 
     Ok(())
 }

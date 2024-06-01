@@ -7,7 +7,8 @@ use tracing::Level;
 use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Note: this will not work with `cargo test`, since it sets up process-level
-/// globals. But it will work with `cargo nextest`, and that's what fluke is standardizing on.
+/// globals. But it will work with `cargo nextest`, and that's what fluke is
+/// standardizing on.
 pub(crate) fn setup_tracing_and_error_reporting() {
     color_eyre::install().unwrap();
 
@@ -42,19 +43,16 @@ impl fluke::ServerDriver for TestDriver {
         _req_body: &mut impl Body,
         mut res: Responder<E, ExpectResponseHeaders>,
     ) -> eyre::Result<Responder<E, ResponseDone>> {
-        let mut buf = RollMut::alloc()?;
-
-        buf.put(b"Continue")?;
-
-        res.write_interim_response(Response {
-            status: StatusCode::CONTINUE,
-            ..Default::default()
-        })
-        .await?;
-
-        buf.put(b"OK")?;
-
-        _ = buf;
+        // if the client sent `expect: 100-continue`, we must send a 100 status code
+        if let Some(h) = _req.headers.get(http::header::EXPECT) {
+            if &h[..] == b"100-continue" {
+                res.write_interim_response(Response {
+                    status: StatusCode::CONTINUE,
+                    ..Default::default()
+                })
+                .await?;
+            }
+        }
 
         let res = res
             .write_final_response(Response {
