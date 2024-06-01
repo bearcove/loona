@@ -42,7 +42,7 @@ pub async fn sends_frame_with_unused_flags<IO: IntoHalves + 'static>(
             frame_type: FrameType::Unknown(EncodedFrameType {
                 // type 6 = PING
                 ty: 6,
-                flags: 0xff & !0x01, // remove ack flag,
+                flags: !0x01, // everything except ack flag,
             }),
             ..Default::default()
         },

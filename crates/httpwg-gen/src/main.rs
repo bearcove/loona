@@ -315,9 +315,8 @@ fn main() {
     let old_s = old_contents.join().unwrap();
     if old_s == s {
         println!("📦 httpwg-macros is up-to-date");
-        return;
     } else {
-        fs::write(&out_path, &s).unwrap();
+        fs::write(out_path, &s).unwrap();
         println!("✨ httpwg-macros updated!");
     }
 }
