@@ -16,7 +16,14 @@ pub async fn idle_sends_data_frame<IO: IntoHalves + 'static>(
 
     conn.write_data(StreamId(1), true, b"test").await?;
 
-    conn.verify_connection_error(ErrorC::ProtocolError).await?;
+    // This is an unclear part of the specification. Section 6.1 says
+    // to treat this as a stream error.
+    // --------
+    // If a DATA frame is received whose stream is not in "open" or
+    // "half-closed (local)" state, the recipient MUST respond with
+    // a stream error (Section 5.4.2) of type STREAM_CLOSED.
+    conn.verify_stream_error(ErrorC::ProtocolError | ErrorC::StreamClosed)
+        .await?;
 
     Ok(())
 }
@@ -88,8 +95,12 @@ pub async fn half_closed_remote_sends_data_frame<IO: IntoHalves + 'static>(
     let headers = conn.common_headers();
     let block_fragment = conn.encode_headers(&headers)?;
 
-    conn.write_headers(stream_id, HeadersFlags::EndHeaders, block_fragment)
-        .await?;
+    conn.write_headers(
+        stream_id,
+        HeadersFlags::EndHeaders | HeadersFlags::EndStream,
+        block_fragment,
+    )
+    .await?;
 
     conn.write_data(stream_id, true, b"test").await?;
 
