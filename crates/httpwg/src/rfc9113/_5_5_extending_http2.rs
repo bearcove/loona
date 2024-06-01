@@ -23,6 +23,7 @@ pub async fn unknown_extension_frame_in_header_block<IO: IntoHalves + 'static>(
 
     conn.write_frame(
         Frame {
+            stream_id,
             frame_type: FrameType::Unknown(EncodedFrameType {
                 ty: 0xff,
                 flags: 0x0,
