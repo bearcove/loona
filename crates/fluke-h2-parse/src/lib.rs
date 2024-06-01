@@ -450,6 +450,21 @@ impl PrioritySpec {
     }
 }
 
+impl IntoPiece for PrioritySpec {
+    fn into_piece(self, scratch: &mut RollMut) -> std::io::Result<Piece> {
+        let roll = scratch
+            .put_to_roll(5, |mut slice| {
+                let reserved_and_stream_id =
+                    pack_reserved_and_stream_id(self.exclusive as u8, self.stream_dependency);
+                slice.write_all(&reserved_and_stream_id)?;
+                slice.write_u8(self.weight)?;
+                Ok(())
+            })
+            .unwrap();
+        Ok(roll.into())
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct ErrorCode(u32);
 

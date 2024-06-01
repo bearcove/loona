@@ -8,8 +8,8 @@ use fluke_buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
     enumflags2,
     nom::{self, Finish},
-    DataFlags, Frame, FrameType, GoAway, HeadersFlags, IntoPiece, KnownErrorCode, PingFlags,
-    RstStream, Settings, SettingsFlags, StreamId, PREFACE,
+    ContinuationFlags, DataFlags, Frame, FrameType, GoAway, HeadersFlags, IntoPiece,
+    KnownErrorCode, PingFlags, PrioritySpec, RstStream, Settings, SettingsFlags, StreamId, PREFACE,
 };
 use tokio::time::Instant;
 use tracing::{debug, trace};
@@ -264,6 +264,15 @@ impl<IO: IntoHalves> Conn<IO> {
             .writev_all_owned(PieceList::single(header).followed_by(payload))
             .await?;
         Ok(())
+    }
+
+    pub async fn write_priority(
+        &mut self,
+        stream_id: StreamId,
+        priority_spec: PrioritySpec,
+    ) -> eyre::Result<()> {
+        self.write_frame(FrameType::Priority.into_frame(stream_id), priority_spec)
+            .await
     }
 
     pub async fn write_ping(&mut self, ack: bool, payload: impl IntoPiece) -> eyre::Result<()> {
@@ -526,12 +535,24 @@ impl<IO: IntoHalves> Conn<IO> {
 
     pub async fn write_headers(
         &mut self,
-        block_fragment: Piece,
         stream_id: StreamId,
         flags: impl Into<BitFlags<HeadersFlags>>,
+        block_fragment: Piece,
     ) -> eyre::Result<()> {
         let flags = flags.into();
         let frame = Frame::new(FrameType::Headers(flags), stream_id);
+        self.write_frame(frame, block_fragment).await?;
+        Ok(())
+    }
+
+    pub async fn write_continuation(
+        &mut self,
+        stream_id: StreamId,
+        flags: impl Into<BitFlags<ContinuationFlags>>,
+        block_fragment: Piece,
+    ) -> eyre::Result<()> {
+        let flags = flags.into();
+        let frame = Frame::new(FrameType::Continuation(flags), stream_id);
         self.write_frame(frame, block_fragment).await?;
         Ok(())
     }

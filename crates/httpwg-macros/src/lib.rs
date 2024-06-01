@@ -97,12 +97,43 @@ macro_rules! tests {
 
                 /// A frame size error in a frame that could alter the state of
                 /// the entire connection MUST be treated as a connection error
-                /// (Section 5.4.1); this includes any frame carrying a header block
+                /// (Section 5.4.1); this includes any frame carrying a field block
                 /// (Section 4.3) (that is, HEADERS, PUSH_PROMISE, and CONTINUATION),
-                /// SETTINGS, and any frame with a stream identifier of 0.
+                /// a SETTINGS frame, and any frame with a stream identifier of 0.
                 #[test]
                 fn large_headers_frame_exceeding_max_size() {
                     use __group::large_headers_frame_exceeding_max_size as test;
+                    $body
+                }
+            }
+
+            /// Section 4.3: Header Compression and Decompression
+            mod _4_3_header_compression_and_decompression {
+                use super::__suite::_4_3_header_compression_and_decompression as __group;
+
+                /// A decoding error in a header block MUST be treated as a connection error
+                /// (Section 5.4.1) of type COMPRESSION_ERROR.
+                #[test]
+                fn invalid_header_block_fragment() {
+                    use __group::invalid_header_block_fragment as test;
+                    $body
+                }
+
+                /// Each header block is processed as a discrete unit. Header blocks
+                /// MUST be transmitted as a contiguous sequence of frames, with no
+                /// interleaved frames of any other type or from any other stream.
+                #[test]
+                fn priority_frame_while_sending_headers() {
+                    use __group::priority_frame_while_sending_headers as test;
+                    $body
+                }
+
+                /// Each header block is processed as a discrete unit. Header blocks
+                /// MUST be transmitted as a contiguous sequence of frames, with no
+                /// interleaved frames of any other type or from any other stream.
+                #[test]
+                fn headers_frame_to_another_stream() {
+                    use __group::headers_frame_to_another_stream as test;
                     $body
                 }
             }
