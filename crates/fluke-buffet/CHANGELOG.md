@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/bearcove/fluke/compare/fluke-buffet-v0.2.0...fluke-buffet-v0.2.1) - 2024-06-01
+
+### Other
+- Clean up 4_1 tests
+
 ## [0.2.0](https://github.com/bearcove/fluke/compare/fluke-buffet-v0.1.0...fluke-buffet-v0.2.0) - 2024-05-27
 
 ### Added

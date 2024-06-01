@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/bearcove/fluke/compare/httpwg-v0.1.1...httpwg-v0.1.2) - 2024-06-01
+
+### Other
+- Clean up 4_1 tests
+- Add a spec to 4_1_frame_format, cf. [#175](https://github.com/bearcove/fluke/pull/175)
+
 ## [0.1.1](https://github.com/bearcove/fluke/compare/httpwg-v0.1.0...httpwg-v0.1.1) - 2024-05-27
 
 ### Other
