@@ -449,6 +449,26 @@ impl<IO: IntoHalves> Conn<IO> {
         }
     }
 
+    pub async fn verify_connection_close(&mut self) -> eyre::Result<()> {
+        match self.wait_for_frame(FrameT::GoAway).await {
+            FrameWaitOutcome::Success(_frame, _payload) => {
+                // that's what we expected!
+                Ok(())
+            }
+            FrameWaitOutcome::Timeout { last_frame, .. } => Err(eyre!(
+                "Timed out while waiting for connection close, last frame: ({last_frame:?})"
+            )),
+            FrameWaitOutcome::Eof { .. } => {
+                // that's fine
+                Ok(())
+            }
+            FrameWaitOutcome::IoError { .. } => {
+                // TODO: that's fine if it's a connection reset, we should probably check
+                Ok(())
+            }
+        }
+    }
+
     pub async fn verify_stream_close(&mut self, stream_id: StreamId) -> eyre::Result<()> {
         let mut global_last_frame: Option<Frame> = None;
         let deadline = Instant::now() + self.config.timeout;
@@ -782,5 +802,5 @@ pub fn dummy_string(len: usize) -> String {
 
 // DummyBytes returns an array of bytes with specified length.
 pub fn dummy_bytes(len: usize) -> Vec<u8> {
-    vec![b'x'; len.into()]
+    vec![b'x'; len]
 }

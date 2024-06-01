@@ -139,40 +139,6 @@ macro_rules! tests {
                 }
             }
 
-            /// Section 5.1.1: Stream Identifiers
-            mod _5_1_1_stream_identifiers {
-                use super::__suite::_5_1_1_stream_identifiers as __group;
-
-                /// An endpoint that receives an unexpected stream identifier
-                /// MUST respond with a connection error (Section 5.4.1) of
-                /// type PROTOCOL_ERROR.
-                #[test]
-                fn sends_even_numbered_stream_identifier() {
-                    use __group::sends_even_numbered_stream_identifier as test;
-                    $body
-                }
-
-                /// An endpoint that receives an unexpected stream identifier
-                /// MUST respond with a connection error (Section 5.4.1) of
-                /// type PROTOCOL_ERROR.
-                #[test]
-                fn sends_smaller_stream_identifier() {
-                    use __group::sends_smaller_stream_identifier as test;
-                    $body
-                }
-            }
-
-            /// Section 5.1.2: Stream Concurrency
-            mod _5_1_2_stream_concurrency {
-                use super::__suite::_5_1_2_stream_concurrency as __group;
-
-                #[test]
-                fn exceeds_concurrent_stream_limit() {
-                    use __group::exceeds_concurrent_stream_limit as test;
-                    $body
-                }
-            }
-
             /// Section 5.1: Stream States
             mod _5_1_stream_states {
                 use super::__suite::_5_1_stream_states as __group;
@@ -311,6 +277,40 @@ macro_rules! tests {
                 }
             }
 
+            /// Section 5.1.1: Stream Identifiers
+            mod _5_1_1_stream_identifiers {
+                use super::__suite::_5_1_1_stream_identifiers as __group;
+
+                /// An endpoint that receives an unexpected stream identifier
+                /// MUST respond with a connection error (Section 5.4.1) of
+                /// type PROTOCOL_ERROR.
+                #[test]
+                fn sends_even_numbered_stream_identifier() {
+                    use __group::sends_even_numbered_stream_identifier as test;
+                    $body
+                }
+
+                /// An endpoint that receives an unexpected stream identifier
+                /// MUST respond with a connection error (Section 5.4.1) of
+                /// type PROTOCOL_ERROR.
+                #[test]
+                fn sends_smaller_stream_identifier() {
+                    use __group::sends_smaller_stream_identifier as test;
+                    $body
+                }
+            }
+
+            /// Section 5.1.2: Stream Concurrency
+            mod _5_1_2_stream_concurrency {
+                use super::__suite::_5_1_2_stream_concurrency as __group;
+
+                #[test]
+                fn exceeds_concurrent_stream_limit() {
+                    use __group::exceeds_concurrent_stream_limit as test;
+                    $body
+                }
+            }
+
             /// Section 5.3: Stream Dependencies
             mod _5_3_1_stream_dependencies {
                 use super::__suite::_5_3_1_stream_dependencies as __group;
@@ -328,6 +328,25 @@ macro_rules! tests {
                 #[test]
                 fn priority_frame_depends_on_itself() {
                     use __group::priority_frame_depends_on_itself as test;
+                    $body
+                }
+            }
+
+            /// Section 5.4.1: Connection Error Handling
+            mod _5_4_1_connection_error_handling {
+                use super::__suite::_5_4_1_connection_error_handling as __group;
+
+                /// After sending the GOAWAY frame for an error condition,
+                /// the endpoint MUST close the TCP connection.
+                #[test]
+                fn invalid_ping_frame_for_connection_close() {
+                    use __group::invalid_ping_frame_for_connection_close as test;
+                    $body
+                }
+
+                #[test]
+                fn test_invalid_ping_frame_for_goaway() {
+                    use __group::test_invalid_ping_frame_for_goaway as test;
                     $body
                 }
             }
