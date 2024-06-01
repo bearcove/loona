@@ -18,17 +18,20 @@ cov:
     cargo llvm-cov nextest --branch --ignore-filename-regex '.*crates/(httpwg|fluke-hyper-testbed|fluke-tls-sample|fluke-sample-h2-server).*' --html --output-dir=coverage
     cargo llvm-cov report --lcov --output-path 'coverage/lcov.info'
 
+build-testbed:
+	cargo build --release -p fluke-hyper-testbed
+
 # Run all tests with cargo nextest
 test *args:
+	#!/bin/bash
 	just build-testbed httpwg-gen
 	export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 	cargo nextest run {{args}}
 
-build-testbed:
-	cargo build --release -p fluke-hyper-testbed
-
-single-test *args:
-	just test --no-capture {{args}}
+test1 test:
+	#!/bin/bash
+	export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
+	cargo nextest run --no-capture -E 'test(/{{test}}$/)'
 
 check:
 	#!/bin/bash -eu

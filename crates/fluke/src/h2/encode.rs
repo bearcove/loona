@@ -6,6 +6,7 @@ use super::types::{H2Event, H2EventPayload};
 use crate::{h1::body::BodyWriteMode, Encoder, Response};
 use fluke_h2_parse::StreamId;
 
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum EncoderState {
     ExpectResponseHeaders,
     ExpectResponseBody,
@@ -38,7 +39,13 @@ impl H2Encoder {
 impl Encoder for H2Encoder {
     async fn write_response(&mut self, res: Response) -> eyre::Result<()> {
         // TODO: don't panic here
-        assert!(matches!(self.state, EncoderState::ExpectResponseHeaders));
+        assert!(
+            !res.status.is_informational(),
+            "http/2 does not support informational responses"
+        );
+
+        // TODO: don't panic here
+        assert_eq!(self.state, EncoderState::ExpectResponseHeaders);
 
         self.send(H2EventPayload::Headers(res)).await?;
         self.state = EncoderState::ExpectResponseBody;

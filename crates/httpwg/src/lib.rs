@@ -8,8 +8,9 @@ use fluke_buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
     enumflags2,
     nom::{self, Finish},
-    ContinuationFlags, DataFlags, Frame, FrameType, GoAway, HeadersFlags, IntoPiece,
-    KnownErrorCode, PingFlags, PrioritySpec, RstStream, Settings, SettingsFlags, StreamId, PREFACE,
+    ContinuationFlags, DataFlags, ErrorCode, Frame, FrameType, GoAway, HeadersFlags, IntoPiece,
+    KnownErrorCode, PingFlags, PrioritySpec, RstStream, Settings, SettingsFlags, StreamId,
+    WindowUpdate, PREFACE,
 };
 use tokio::time::Instant;
 use tracing::{debug, trace};
@@ -139,6 +140,12 @@ pub enum ErrorC {
     EnhanceYourCalm,
     InadequateSecurity,
     Http1_1Required,
+}
+
+impl From<ErrorC> for ErrorCode {
+    fn from(value: ErrorC) -> Self {
+        ErrorCode(value as _)
+    }
 }
 
 impl From<KnownErrorCode> for ErrorC {
@@ -299,7 +306,15 @@ impl<IO: IntoHalves> Conn<IO> {
     /// Waits for a certain kind of frame
     pub async fn wait_for_frame(&mut self, types: impl Into<BitFlags<FrameT>>) -> FrameWaitOutcome {
         let deadline = Instant::now() + self.config.timeout;
+        self.wait_for_frame_with_deadline(types, deadline).await
+    }
 
+    /// Waits for a certain kind of frame with a specified deadline
+    pub async fn wait_for_frame_with_deadline(
+        &mut self,
+        types: impl Into<BitFlags<FrameT>>,
+        deadline: Instant,
+    ) -> FrameWaitOutcome {
         let types = types.into();
         let mut last_frame: Option<Frame> = None;
 
@@ -429,7 +444,71 @@ impl<IO: IntoHalves> Conn<IO> {
         }
     }
 
-    /// VerifyHeadersFrame verifies whether a HEADERS frame with specified stream ID has received.
+    pub async fn verify_stream_close(&mut self, stream_id: StreamId) -> eyre::Result<()> {
+        let mut global_last_frame: Option<Frame> = None;
+        let deadline = Instant::now() + self.config.timeout;
+
+        loop {
+            match self
+                .wait_for_frame_with_deadline(
+                    FrameT::Data | FrameT::Headers | FrameT::RstStream,
+                    deadline,
+                )
+                .await
+            {
+                FrameWaitOutcome::Success(frame, payload) => match frame.frame_type {
+                    FrameType::Data(flags) => {
+                        if flags.contains(DataFlags::EndStream) {
+                            assert_eq!(frame.stream_id, stream_id, "unexpected stream ID");
+                            return Ok(());
+                        } else {
+                            global_last_frame = Some(frame);
+                        }
+                    }
+                    FrameType::Headers(flags) => {
+                        if flags.contains(HeadersFlags::EndStream) {
+                            assert_eq!(frame.stream_id, stream_id, "unexpected stream ID");
+                            return Ok(());
+                        } else {
+                            global_last_frame = Some(frame);
+                        }
+                    }
+                    FrameType::RstStream => {
+                        let (_rest, rst_stream) = RstStream::parse(payload).finish().unwrap();
+                        let error_code =
+                            KnownErrorCode::try_from(rst_stream.error_code).map_err(|_| {
+                                eyre::eyre!("expected NO_ERROR code, but got unknown error code")
+                            })?;
+                        assert_eq!(
+                            error_code,
+                            KnownErrorCode::NoError,
+                            "expected RST_STREAM frame with NO_ERROR code"
+                        );
+                        assert_eq!(frame.stream_id, stream_id, "unexpected stream ID");
+                        return Ok(());
+                    }
+                    _ => panic!("unexpected frame type"),
+                },
+                FrameWaitOutcome::Timeout { last_frame, .. } => {
+                    return Err(eyre!(
+                        "Timed out while waiting for stream close frame, last frame: ({:?})",
+                        last_frame.or(global_last_frame)
+                    ));
+                }
+                FrameWaitOutcome::Eof { .. } => {
+                    // that's fine
+                    return Ok(());
+                }
+                FrameWaitOutcome::IoError { .. } => {
+                    // TODO: that's fine if it's a connection reset, we should probably check
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    /// VerifyHeadersFrame verifies whether a HEADERS frame with specified
+    /// stream ID has received.
     pub async fn verify_headers_frame(&mut self, stream_id: StreamId) -> eyre::Result<()> {
         let (frame, _payload) = self.wait_for_frame(FrameT::Headers).await.unwrap();
         assert_eq!(frame.stream_id, stream_id, "unexpected stream ID");
@@ -585,6 +664,30 @@ impl<IO: IntoHalves> Conn<IO> {
         }
 
         headers
+    }
+
+    pub async fn write_rst_stream(
+        &mut self,
+        stream_id: StreamId,
+        error_code: impl Into<ErrorCode>,
+    ) -> eyre::Result<()> {
+        let error_code = error_code.into();
+        let rst_stream = RstStream { error_code };
+        self.write_frame(FrameType::RstStream.into_frame(stream_id), rst_stream)
+            .await
+    }
+
+    async fn write_window_update(
+        &mut self,
+        stream_id: StreamId,
+        increment: u32,
+    ) -> eyre::Result<()> {
+        let window_update = WindowUpdate {
+            reserved: 0,
+            increment,
+        };
+        self.write_frame(FrameType::WindowUpdate.into_frame(stream_id), window_update)
+            .await
     }
 }
 

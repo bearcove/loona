@@ -10,7 +10,7 @@ use byteorder::{BigEndian, WriteBytesExt};
 use eyre::Context;
 use fluke_buffet::{Piece, PieceList, PieceStr, ReadOwned, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
-    self as parse, enumflags2::BitFlags, nom::Finish, parse_reserved_and_u31, ContinuationFlags,
+    self as parse, enumflags2::BitFlags, nom::Finish, parse_bit_and_u31, ContinuationFlags,
     DataFlags, Frame, FrameType, HeadersFlags, PingFlags, PrioritySpec, Settings, SettingsFlags,
     StreamId,
 };
@@ -617,8 +617,9 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     Some(outgoing) => outgoing,
                 };
 
-                // FIXME: this isn't great, because, due to biased polling, body pieces can pile up.
-                // when we've collected enough pieces for max frame size, we should really send them.
+                // FIXME: this isn't great, because, due to biased polling, body pieces can pile
+                // up. when we've collected enough pieces for max frame size, we
+                // should really send them.
                 outgoing.body.push_back(Piece::Full { core: chunk });
 
                 self.state.streams_with_pending_data.insert(ev.stream_id);
@@ -737,7 +738,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 }
             }
             FrameType::Settings(_) => {
-                // TODO: keep track of whether our new settings have been acknowledged
+                // TODO: keep track of whether our new settings have been
+                // acknowledged
             }
             _ => {
                 // muffin.
@@ -1122,7 +1124,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 }
 
                 let increment;
-                (_, (_, increment)) = parse_reserved_and_u31(payload)
+                (_, (_, increment)) = parse_bit_and_u31(payload)
                     .finish()
                     .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
 
@@ -1313,7 +1315,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         let on_header_pair = |key: Cow<[u8]>, value: Cow<[u8]>| {
             debug!(
                 "{headers_or_trailers:?} | {}: {}",
-                std::str::from_utf8(&key).unwrap_or("<non-utf8-key>"), // TODO: does this hurt performance when debug logging is disabled?
+                std::str::from_utf8(&key).unwrap_or("<non-utf8-key>"), /* TODO: does this hurt performance when debug logging is disabled? */
                 std::str::from_utf8(&value).unwrap_or("<non-utf8-value>"),
             );
 
@@ -1344,15 +1346,18 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         // TODO: error handling
                         let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
                         if value.len() == 0 || path.replace(value).is_some() {
-                            unreachable!(); // No empty path nor duplicate allowed.
+                            unreachable!(); // No empty path nor duplicate
+                                            // allowed.
                         }
                     }
                     b"authority" => {
                         // TODO: error handling
                         let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
                         if authority.replace(value.parse().unwrap()).is_some() {
-                            unreachable!(); // No duplicate allowed. (h2spec doesn't seem to test for
-                                            // this case but rejecting duplicates seems reasonable.)
+                            unreachable!(); // No duplicate allowed. (h2spec
+                                            // doesn't seem to test for
+                                            // this case but rejecting
+                                            // duplicates seems reasonable.)
                         }
                     }
                     _ => {
@@ -1497,8 +1502,9 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                             .await
                             .is_err()
                         {
-                            // the body is being ignored, but there's no point in
-                            // resetting the stream since we just got the end of it
+                            // the body is being ignored, but there's no point
+                            // in resetting the
+                            // stream since we just got the end of it
                         }
                     }
                     _ => {
