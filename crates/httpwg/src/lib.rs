@@ -306,7 +306,15 @@ impl<IO: IntoHalves> Conn<IO> {
     /// Waits for a certain kind of frame
     pub async fn wait_for_frame(&mut self, types: impl Into<BitFlags<FrameT>>) -> FrameWaitOutcome {
         let deadline = Instant::now() + self.config.timeout;
+        self.wait_for_frame_with_deadline(types, deadline).await
+    }
 
+    /// Waits for a certain kind of frame with a specified deadline
+    pub async fn wait_for_frame_with_deadline(
+        &mut self,
+        types: impl Into<BitFlags<FrameT>>,
+        deadline: Instant,
+    ) -> FrameWaitOutcome {
         let types = types.into();
         let mut last_frame: Option<Frame> = None;
 
@@ -437,23 +445,33 @@ impl<IO: IntoHalves> Conn<IO> {
     }
 
     pub async fn verify_stream_close(&mut self, stream_id: StreamId) -> eyre::Result<()> {
-        match self
-            .wait_for_frame(FrameT::Data | FrameT::Headers | FrameT::RstStream)
-            .await
-        {
-            FrameWaitOutcome::Success(frame, payload) => {
-                match frame.frame_type {
+        let mut global_last_frame: Option<Frame> = None;
+        let deadline = Instant::now() + self.config.timeout;
+
+        loop {
+            match self
+                .wait_for_frame_with_deadline(
+                    FrameT::Data | FrameT::Headers | FrameT::RstStream,
+                    deadline,
+                )
+                .await
+            {
+                FrameWaitOutcome::Success(frame, payload) => match frame.frame_type {
                     FrameType::Data(flags) => {
-                        assert!(
-                            flags.contains(DataFlags::EndStream),
-                            "expected DATA frame to have END_STREAM flag"
-                        );
+                        if flags.contains(DataFlags::EndStream) {
+                            assert_eq!(frame.stream_id, stream_id, "unexpected stream ID");
+                            return Ok(());
+                        } else {
+                            global_last_frame = Some(frame);
+                        }
                     }
                     FrameType::Headers(flags) => {
-                        assert!(
-                            flags.contains(HeadersFlags::EndStream),
-                            "expected HEADERS frame to have END_STREAM flag"
-                        );
+                        if flags.contains(HeadersFlags::EndStream) {
+                            assert_eq!(frame.stream_id, stream_id, "unexpected stream ID");
+                            return Ok(());
+                        } else {
+                            global_last_frame = Some(frame);
+                        }
                     }
                     FrameType::RstStream => {
                         let (_rest, rst_stream) = RstStream::parse(payload).finish().unwrap();
@@ -466,22 +484,25 @@ impl<IO: IntoHalves> Conn<IO> {
                             KnownErrorCode::NoError,
                             "expected RST_STREAM frame with NO_ERROR code"
                         );
+                        assert_eq!(frame.stream_id, stream_id, "unexpected stream ID");
+                        return Ok(());
                     }
                     _ => panic!("unexpected frame type"),
+                },
+                FrameWaitOutcome::Timeout { last_frame, .. } => {
+                    return Err(eyre!(
+                        "Timed out while waiting for stream close frame, last frame: ({:?})",
+                        last_frame.or(global_last_frame)
+                    ));
                 }
-                assert_eq!(frame.stream_id, stream_id, "unexpected stream ID");
-                Ok(())
-            }
-            FrameWaitOutcome::Timeout { last_frame, .. } => Err(eyre!(
-                "Timed out while waiting for stream close frame, last frame: ({last_frame:?})"
-            )),
-            FrameWaitOutcome::Eof { .. } => {
-                // that's fine
-                Ok(())
-            }
-            FrameWaitOutcome::IoError { .. } => {
-                // TODO: that's fine if it's a connection reset, we should probably check
-                Ok(())
+                FrameWaitOutcome::Eof { .. } => {
+                    // that's fine
+                    return Ok(());
+                }
+                FrameWaitOutcome::IoError { .. } => {
+                    // TODO: that's fine if it's a connection reset, we should probably check
+                    return Ok(());
+                }
             }
         }
     }
