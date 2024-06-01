@@ -398,6 +398,26 @@ macro_rules! tests {
                     use __group::sends_data_frame_with_invalid_pad_length as test;
                     $body
                 }
+
+                /// HEADERS frames MUST be associated with a stream. If a HEADERS
+                /// frame is received whose stream identifier field is 0x0, the
+                /// recipient MUST respond with a connection error (Section 5.4.1)
+                /// of type PROTOCOL_ERROR.
+                #[test]
+                fn sends_headers_frame_with_zero_stream_id() {
+                    use __group::sends_headers_frame_with_zero_stream_id as test;
+                    $body
+                }
+
+                /// The HEADERS frame can include padding. Padding fields and flags
+                /// are identical to those defined for DATA frames (Section 6.1).
+                /// Padding that exceeds the size remaining for the header block
+                /// fragment MUST be treated as a PROTOCOL_ERROR.
+                #[test]
+                fn sends_headers_frame_with_invalid_pad_length() {
+                    use __group::sends_headers_frame_with_invalid_pad_length as test;
+                    $body
+                }
             }
         }
     };
