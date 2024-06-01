@@ -124,7 +124,7 @@ impl From<FrameType> for FrameT {
 #[bitflags]
 #[repr(u16)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum ErrorC {
+pub enum ErrorC {
     NoError,
     ProtocolError,
     InternalError,
@@ -420,7 +420,14 @@ impl<IO: IntoHalves> Conn<IO> {
         }
     }
 
-    async fn verify_stream_error(
+    /// VerifyHeadersFrame verifies whether a HEADERS frame with specified stream ID has received.
+    pub async fn verify_headers_frame(&mut self, stream_id: StreamId) -> eyre::Result<()> {
+        let (frame, _payload) = self.wait_for_frame(FrameT::Headers).await.unwrap();
+        assert_eq!(frame.stream_id, stream_id, "unexpected stream ID");
+        Ok(())
+    }
+
+    pub async fn verify_stream_error(
         &mut self,
         codes: impl Into<BitFlags<ErrorC>>,
     ) -> eyre::Result<()> {

@@ -1,9 +1,8 @@
 //! Section 4.1: Frame Format
 
-use fluke_buffet::IntoHalves;
-use fluke_h2_parse::{EncodedFrameType, Frame, FrameType, PingFlags, StreamId};
-
 use crate::Conn;
+use fluke_buffet::IntoHalves;
+use fluke_h2_parse::{EncodedFrameType, Frame, FrameType};
 
 /// Implementations MUST ignore and discard frames of unknown types.
 pub async fn sends_frame_with_unknown_type<IO: IntoHalves + 'static>(

@@ -5,6 +5,31 @@ use fluke_h2_parse::{HeadersFlags, StreamId};
 
 use crate::{dummy_bytes, Conn, ErrorC};
 
+// All implementations MUST be capable of receiving and minimally
+// processing frames up to 2^14 octets in length, plus the 9-octet
+// frame header (Section 4.1).
+pub async fn data_frame_with_max_length<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+
+    conn.handshake().await?;
+
+    let mut headers = conn.common_headers();
+    headers.insert(":method", "POST".into());
+    let block_fragment = conn.encode_headers(&headers)?;
+
+    conn.write_headers(block_fragment, stream_id, HeadersFlags::EndHeaders)
+        .await?;
+
+    let data = dummy_bytes(conn.max_frame_size);
+    conn.write_data(stream_id, true, data).await?;
+
+    conn.verify_headers_frame(stream_id).await?;
+
+    Ok(())
+}
+
 /// An endpoint MUST send an error code of FRAME_SIZE_ERROR if a frame
 /// exceeds the size defined in SETTINGS_MAX_FRAME_SIZE, exceeds any
 /// limit defined for the frame type, or is too small to contain mandatory frame data

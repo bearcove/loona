@@ -80,6 +80,12 @@ macro_rules! tests {
             mod _4_2_frame_size {
                 use super::__suite::_4_2_frame_size as __group;
 
+                #[test]
+                fn data_frame_with_max_length() {
+                    use __group::data_frame_with_max_length as test;
+                    $body
+                }
+
                 /// An endpoint MUST send an error code of FRAME_SIZE_ERROR if a frame
                 /// exceeds the size defined in SETTINGS_MAX_FRAME_SIZE, exceeds any
                 /// limit defined for the frame type, or is too small to contain mandatory frame data
