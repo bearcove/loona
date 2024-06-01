@@ -132,7 +132,8 @@ pub(crate) enum StreamState {
 }
 
 impl StreamState {
-    /// Get the inner `StreamOutgoing` if the state is `Open` or `HalfClosedRemote`.
+    /// Get the inner `StreamOutgoing` if the state is `Open` or
+    /// `HalfClosedRemote`.
     pub(crate) fn outgoing_mut(&mut self) -> Option<&mut StreamOutgoing> {
         match self {
             StreamState::Open { outgoing, .. } => Some(outgoing),
@@ -335,6 +336,9 @@ pub(crate) enum H2ConnectionError {
     #[error("received window update for unknown/closed stream {stream_id}")]
     WindowUpdateForUnknownOrClosedStream { stream_id: StreamId },
 
+    #[error("stream-specific frame {frame_type:?} sent to stream ID 0 (connection-wide)")]
+    StreamSpecificFrameToConnection { frame_type: FrameType },
+
     #[error("other error: {0:?}")]
     Internal(#[from] eyre::Report),
 
@@ -404,6 +408,9 @@ impl H2ConnectionError {
             // internal errors
             H2ConnectionError::Internal(_) => KnownErrorCode::InternalError,
             // protocol errors
+            H2ConnectionError::StreamSpecificFrameToConnection { .. } => {
+                KnownErrorCode::ProtocolError
+            }
             _ => KnownErrorCode::ProtocolError,
         }
     }

@@ -364,6 +364,41 @@ macro_rules! tests {
                     $body
                 }
             }
+
+            /// Section 6.1: DATA
+            mod _6_1_data {
+                use super::__suite::_6_1_data as __group;
+
+                /// DATA frames MUST be associated with a stream. If a DATA frame is
+                /// received whose stream identifier field is 0x0, the recipient
+                /// MUST respond with a connection error (Section 5.4.1) of type
+                /// PROTOCOL_ERROR.
+                #[test]
+                fn sends_data_frame_with_zero_stream_id() {
+                    use __group::sends_data_frame_with_zero_stream_id as test;
+                    $body
+                }
+
+                /// If a DATA frame is received whose stream is not in "open" or
+                /// "half-closed (local)" state, the recipient MUST respond with
+                /// a stream error (Section 5.4.2) of type STREAM_CLOSED.
+                ///
+                /// Note: This test case is duplicated with 5.1.
+                #[test]
+                fn sends_data_frame_on_invalid_stream_state() {
+                    use __group::sends_data_frame_on_invalid_stream_state as test;
+                    $body
+                }
+
+                /// If the length of the padding is the length of the frame payload
+                /// or greater, the recipient MUST treat this as a connection error
+                /// (Section 5.4.1) of type PROTOCOL_ERROR.
+                #[test]
+                fn sends_data_frame_with_invalid_pad_length() {
+                    use __group::sends_data_frame_with_invalid_pad_length as test;
+                    $body
+                }
+            }
         }
     };
 }

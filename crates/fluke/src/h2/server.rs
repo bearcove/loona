@@ -787,6 +787,12 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
     ) -> Result<(), H2ConnectionError> {
         match frame.frame_type {
             FrameType::Data(flags) => {
+                if frame.stream_id == StreamId::CONNECTION {
+                    return Err(H2ConnectionError::StreamSpecificFrameToConnection {
+                        frame_type: frame.frame_type,
+                    });
+                }
+
                 let ss = self.state.streams.get_mut(&frame.stream_id).ok_or(
                     H2ConnectionError::StreamClosed {
                         stream_id: frame.stream_id,
