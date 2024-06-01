@@ -611,6 +611,15 @@ fn sends_ping_frame_with_invalid_length() {
 use __group::sends_ping_frame_with_invalid_length as test;
 $body
 }
+
+/// An endpoint MUST treat a GOAWAY frame with a stream identifier
+/// other than 0x0 as a connection error (Section 5.4.1) of type
+/// PROTOCOL_ERROR.
+#[test]
+fn sends_goaway_frame_with_non_zero_stream_id() {
+use __group::sends_goaway_frame_with_non_zero_stream_id as test;
+$body
+}
 }
 }
 }

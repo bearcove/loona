@@ -1,9 +1,9 @@
 //! Section 6.1: DATA
 
-use fluke_buffet::IntoHalves;
+use fluke_buffet::{IntoHalves, Piece};
 use fluke_h2_parse::{
-    Frame, FrameType, HeadersFlags, IntoPiece, PrioritySpec, SettingCode, SettingPairs,
-    SettingsFlags, StreamId,
+    Frame, FrameType, GoAway, HeadersFlags, IntoPiece, KnownErrorCode, PrioritySpec, SettingCode,
+    SettingPairs, SettingsFlags, StreamId,
 };
 
 use crate::{dummy_bytes, Conn, ErrorC, FrameT};
@@ -610,6 +610,31 @@ pub async fn sends_ping_frame_with_invalid_length<IO: IntoHalves + 'static>(
     conn.send(dummy_bytes(6)).await?;
 
     conn.verify_connection_error(ErrorC::FrameSizeError).await?;
+
+    Ok(())
+}
+
+//----------------- 6.8
+
+/// An endpoint MUST treat a GOAWAY frame with a stream identifier
+/// other than 0x0 as a connection error (Section 5.4.1) of type
+/// PROTOCOL_ERROR.
+pub async fn sends_goaway_frame_with_non_zero_stream_id<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    conn.write_frame(
+        Frame::new(FrameType::GoAway, StreamId(1)),
+        GoAway {
+            additional_debug_data: Piece::empty(),
+            error_code: KnownErrorCode::NoError.into(),
+            last_stream_id: StreamId(0),
+        },
+    )
+    .await?;
+
+    conn.verify_connection_error(ErrorC::ProtocolError).await?;
 
     Ok(())
 }
