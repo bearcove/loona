@@ -27,8 +27,7 @@ pub async fn sends_client_connection_preface<IO: IntoHalves + 'static>(
 pub async fn sends_invalid_connection_preface<IO: IntoHalves + 'static>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
-    conn.send(&b"INVALID CONNECTION PREFACE\r\n\r\n"[..])
-        .await?;
+    conn.send("INVALID CONNECTION PREFACE\r\n\r\n").await?;
     conn.verify_connection_error(ErrorC::ProtocolError).await?;
 
     Ok(())
