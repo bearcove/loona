@@ -495,7 +495,7 @@ impl From<KnownErrorCode> for ErrorCode {
 }
 
 #[EnumRepr(type = "u32")]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KnownErrorCode {
     /// The associated condition is not a result of an error. For example, a
     /// GOAWAY might include this code to indicate graceful shutdown of a

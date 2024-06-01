@@ -277,7 +277,7 @@ pub async fn closed_sends_headers_frame<IO: IntoHalves + 'static>(
     let headers = conn.common_headers();
     let block_fragment = conn.encode_headers(&headers)?;
 
-    conn.write_headers(stream_id, HeadersFlags::EndStream, block_fragment)
+    conn.write_headers(stream_id, HeadersFlags::EndStream, block_fragment.clone())
         .await?;
 
     conn.verify_stream_close(stream_id).await?;

@@ -436,6 +436,56 @@ impl<IO: IntoHalves> Conn<IO> {
         }
     }
 
+    pub async fn verify_stream_close(&mut self, stream_id: StreamId) -> eyre::Result<()> {
+        match self
+            .wait_for_frame(FrameT::Data | FrameT::Headers | FrameT::RstStream)
+            .await
+        {
+            FrameWaitOutcome::Success(frame, payload) => {
+                match frame.frame_type {
+                    FrameType::Data(flags) => {
+                        assert!(
+                            flags.contains(DataFlags::EndStream),
+                            "expected DATA frame to have END_STREAM flag"
+                        );
+                    }
+                    FrameType::Headers(flags) => {
+                        assert!(
+                            flags.contains(HeadersFlags::EndStream),
+                            "expected HEADERS frame to have END_STREAM flag"
+                        );
+                    }
+                    FrameType::RstStream => {
+                        let (_rest, rst_stream) = RstStream::parse(payload).finish().unwrap();
+                        let error_code =
+                            KnownErrorCode::try_from(rst_stream.error_code).map_err(|_| {
+                                eyre::eyre!("expected NO_ERROR code, but got unknown error code")
+                            })?;
+                        assert_eq!(
+                            error_code,
+                            KnownErrorCode::NoError,
+                            "expected RST_STREAM frame with NO_ERROR code"
+                        );
+                    }
+                    _ => panic!("unexpected frame type"),
+                }
+                assert_eq!(frame.stream_id, stream_id, "unexpected stream ID");
+                Ok(())
+            }
+            FrameWaitOutcome::Timeout { last_frame, .. } => Err(eyre!(
+                "Timed out while waiting for stream close frame, last frame: ({last_frame:?})"
+            )),
+            FrameWaitOutcome::Eof { .. } => {
+                // that's fine
+                Ok(())
+            }
+            FrameWaitOutcome::IoError { .. } => {
+                // TODO: that's fine if it's a connection reset, we should probably check
+                Ok(())
+            }
+        }
+    }
+
     /// VerifyHeadersFrame verifies whether a HEADERS frame with specified
     /// stream ID has received.
     pub async fn verify_headers_frame(&mut self, stream_id: StreamId) -> eyre::Result<()> {
