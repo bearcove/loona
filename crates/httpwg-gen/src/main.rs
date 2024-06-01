@@ -1,5 +1,5 @@
 use std::{
-    fs::File,
+    fs,
     io::{BufRead, BufReader, Read, Write},
     process::{Command, Stdio},
 };
@@ -202,16 +202,21 @@ fn main() {
         .spawn()
         .unwrap_or_else(|err| panic!("{err} while spawning command: {final_cmd}"));
 
+    let old_contents =
+        std::thread::spawn(move || std::fs::read_to_string(out_path).unwrap_or_default());
+
     let stdout = std::thread::spawn({
         let r = child.stdout.take().unwrap();
-        let mut f = File::create(out_path).unwrap();
 
         move || {
             let r = BufReader::new(r);
+            let mut s = String::with_capacity(16 * 1024);
             for line in r.lines() {
                 let line = line.unwrap();
-                writeln!(&mut f, "{line}").unwrap();
+                use std::fmt::Write;
+                writeln!(&mut s, "{line}").unwrap();
             }
+            s
         }
     });
 
@@ -304,7 +309,15 @@ fn main() {
     }
 
     // Make sure stdout finished successfully
-    stdout.join().unwrap();
+    let s = stdout.join().unwrap();
 
-    println!("✨ httpwg-macros generated!");
+    // Write the generated code to the file, only if the file is different
+    let old_s = old_contents.join().unwrap();
+    if old_s == s {
+        println!("📦 httpwg-macros is up-to-date");
+        return;
+    } else {
+        fs::write(&out_path, &s).unwrap();
+        println!("✨ httpwg-macros updated!");
+    }
 }

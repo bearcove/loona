@@ -46,6 +46,13 @@ where
     }
 }
 
+impl<const N: usize> From<&'static [u8; N]> for PieceCore {
+    #[inline(always)]
+    fn from(slie: &'static [u8; N]) -> Self {
+        PieceCore::Static(slie)
+    }
+}
+
 impl From<&'static [u8]> for PieceCore {
     #[inline(always)]
     fn from(slice: &'static [u8]) -> Self {

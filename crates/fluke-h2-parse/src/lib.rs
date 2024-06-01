@@ -239,6 +239,20 @@ pub struct Frame {
     pub len: u32,
 }
 
+impl Default for Frame {
+    fn default() -> Self {
+        Self {
+            frame_type: FrameType::Unknown(EncodedFrameType {
+                ty: 0xff,
+                flags: 0xff,
+            }),
+            reserved: 0,
+            stream_id: StreamId::CONNECTION,
+            len: 0,
+        }
+    }
+}
+
 impl fmt::Debug for Frame {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.stream_id.0 == 0 {

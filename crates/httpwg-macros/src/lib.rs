@@ -51,9 +51,27 @@ macro_rules! tests {
             mod _4_1_frame_format {
                 use super::__suite::_4_1_frame_format as __group;
 
+                /// Implementations MUST ignore and discard frames of unknown types.
                 #[test]
                 fn sends_frame_with_unknown_type() {
                     use __group::sends_frame_with_unknown_type as test;
+                    $body
+                }
+
+                /// Unused flags MUST be ignored on receipt and MUST be left
+                /// unset (0x00) when sending.
+                #[test]
+                fn sends_frame_with_unused_flags() {
+                    use __group::sends_frame_with_unused_flags as test;
+                    $body
+                }
+
+                /// Reserved: A reserved 1-bit field. The semantics of this bit are
+                /// undefined, and the bit MUST remain unset (0x00) when sending and
+                /// MUST be ignored when receiving.
+                #[test]
+                fn sends_frame_with_reserved_bit_set() {
+                    use __group::sends_frame_with_reserved_bit_set as test;
                     $body
                 }
             }
