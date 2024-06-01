@@ -1,6 +1,5 @@
 use eyre::eyre;
 use multimap::MultiMap;
-use rfc9113::DEFAULT_FRAME_SIZE;
 use std::{rc::Rc, time::Duration};
 
 use enumflags2::{bitflags, BitFlags};
@@ -9,8 +8,8 @@ use fluke_h2_parse::{
     enumflags2,
     nom::{self, Finish},
     ContinuationFlags, DataFlags, ErrorCode, Frame, FrameType, GoAway, HeadersFlags, IntoPiece,
-    KnownErrorCode, PingFlags, PrioritySpec, RstStream, Settings, SettingsFlags, StreamId,
-    WindowUpdate, PREFACE,
+    KnownErrorCode, PingFlags, PrioritySpec, RstStream, SettingPairs, Settings, SettingsFlags,
+    StreamId, WindowUpdate, PREFACE,
 };
 use tokio::time::Instant;
 use tracing::{debug, trace};
@@ -28,7 +27,8 @@ pub struct Conn<IO: IntoHalves + 'static> {
     config: Rc<Config>,
     hpack_enc: fluke_hpack::Encoder<'static>,
     hpack_dec: fluke_hpack::Decoder<'static>,
-    pub max_frame_size: usize,
+    /// the peer's settings
+    pub settings: Settings,
 }
 
 pub enum Ev {
@@ -255,7 +255,7 @@ impl<IO: IntoHalves> Conn<IO> {
             config,
             hpack_enc: Default::default(),
             hpack_dec: Default::default(),
-            max_frame_size: DEFAULT_FRAME_SIZE as usize,
+            settings: default_settings(),
         }
     }
 
@@ -293,6 +293,14 @@ impl<IO: IntoHalves> Conn<IO> {
     }
 
     pub async fn write_settings(&mut self, settings: Settings) -> eyre::Result<()> {
+        self.write_frame(
+            FrameType::Settings(Default::default()).into_frame(StreamId::CONNECTION),
+            settings,
+        )
+        .await
+    }
+
+    pub async fn write_setting_pairs(&mut self, settings: SettingPairs<'_>) -> eyre::Result<()> {
         self.write_frame(
             FrameType::Settings(Default::default()).into_frame(StreamId::CONNECTION),
             settings,
@@ -378,8 +386,8 @@ impl<IO: IntoHalves> Conn<IO> {
 
         {
             // parse settings
-            let (_rest, settings) = Settings::parse(payload).finish().unwrap();
-            self.max_frame_size = settings.max_frame_size as _;
+            let (_rest, settings) = Settings::default().make_parser()(payload).finish().unwrap();
+            self.settings = settings
         }
 
         self.write_frame(
@@ -747,5 +755,5 @@ pub fn dummy_string(len: usize) -> String {
 
 // DummyBytes returns an array of bytes with specified length.
 pub fn dummy_bytes(len: usize) -> Vec<u8> {
-    vec![b'x'; len]
+    vec![b'x'; len.into()]
 }

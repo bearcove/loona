@@ -22,7 +22,7 @@ pub async fn data_frame_with_max_length<IO: IntoHalves + 'static>(
     conn.write_headers(stream_id, HeadersFlags::EndHeaders, block_fragment)
         .await?;
 
-    let data = dummy_bytes(conn.max_frame_size);
+    let data = dummy_bytes(conn.settings.max_frame_size as usize);
     conn.write_data(stream_id, true, data).await?;
 
     conn.verify_headers_frame(stream_id).await?;
@@ -32,7 +32,8 @@ pub async fn data_frame_with_max_length<IO: IntoHalves + 'static>(
 
 /// An endpoint MUST send an error code of FRAME_SIZE_ERROR if a frame
 /// exceeds the size defined in SETTINGS_MAX_FRAME_SIZE, exceeds any
-/// limit defined for the frame type, or is too small to contain mandatory frame data
+/// limit defined for the frame type, or is too small to contain mandatory frame
+/// data
 pub async fn frame_exceeding_max_size<IO: IntoHalves + 'static>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
@@ -49,7 +50,11 @@ pub async fn frame_exceeding_max_size<IO: IntoHalves + 'static>(
 
     // this is okay if it fails
     _ = conn
-        .write_data(stream_id, true, dummy_bytes(conn.max_frame_size + 1))
+        .write_data(
+            stream_id,
+            true,
+            dummy_bytes(conn.settings.max_frame_size as usize + 1),
+        )
         .await;
 
     conn.verify_stream_error(ErrorC::FrameSizeError).await?;

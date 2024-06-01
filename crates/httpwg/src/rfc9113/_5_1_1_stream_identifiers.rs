@@ -1,7 +1,7 @@
 //! Section 5.1.1: Stream Identifiers
 
 use fluke_buffet::IntoHalves;
-use fluke_h2_parse::{ContinuationFlags, HeadersFlags, StreamId};
+use fluke_h2_parse::{HeadersFlags, StreamId};
 
 use crate::{Conn, ErrorC};
 

@@ -41,12 +41,14 @@ pub const MAX_WINDOW_SIZE: i64 = u32::MAX as i64;
 
 /// HTTP/2 server configuration
 pub struct ServerConf {
-    pub max_streams: u32,
+    pub max_streams: Option<u32>,
 }
 
 impl Default for ServerConf {
     fn default() -> Self {
-        Self { max_streams: 32 }
+        Self {
+            max_streams: Some(32),
+        }
     }
 }
 
@@ -893,9 +895,13 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                                 // TODO: if we're shutting down, ignore streams higher
                                 // than the last one we accepted.
 
-                                let max_concurrent_streams =
-                                    self.state.self_settings.max_concurrent_streams;
+                                let max_concurrent_streams = self
+                                    .state
+                                    .self_settings
+                                    .max_concurrent_streams
+                                    .unwrap_or(u32::MAX);
                                 let num_streams_if_accept = self.state.streams.len() + 1;
+
                                 if num_streams_if_accept > max_concurrent_streams as _ {
                                     // reset the stream, indicating we refused it
                                     self.rst(frame.stream_id, H2StreamError::RefusedStream)
@@ -1024,15 +1030,18 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         });
                     }
                 } else {
-                    let (_, settings) =
-                        match nom::combinator::complete(Settings::parse)(payload).finish() {
-                            Err(_) => {
-                                return Err(H2ConnectionError::ReadError(eyre::eyre!(
-                                    "could not parse settings frame"
-                                )));
-                            }
-                            Ok(t) => t,
-                        };
+                    let (_, settings) = match nom::combinator::complete(
+                        self.state.peer_settings.make_parser(),
+                    )(payload)
+                    .finish()
+                    {
+                        Err(_) => {
+                            return Err(H2ConnectionError::ReadError(eyre::eyre!(
+                                "could not parse settings frame"
+                            )));
+                        }
+                        Ok(t) => t,
+                    };
 
                     self.hpack_enc
                         .set_max_table_size(settings.header_table_size as usize);

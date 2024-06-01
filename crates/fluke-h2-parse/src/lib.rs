@@ -604,7 +604,7 @@ pub struct Settings {
     /// exhausted with active streams. Servers SHOULD only set a zero value
     /// for short durations; if a server does not wish to accept requests,
     /// closing the connection is more appropriate.
-    pub max_concurrent_streams: u32,
+    pub max_concurrent_streams: Option<u32>,
 
     /// This setting indicates the sender's initial window size (in units of
     /// octets) for stream-level flow control. The initial value is 2^16-1
@@ -644,7 +644,7 @@ impl Default for Settings {
         Self {
             header_table_size: 4096,
             enable_push: false,
-            max_concurrent_streams: 100,
+            max_concurrent_streams: Some(100),
             initial_window_size: (1 << 16) - 1,
             max_frame_size: (1 << 14),
             max_header_list_size: 0,
@@ -654,7 +654,7 @@ impl Default for Settings {
 
 #[EnumRepr(type = "u16")]
 #[derive(Debug, Clone, Copy)]
-enum SettingIdentifier {
+pub enum SettingIdentifier {
     HeaderTableSize = 0x01,
     EnablePush = 0x02,
     MaxConcurrentStreams = 0x03,
@@ -667,65 +667,67 @@ impl Settings {
     const MAX_INITIAL_WINDOW_SIZE: u32 = (1 << 31) - 1;
     const MAX_FRAME_SIZE_ALLOWED_RANGE: RangeInclusive<u32> = (1 << 14)..=((1 << 24) - 1);
 
-    pub fn parse(mut i: Roll) -> IResult<Roll, Self> {
-        tracing::trace!("parsing settings frame, roll length: {}", i.len());
-        let mut settings = Self::default();
+    pub fn make_parser(&self) -> impl FnMut(Roll) -> IResult<Roll, Self> {
+        let mut settings = *self;
+        move |mut i| {
+            tracing::trace!("parsing settings frame, roll length: {}", i.len());
 
-        while !i.is_empty() {
-            let (rest, (id, value)) = tuple((be_u16, be_u32))(i)?;
-            tracing::trace!(%id, %value, "Got setting pair");
-            match SettingIdentifier::from_repr(id) {
-                None => {
-                    // ignore unknown settings
-                }
-                Some(id) => match id {
-                    SettingIdentifier::HeaderTableSize => {
-                        settings.header_table_size = value;
+            while !i.is_empty() {
+                let (rest, (id, value)) = tuple((be_u16, be_u32))(i)?;
+                tracing::trace!(%id, %value, "Got setting pair");
+                match SettingIdentifier::from_repr(id) {
+                    None => {
+                        // ignore unknown settings
                     }
-                    SettingIdentifier::EnablePush => {
-                        settings.enable_push = match value {
-                            0 => false,
-                            1 => true,
-                            _ => {
+                    Some(id) => match id {
+                        SettingIdentifier::HeaderTableSize => {
+                            settings.header_table_size = value;
+                        }
+                        SettingIdentifier::EnablePush => {
+                            settings.enable_push = match value {
+                                0 => false,
+                                1 => true,
+                                _ => {
+                                    return Err(nom::Err::Error(nom::error::Error::new(
+                                        rest,
+                                        nom::error::ErrorKind::Digit,
+                                    )));
+                                }
+                            }
+                        }
+                        SettingIdentifier::MaxConcurrentStreams => {
+                            settings.max_concurrent_streams = Some(value);
+                        }
+                        SettingIdentifier::InitialWindowSize => {
+                            if value > Self::MAX_INITIAL_WINDOW_SIZE {
                                 return Err(nom::Err::Error(nom::error::Error::new(
                                     rest,
                                     nom::error::ErrorKind::Digit,
                                 )));
                             }
+                            settings.initial_window_size = value;
                         }
-                    }
-                    SettingIdentifier::MaxConcurrentStreams => {
-                        settings.max_concurrent_streams = value;
-                    }
-                    SettingIdentifier::InitialWindowSize => {
-                        if value > Self::MAX_INITIAL_WINDOW_SIZE {
-                            return Err(nom::Err::Error(nom::error::Error::new(
-                                rest,
-                                nom::error::ErrorKind::Digit,
-                            )));
+                        SettingIdentifier::MaxFrameSize => {
+                            if !Self::MAX_FRAME_SIZE_ALLOWED_RANGE.contains(&value) {
+                                return Err(nom::Err::Error(nom::error::Error::new(
+                                    rest,
+                                    // FIXME: this isn't really representative of
+                                    // the quality error handling we're striving for
+                                    nom::error::ErrorKind::Digit,
+                                )));
+                            }
+                            settings.max_frame_size = value;
                         }
-                        settings.initial_window_size = value;
-                    }
-                    SettingIdentifier::MaxFrameSize => {
-                        if !Self::MAX_FRAME_SIZE_ALLOWED_RANGE.contains(&value) {
-                            return Err(nom::Err::Error(nom::error::Error::new(
-                                rest,
-                                // FIXME: this isn't really representative of
-                                // the quality error handling we're striving for
-                                nom::error::ErrorKind::Digit,
-                            )));
+                        SettingIdentifier::MaxHeaderListSize => {
+                            settings.max_header_list_size = value;
                         }
-                        settings.max_frame_size = value;
-                    }
-                    SettingIdentifier::MaxHeaderListSize => {
-                        settings.max_header_list_size = value;
-                    }
-                },
+                    },
+                }
+                i = rest;
             }
-            i = rest;
-        }
 
-        Ok((i, settings))
+            Ok((i, settings))
+        }
     }
 
     /// Iterates over pairs of id/values
@@ -742,10 +744,6 @@ impl Settings {
                 self.enable_push as u32,
             ),
             (
-                SettingIdentifier::MaxConcurrentStreams as u16,
-                self.max_concurrent_streams,
-            ),
-            (
                 SettingIdentifier::InitialWindowSize as u16,
                 self.initial_window_size,
             ),
@@ -756,6 +754,10 @@ impl Settings {
             ),
         ]
         .into_iter()
+        .chain(
+            self.max_concurrent_streams
+                .map(|val| (SettingIdentifier::MaxConcurrentStreams as u16, val)),
+        )
     }
 
     /// Encode these settings into (u16, u32) pairs as specified in
@@ -777,6 +779,23 @@ impl IntoPiece for Settings {
         debug_assert_eq!(scratch.len(), 0);
         self.write_into(&mut scratch)?;
         Ok(scratch.take_all().into())
+    }
+}
+
+pub struct SettingPairs<'a>(pub &'a [(SettingIdentifier, u32)]);
+
+impl<'a> IntoPiece for SettingPairs<'a> {
+    fn into_piece(self, scratch: &mut RollMut) -> std::io::Result<Piece> {
+        let roll = scratch
+            .put_to_roll(self.0.len() * 6, |mut slice| {
+                for (id, value) in self.0.iter() {
+                    slice.write_u16::<BigEndian>(*id as u16)?;
+                    slice.write_u32::<BigEndian>(*value)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        Ok(roll.into())
     }
 }
 

@@ -88,7 +88,8 @@ macro_rules! tests {
 
                 /// An endpoint MUST send an error code of FRAME_SIZE_ERROR if a frame
                 /// exceeds the size defined in SETTINGS_MAX_FRAME_SIZE, exceeds any
-                /// limit defined for the frame type, or is too small to contain mandatory frame data
+                /// limit defined for the frame type, or is too small to contain mandatory frame
+                /// data
                 #[test]
                 fn frame_exceeding_max_size() {
                     use __group::frame_exceeding_max_size as test;
@@ -157,6 +158,17 @@ macro_rules! tests {
                 #[test]
                 fn sends_smaller_stream_identifier() {
                     use __group::sends_smaller_stream_identifier as test;
+                    $body
+                }
+            }
+
+            /// Section 5.1.2: Stream Concurrency
+            mod _5_1_2_stream_concurrency {
+                use super::__suite::_5_1_2_stream_concurrency as __group;
+
+                #[test]
+                fn exceeds_concurrent_stream_limit() {
+                    use __group::exceeds_concurrent_stream_limit as test;
                     $body
                 }
             }
