@@ -192,3 +192,70 @@ pub async fn sends_priority_frame_with_invalid_length<IO: IntoHalves + 'static>(
 
     Ok(())
 }
+
+//------------- 6.4
+
+/// RST_STREAM frames MUST be associated with a stream. If a
+/// RST_STREAM frame is received with a stream identifier of 0x0,
+/// the recipient MUST treat this as a connection error
+/// (Section 5.4.1) of type PROTOCOL_ERROR.
+pub async fn sends_rst_stream_frame_with_zero_stream_id<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    conn.write_rst_stream(StreamId::CONNECTION, ErrorC::Cancel)
+        .await?;
+
+    conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+/// RST_STREAM frames MUST NOT be sent for a stream in the "idle"
+/// state. If a RST_STREAM frame identifying an idle stream is
+/// received, the recipient MUST treat this as a connection error
+/// (Section 5.4.1) of type PROTOCOL_ERROR.
+pub async fn sends_rst_stream_frame_on_idle_stream<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    conn.write_rst_stream(StreamId(1), ErrorC::Cancel).await?;
+
+    conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+/// A RST_STREAM frame with a length other than 4 octets MUST be
+/// treated as a connection error (Section 5.4.1) of type
+/// FRAME_SIZE_ERROR.
+pub async fn sends_rst_stream_frame_with_invalid_length<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+
+    conn.handshake().await?;
+
+    let mut headers = conn.common_headers();
+    headers.insert(":method".into(), "POST".into());
+
+    let block_fragment = conn.encode_headers(&headers)?;
+
+    conn.write_headers(
+        stream_id,
+        HeadersFlags::EndStream | HeadersFlags::EndHeaders,
+        block_fragment,
+    )
+    .await?;
+
+    let frame = Frame::new(FrameType::RstStream, StreamId(1)).with_len(3);
+    let frame_header = frame.into_piece(&mut conn.scratch)?;
+    conn.send(frame_header).await?;
+    conn.send(b"\x00\x00\x00").await?;
+
+    conn.verify_stream_error(ErrorC::FrameSizeError).await?;
+
+    Ok(())
+}

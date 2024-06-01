@@ -437,6 +437,35 @@ macro_rules! tests {
                     use __group::sends_priority_frame_with_invalid_length as test;
                     $body
                 }
+
+                /// RST_STREAM frames MUST be associated with a stream. If a
+                /// RST_STREAM frame is received with a stream identifier of 0x0,
+                /// the recipient MUST treat this as a connection error
+                /// (Section 5.4.1) of type PROTOCOL_ERROR.
+                #[test]
+                fn sends_rst_stream_frame_with_zero_stream_id() {
+                    use __group::sends_rst_stream_frame_with_zero_stream_id as test;
+                    $body
+                }
+
+                /// RST_STREAM frames MUST NOT be sent for a stream in the "idle"
+                /// state. If a RST_STREAM frame identifying an idle stream is
+                /// received, the recipient MUST treat this as a connection error
+                /// (Section 5.4.1) of type PROTOCOL_ERROR.
+                #[test]
+                fn sends_rst_stream_frame_on_idle_stream() {
+                    use __group::sends_rst_stream_frame_on_idle_stream as test;
+                    $body
+                }
+
+                /// A RST_STREAM frame with a length other than 4 octets MUST be
+                /// treated as a connection error (Section 5.4.1) of type
+                /// FRAME_SIZE_ERROR.
+                #[test]
+                fn sends_rst_stream_frame_with_invalid_length() {
+                    use __group::sends_rst_stream_frame_with_invalid_length as test;
+                    $body
+                }
             }
         }
     };
