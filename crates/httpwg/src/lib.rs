@@ -384,11 +384,7 @@ impl<IO: IntoHalves> Conn<IO> {
             "server should send their settings first thing (no ack)"
         );
 
-        {
-            // parse settings
-            let (_rest, settings) = Settings::default().make_parser()(payload).finish().unwrap();
-            self.settings = settings
-        }
+        Settings::parse(&payload[..], |k, v| self.settings.apply(k, v))?;
 
         self.write_frame(
             Frame::new(

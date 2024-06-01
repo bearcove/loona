@@ -652,6 +652,57 @@ impl Default for Settings {
     }
 }
 
+impl Settings {
+    /// Apply a setting to the current settings, returning an error if the
+    /// setting is invalid.
+    pub fn apply(&mut self, code: SettingCode, value: u32) -> Result<(), SettingsError> {
+        match code {
+            SettingCode::HeaderTableSize => {
+                self.header_table_size = value;
+            }
+            SettingCode::EnablePush => match value {
+                0 => self.enable_push = false,
+                1 => self.enable_push = true,
+                _ => return Err(SettingsError::InvalidEnablePushValue { actual: value }),
+            },
+            SettingCode::MaxConcurrentStreams => {
+                self.max_concurrent_streams = Some(value);
+            }
+            SettingCode::InitialWindowSize => {
+                if value > Self::MAX_INITIAL_WINDOW_SIZE {
+                    return Err(SettingsError::InitialWindowSizeTooLarge { actual: value });
+                }
+                self.initial_window_size = value;
+            }
+            SettingCode::MaxFrameSize => {
+                if !Self::MAX_FRAME_SIZE_ALLOWED_RANGE.contains(&value) {
+                    return Err(SettingsError::SettingsMaxFrameSizeInvalid { actual: value });
+                }
+                self.max_frame_size = value;
+            }
+            SettingCode::MaxHeaderListSize => {
+                self.max_header_list_size = value;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum SettingsError {
+    #[error("ENABLE_PUSH setting is supposed to be either 0 or 1, got {actual}")]
+    InvalidEnablePushValue { actual: u32 },
+
+    #[error("bad INITIAL_WINDOW_SIZE value {actual}, should be than or equal to 2^31-1")]
+    InitialWindowSizeTooLarge { actual: u32 },
+
+    #[error(
+        "bad SETTINGS_MAX_FRAME_SIZE value {actual}, should be between 2^14 and 2^24-1 inclusive"
+    )]
+    SettingsMaxFrameSizeInvalid { actual: u32 },
+}
+
 #[EnumRepr(type = "u16")]
 #[derive(Debug, Clone, Copy)]
 pub enum SettingCode {

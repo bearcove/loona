@@ -1046,49 +1046,18 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     let s = &mut self.state.peer_settings;
 
                     Settings::parse(&payload[..], |code, value| {
+                        s.apply(code, value)?;
                         match code {
                             SettingCode::HeaderTableSize => {
-                                s.header_table_size = value;
                                 self.hpack_enc.set_max_table_size(value as _);
                             }
-                            SettingCode::EnablePush => match value {
-                                0 => s.enable_push = false,
-                                1 => s.enable_push = true,
-                                _ => {
-                                    return Err(
-                                        H2ConnectionError::SettingsEnablePushInvalidValue {
-                                            actual: value,
-                                        },
-                                    );
-                                }
-                            },
-                            SettingCode::MaxConcurrentStreams => {
-                                s.max_concurrent_streams = Some(value);
-                            }
-                            SettingCode::InitialWindowSize => {
-                                if value > Settings::MAX_INITIAL_WINDOW_SIZE {
-                                    return Err(
-                                        H2ConnectionError::SettingsInitialWindowSizeTooLarge {
-                                            actual: value,
-                                        },
-                                    );
-                                }
-                                s.initial_window_size = value;
-                            }
-                            SettingCode::MaxFrameSize => {
-                                if !Settings::MAX_FRAME_SIZE_ALLOWED_RANGE.contains(&value) {
-                                    return Err(H2ConnectionError::SettingsMaxFrameSizeInvalid {
-                                        actual: value,
-                                    });
-                                }
-                                s.max_frame_size = value;
-                            }
-                            SettingCode::MaxHeaderListSize => {
-                                s.max_header_list_size = value;
+                            _ => {
+                                // nothing to do
                             }
                         }
                         Ok(())
-                    })?;
+                    })
+                    .map_err(H2ConnectionError::BadSettingValue)?;
 
                     let initial_window_size_delta =
                         (s.initial_window_size as i64) - (original_initial_window_size as i64);

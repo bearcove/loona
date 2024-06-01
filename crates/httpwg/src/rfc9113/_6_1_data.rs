@@ -341,7 +341,7 @@ pub async fn sends_settings_frame_with_invalid_length<IO: IntoHalves + 'static>(
     Ok(())
 }
 
-//------------- 6.5.1
+//------------- 6.5.2
 
 /// SETTINGS_ENABLE_PUSH (0x2):
 /// The initial value is 1, which indicates that server push is

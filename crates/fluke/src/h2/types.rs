@@ -9,7 +9,7 @@ use tokio::sync::Notify;
 use crate::Response;
 
 use super::body::StreamIncoming;
-use fluke_h2_parse::{FrameType, KnownErrorCode, Settings, StreamId};
+use fluke_h2_parse::{FrameType, KnownErrorCode, Settings, SettingsError, StreamId};
 
 pub(crate) struct ConnState {
     pub(crate) streams: HashMap<StreamId, StreamState>,
@@ -366,15 +366,6 @@ pub(crate) enum H2ConnectionError {
     #[error("received settings frame with non-zero stream id")]
     SettingsWithNonZeroStreamId { stream_id: StreamId },
 
-    #[error("ENABLE_PUSH setting must be set to 0 or 1")]
-    SettingsEnablePushInvalidValue { actual: u32 },
-
-    #[error("received initial window size settings larger than max allowed: {actual}")]
-    SettingsInitialWindowSizeTooLarge { actual: u32 },
-
-    #[error("received settings with invalid max frame size: {actual}")]
-    SettingsMaxFrameSizeInvalid { actual: u32 },
-
     #[error("received goaway frame with non-zero stream id")]
     GoAwayWithNonZeroStreamId { stream_id: StreamId },
 
@@ -392,6 +383,9 @@ pub(crate) enum H2ConnectionError {
 
     #[error("received window update frame with invalid length {len}")]
     WindowUpdateInvalidLength { len: usize },
+
+    #[error("bad setting value: {0}")]
+    BadSettingValue(SettingsError),
 }
 
 impl H2ConnectionError {
@@ -409,6 +403,9 @@ impl H2ConnectionError {
             H2ConnectionError::StreamWindowSizeOverflowDueToSettings { .. } => {
                 KnownErrorCode::FlowControlError
             }
+            H2ConnectionError::BadSettingValue(SettingsError::InitialWindowSizeTooLarge {
+                ..
+            }) => KnownErrorCode::FlowControlError,
             // compression errors
             H2ConnectionError::CompressionError(_) => KnownErrorCode::CompressionError,
             // stream closed error
