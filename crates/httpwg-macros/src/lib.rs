@@ -138,6 +138,29 @@ macro_rules! tests {
                 }
             }
 
+            /// Section 5.1.1: Stream Identifiers
+            mod _5_1_1_stream_identifiers {
+                use super::__suite::_5_1_1_stream_identifiers as __group;
+
+                /// An endpoint that receives an unexpected stream identifier
+                /// MUST respond with a connection error (Section 5.4.1) of
+                /// type PROTOCOL_ERROR.
+                #[test]
+                fn sends_even_numbered_stream_identifier() {
+                    use __group::sends_even_numbered_stream_identifier as test;
+                    $body
+                }
+
+                /// An endpoint that receives an unexpected stream identifier
+                /// MUST respond with a connection error (Section 5.4.1) of
+                /// type PROTOCOL_ERROR.
+                #[test]
+                fn sends_smaller_stream_identifier() {
+                    use __group::sends_smaller_stream_identifier as test;
+                    $body
+                }
+            }
+
             /// Section 5.1: Stream States
             mod _5_1_stream_states {
                 use super::__suite::_5_1_stream_states as __group;

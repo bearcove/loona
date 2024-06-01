@@ -29,6 +29,6 @@ pub mod _4_1_frame_format;
 pub mod _4_2_frame_size;
 pub mod _4_3_header_compression_and_decompression;
 
+pub mod _5_1_1_stream_identifiers;
 pub mod _5_1_stream_states;
-// TODO: 5.1.1: Stream Identifiers
 // TODO: 5.1.2: Stream Concurrency
