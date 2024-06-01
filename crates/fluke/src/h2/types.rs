@@ -391,7 +391,6 @@ impl H2ConnectionError {
             // frame size errors
             H2ConnectionError::FrameTooLarge { .. } => KnownErrorCode::FrameSizeError,
             H2ConnectionError::PaddedFrameEmpty { .. } => KnownErrorCode::FrameSizeError,
-            H2ConnectionError::PaddedFrameTooShort { .. } => KnownErrorCode::FrameSizeError,
             H2ConnectionError::PingFrameInvalidLength { .. } => KnownErrorCode::FrameSizeError,
             H2ConnectionError::SettingsAckWithPayload { .. } => KnownErrorCode::FrameSizeError,
             H2ConnectionError::WindowUpdateInvalidLength { .. } => KnownErrorCode::FrameSizeError,
@@ -408,6 +407,7 @@ impl H2ConnectionError {
             // internal errors
             H2ConnectionError::Internal(_) => KnownErrorCode::InternalError,
             // protocol errors
+            H2ConnectionError::PaddedFrameTooShort { .. } => KnownErrorCode::ProtocolError,
             H2ConnectionError::StreamSpecificFrameToConnection { .. } => {
                 KnownErrorCode::ProtocolError
             }
