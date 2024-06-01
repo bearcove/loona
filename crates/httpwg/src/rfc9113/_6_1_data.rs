@@ -1,7 +1,7 @@
 //! Section 6.1: DATA
 
 use fluke_buffet::IntoHalves;
-use fluke_h2_parse::{Frame, FrameType, HeadersFlags, IntoPiece, StreamId};
+use fluke_h2_parse::{Frame, FrameType, HeadersFlags, IntoPiece, PrioritySpec, StreamId};
 
 use crate::{Conn, ErrorC};
 
@@ -81,7 +81,7 @@ pub async fn sends_data_frame_with_invalid_pad_length<IO: IntoHalves + 'static>(
     Ok(())
 }
 
-//----------------------------------------------------------------------
+//------------- 6.2
 
 /// HEADERS frames MUST be associated with a stream. If a HEADERS
 /// frame is received whose stream identifier field is 0x0, the
@@ -133,6 +133,62 @@ pub async fn sends_headers_frame_with_invalid_pad_length<IO: IntoHalves + 'stati
     conn.send(block_fragment).await?;
 
     conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+//------------- 6.3
+
+/// The PRIORITY frame always identifies a stream. If a PRIORITY
+/// frame is received with a stream identifier of 0x0, the recipient
+/// MUST respond with a connection error (Section 5.4.1) of type
+/// PROTOCOL_ERROR.
+pub async fn sends_priority_frame_with_zero_stream_id<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let priority_param = PrioritySpec {
+        stream_dependency: StreamId::CONNECTION,
+        exclusive: false,
+        weight: 255,
+    };
+    conn.write_priority(StreamId::CONNECTION, priority_param)
+        .await?;
+
+    conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+/// A PRIORITY frame with a length other than 5 octets MUST be
+/// treated as a stream error (Section 5.4.2) of type
+/// FRAME_SIZE_ERROR.
+pub async fn sends_priority_frame_with_invalid_length<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+
+    conn.handshake().await?;
+
+    let mut headers = conn.common_headers();
+    headers.insert(":method".into(), "POST".into());
+
+    let block_fragment = conn.encode_headers(&headers)?;
+
+    conn.write_headers(
+        stream_id,
+        HeadersFlags::EndStream | HeadersFlags::EndHeaders,
+        block_fragment,
+    )
+    .await?;
+
+    let frame = Frame::new(FrameType::Priority, stream_id).with_len(4);
+    let frame_header = frame.into_piece(&mut conn.scratch)?;
+    conn.send(frame_header).await?;
+    conn.send(b"\x80\x00\x00\x01").await?;
+
+    conn.verify_stream_error(ErrorC::FrameSizeError).await?;
 
     Ok(())
 }

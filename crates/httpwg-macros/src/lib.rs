@@ -418,6 +418,25 @@ macro_rules! tests {
                     use __group::sends_headers_frame_with_invalid_pad_length as test;
                     $body
                 }
+
+                /// The PRIORITY frame always identifies a stream. If a PRIORITY
+                /// frame is received with a stream identifier of 0x0, the recipient
+                /// MUST respond with a connection error (Section 5.4.1) of type
+                /// PROTOCOL_ERROR.
+                #[test]
+                fn sends_priority_frame_with_zero_stream_id() {
+                    use __group::sends_priority_frame_with_zero_stream_id as test;
+                    $body
+                }
+
+                /// A PRIORITY frame with a length other than 5 octets MUST be
+                /// treated as a stream error (Section 5.4.2) of type
+                /// FRAME_SIZE_ERROR.
+                #[test]
+                fn sends_priority_frame_with_invalid_length() {
+                    use __group::sends_priority_frame_with_invalid_length as test;
+                    $body
+                }
             }
         }
     };
