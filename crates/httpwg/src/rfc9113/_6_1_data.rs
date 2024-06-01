@@ -340,3 +340,139 @@ pub async fn sends_settings_frame_with_invalid_length<IO: IntoHalves + 'static>(
 
     Ok(())
 }
+
+//------------- 6.5.1
+
+/// SETTINGS_ENABLE_PUSH (0x2):
+/// The initial value is 1, which indicates that server push is
+/// permitted. Any value other than 0 or 1 MUST be treated as a
+/// connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+pub async fn sends_settings_enable_push_with_invalid_value<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    conn.write_frame(
+        Frame::new(
+            FrameType::Settings(Default::default()),
+            StreamId::CONNECTION,
+        )
+        .with_len(6),
+        SettingPairs(&[(SettingCode::EnablePush, 2)]),
+    )
+    .await?;
+
+    conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+/// SETTINGS_INITIAL_WINDOW_SIZE (0x4):
+/// Values above the maximum flow-control window size of 2^31-1
+/// MUST be treated as a connection error (Section 5.4.1) of
+/// type FLOW_CONTROL_ERROR.
+pub async fn sends_settings_initial_window_size_with_invalid_value<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    conn.write_frame(
+        Frame::new(
+            FrameType::Settings(Default::default()),
+            StreamId::CONNECTION,
+        )
+        .with_len(6),
+        SettingPairs(&[(SettingCode::InitialWindowSize, 1 << 31)]),
+    )
+    .await?;
+
+    conn.verify_connection_error(ErrorC::FlowControlError)
+        .await?;
+
+    Ok(())
+}
+
+/// SETTINGS_MAX_FRAME_SIZE (0x5):
+/// The initial value is 2^14 (16,384) octets. The value advertised
+/// by an endpoint MUST be between this initial value and the
+/// maximum allowed frame size (2^24-1 or 16,777,215 octets),
+/// inclusive. Values outside this range MUST be treated as a
+/// connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+pub async fn sends_settings_max_frame_size_with_invalid_value_below_initial<
+    IO: IntoHalves + 'static,
+>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    conn.write_frame(
+        Frame::new(
+            FrameType::Settings(Default::default()),
+            StreamId::CONNECTION,
+        )
+        .with_len(6),
+        SettingPairs(&[(SettingCode::MaxFrameSize, (1 << 14) - 1)]),
+    )
+    .await?;
+
+    conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+/// SETTINGS_MAX_FRAME_SIZE (0x5):
+/// The initial value is 2^14 (16,384) octets. The value advertised
+/// by an endpoint MUST be between this initial value and the
+/// maximum allowed frame size (2^24-1 or 16,777,215 octets),
+/// inclusive. Values outside this range MUST be treated as a
+/// connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+pub async fn sends_settings_max_frame_size_with_invalid_value_above_max<
+    IO: IntoHalves + 'static,
+>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    conn.write_frame(
+        Frame::new(
+            FrameType::Settings(Default::default()),
+            StreamId::CONNECTION,
+        )
+        .with_len(6),
+        SettingPairs(&[(SettingCode::MaxFrameSize, 1 << 24)]),
+    )
+    .await?;
+
+    conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+/// An endpoint that receives a SETTINGS frame with any unknown
+/// or unsupported identifier MUST ignore that setting.
+pub async fn sends_settings_frame_with_unknown_identifier<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    conn.write_frame(
+        Frame::new(
+            FrameType::Settings(Default::default()),
+            StreamId::CONNECTION,
+        )
+        .with_len(6),
+        // settings payloads in http/2 are groups of 6 bytes,
+        // composed of a (big-endian) 16-bit identifier and a 32-bit value
+        // here we want to send a setting with an unknown identifier
+        // 0xff, and value 0. here are its bytes:
+        b"\x00\xff\x00\x00\x00\x00",
+    )
+    .await?;
+
+    let data = [0; 8];
+    conn.write_ping(false, data.to_vec()).await?;
+
+    conn.verify_ping_frame_with_ack(&data).await?;
+
+    Ok(())
+}

@@ -11,8 +11,8 @@ use eyre::Context;
 use fluke_buffet::{Piece, PieceList, PieceStr, ReadOwned, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
     self as parse, enumflags2::BitFlags, nom::Finish, parse_bit_and_u31, ContinuationFlags,
-    DataFlags, Frame, FrameType, HeadersFlags, PingFlags, PrioritySpec, Settings, SettingsFlags,
-    StreamId,
+    DataFlags, Frame, FrameType, HeadersFlags, PingFlags, PrioritySpec, SettingCode, Settings,
+    SettingsFlags, StreamId,
 };
 use http::{
     header,
@@ -1042,50 +1042,80 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         });
                     }
                 } else {
-                    let (_, settings) = match nom::combinator::complete(
-                        self.state.peer_settings.make_parser(),
-                    )(payload)
-                    .finish()
-                    {
-                        Err(_) => {
-                            return Err(H2ConnectionError::ReadError(eyre::eyre!(
-                                "could not parse settings frame"
-                            )));
+                    let original_initial_window_size = self.state.peer_settings.initial_window_size;
+                    let s = &mut self.state.peer_settings;
+
+                    Settings::parse(&payload[..], |code, value| {
+                        match code {
+                            SettingCode::HeaderTableSize => {
+                                s.header_table_size = value;
+                                self.hpack_enc.set_max_table_size(value as _);
+                            }
+                            SettingCode::EnablePush => match value {
+                                0 => s.enable_push = false,
+                                1 => s.enable_push = true,
+                                _ => {
+                                    return Err(
+                                        H2ConnectionError::SettingsEnablePushInvalidValue {
+                                            actual: value,
+                                        },
+                                    );
+                                }
+                            },
+                            SettingCode::MaxConcurrentStreams => {
+                                s.max_concurrent_streams = Some(value);
+                            }
+                            SettingCode::InitialWindowSize => {
+                                if value > Settings::MAX_INITIAL_WINDOW_SIZE {
+                                    return Err(
+                                        H2ConnectionError::SettingsInitialWindowSizeTooLarge {
+                                            actual: value,
+                                        },
+                                    );
+                                }
+                                s.initial_window_size = value;
+                            }
+                            SettingCode::MaxFrameSize => {
+                                if !Settings::MAX_FRAME_SIZE_ALLOWED_RANGE.contains(&value) {
+                                    return Err(H2ConnectionError::SettingsMaxFrameSizeInvalid {
+                                        actual: value,
+                                    });
+                                }
+                                s.max_frame_size = value;
+                            }
+                            SettingCode::MaxHeaderListSize => {
+                                s.max_header_list_size = value;
+                            }
                         }
-                        Ok(t) => t,
-                    };
+                        Ok(())
+                    })?;
 
-                    self.hpack_enc
-                        .set_max_table_size(settings.header_table_size as usize);
-
-                    let initial_window_size_delta = (settings.initial_window_size as i64)
-                        - (self.state.peer_settings.initial_window_size as i64);
-                    debug!(%initial_window_size_delta, "Peer sent us {settings:#?}");
+                    let initial_window_size_delta =
+                        (s.initial_window_size as i64) - (original_initial_window_size as i64);
 
                     let mut maybe_send_data = false;
-
-                    // apply that delta to all streams
-                    for (id, stream) in self.state.streams.iter_mut() {
-                        if let Some(outgoing) = stream.outgoing_mut() {
-                            let next_cap = outgoing.capacity + initial_window_size_delta;
-                            if next_cap > MAX_WINDOW_SIZE {
-                                return Err(
-                                    H2ConnectionError::StreamWindowSizeOverflowDueToSettings {
-                                        stream_id: *id,
-                                    },
-                                );
+                    if initial_window_size_delta != 0 {
+                        // apply that delta to all streams
+                        for (id, stream) in self.state.streams.iter_mut() {
+                            if let Some(outgoing) = stream.outgoing_mut() {
+                                let next_cap = outgoing.capacity + initial_window_size_delta;
+                                if next_cap > MAX_WINDOW_SIZE {
+                                    return Err(
+                                        H2ConnectionError::StreamWindowSizeOverflowDueToSettings {
+                                            stream_id: *id,
+                                        },
+                                    );
+                                }
+                                // if capacity was negative or zero, and is now greater than zero,
+                                // we need to maybe send data
+                                if next_cap > 0 && outgoing.capacity <= 0 {
+                                    debug!(?id, %next_cap, "stream capacity was <= 0, now > 0");
+                                    maybe_send_data = true;
+                                }
+                                outgoing.capacity = next_cap;
                             }
-                            // if capacity was negative or zero, and is now greater than zero,
-                            // we need to maybe send data
-                            if next_cap > 0 && outgoing.capacity <= 0 {
-                                debug!(?id, %next_cap, "stream capacity was <= 0, now > 0");
-                                maybe_send_data = true;
-                            }
-                            outgoing.capacity = next_cap;
                         }
                     }
-
-                    self.state.peer_settings = settings;
 
                     let frame = Frame::new(
                         FrameType::Settings(SettingsFlags::Ack.into()),

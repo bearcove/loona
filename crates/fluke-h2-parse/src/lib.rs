@@ -15,7 +15,7 @@ pub use nom;
 
 use nom::{
     combinator::map,
-    number::streaming::{be_u16, be_u24, be_u32, be_u8},
+    number::streaming::{be_u24, be_u32, be_u8},
     sequence::tuple,
     IResult,
 };
@@ -664,70 +664,36 @@ pub enum SettingCode {
 }
 
 impl Settings {
-    const MAX_INITIAL_WINDOW_SIZE: u32 = (1 << 31) - 1;
-    const MAX_FRAME_SIZE_ALLOWED_RANGE: RangeInclusive<u32> = (1 << 14)..=((1 << 24) - 1);
+    pub const MAX_INITIAL_WINDOW_SIZE: u32 = (1 << 31) - 1;
+    pub const MAX_FRAME_SIZE_ALLOWED_RANGE: RangeInclusive<u32> = (1 << 14)..=((1 << 24) - 1);
 
-    pub fn make_parser(&self) -> impl FnMut(Roll) -> IResult<Roll, Self> {
-        let mut settings = *self;
-        move |mut i| {
-            tracing::trace!("parsing settings frame, roll length: {}", i.len());
+    /// Parse a series of settings from a buffer, calls the callback for each
+    /// known setting found.
+    ///
+    /// Unknown settings are ignored.
+    ///
+    /// Panics if the buf isn't a multiple of 6 bytes.
+    pub fn parse<E>(
+        buf: &[u8],
+        mut callback: impl FnMut(SettingCode, u32) -> Result<(), E>,
+    ) -> Result<(), E> {
+        assert!(
+            buf.len() % 6 == 0,
+            "buffer length must be a multiple of 6 bytes"
+        );
 
-            while !i.is_empty() {
-                let (rest, (id, value)) = tuple((be_u16, be_u32))(i)?;
-                tracing::trace!(%id, %value, "Got setting pair");
-                match SettingCode::from_repr(id) {
-                    None => {
-                        // ignore unknown settings
-                    }
-                    Some(id) => match id {
-                        SettingCode::HeaderTableSize => {
-                            settings.header_table_size = value;
-                        }
-                        SettingCode::EnablePush => {
-                            settings.enable_push = match value {
-                                0 => false,
-                                1 => true,
-                                _ => {
-                                    return Err(nom::Err::Error(nom::error::Error::new(
-                                        rest,
-                                        nom::error::ErrorKind::Digit,
-                                    )));
-                                }
-                            }
-                        }
-                        SettingCode::MaxConcurrentStreams => {
-                            settings.max_concurrent_streams = Some(value);
-                        }
-                        SettingCode::InitialWindowSize => {
-                            if value > Self::MAX_INITIAL_WINDOW_SIZE {
-                                return Err(nom::Err::Error(nom::error::Error::new(
-                                    rest,
-                                    nom::error::ErrorKind::Digit,
-                                )));
-                            }
-                            settings.initial_window_size = value;
-                        }
-                        SettingCode::MaxFrameSize => {
-                            if !Self::MAX_FRAME_SIZE_ALLOWED_RANGE.contains(&value) {
-                                return Err(nom::Err::Error(nom::error::Error::new(
-                                    rest,
-                                    // FIXME: this isn't really representative of
-                                    // the quality error handling we're striving for
-                                    nom::error::ErrorKind::Digit,
-                                )));
-                            }
-                            settings.max_frame_size = value;
-                        }
-                        SettingCode::MaxHeaderListSize => {
-                            settings.max_header_list_size = value;
-                        }
-                    },
+        for chunk in buf.chunks_exact(6) {
+            let id = u16::from_be_bytes([chunk[0], chunk[1]]);
+            let value = u32::from_be_bytes([chunk[2], chunk[3], chunk[4], chunk[5]]);
+            match SettingCode::from_repr(id) {
+                None => {}
+                Some(id) => {
+                    callback(id, value)?;
                 }
-                i = rest;
             }
-
-            Ok((i, settings))
         }
+
+        Ok(())
     }
 
     /// Iterates over pairs of id/values

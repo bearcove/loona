@@ -366,6 +366,15 @@ pub(crate) enum H2ConnectionError {
     #[error("received settings frame with non-zero stream id")]
     SettingsWithNonZeroStreamId { stream_id: StreamId },
 
+    #[error("ENABLE_PUSH setting must be set to 0 or 1")]
+    SettingsEnablePushInvalidValue { actual: u32 },
+
+    #[error("received initial window size settings larger than max allowed: {actual}")]
+    SettingsInitialWindowSizeTooLarge { actual: u32 },
+
+    #[error("received settings with invalid max frame size: {actual}")]
+    SettingsMaxFrameSizeInvalid { actual: u32 },
+
     #[error("received goaway frame with non-zero stream id")]
     GoAwayWithNonZeroStreamId { stream_id: StreamId },
 
