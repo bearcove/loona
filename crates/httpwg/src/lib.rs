@@ -27,9 +27,6 @@ pub struct Conn<IO: IntoHalves + 'static> {
     pub ev_rx: tokio::sync::mpsc::Receiver<Ev>,
     config: Rc<Config>,
     hpack_enc: fluke_hpack::Encoder<'static>,
-    // FIXME: we should decode header fragments for _all_ HEADERS frames,
-    // even the ones we discard. I don't know if test cases should be
-    // responsible for that, or the connection itself.
     hpack_dec: fluke_hpack::Decoder<'static>,
     pub max_frame_size: usize,
 }
@@ -507,8 +504,8 @@ impl<IO: IntoHalves> Conn<IO> {
         }
     }
 
-    /// VerifyHeadersFrame verifies whether a HEADERS frame with specified
-    /// stream ID has received.
+    /// verify_headers_frame verifies whether a HEADERS frame with specified
+    /// stream ID was received.
     pub async fn verify_headers_frame(&mut self, stream_id: StreamId) -> eyre::Result<()> {
         let (frame, _payload) = self.wait_for_frame(FrameT::Headers).await.unwrap();
         assert_eq!(frame.stream_id, stream_id, "unexpected stream ID");
@@ -610,6 +607,22 @@ impl<IO: IntoHalves> Conn<IO> {
                 .encode_header_into((k.as_ref(), v.as_ref()), &mut fragment)?;
         }
         Ok(fragment.into())
+    }
+
+    /// Note: The buffer should represent the entire block that should be
+    /// decoded. For example, in HTTP/2, all continuation frames need to be
+    /// concatenated to a single buffer before passing them to the decoder.
+    pub fn decode_headers(&mut self, fragment: Piece) -> eyre::Result<Headers> {
+        // note: this allocates a lot but, but again, we're doing tests so shrug.
+        let mut headers = Headers::default();
+        let res = self
+            .hpack_dec
+            .decode(&fragment[..])
+            .map_err(|e| eyre::eyre!("hpack decoder error: {e:?}"))?;
+        for (k, v) in res {
+            headers.insert(k.into(), v.into());
+        }
+        Ok(headers)
     }
 
     pub async fn write_headers(
