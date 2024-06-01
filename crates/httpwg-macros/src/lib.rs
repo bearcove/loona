@@ -136,6 +136,277 @@ macro_rules! tests {
                     use __group::headers_frame_to_another_stream as test;
                     $body
                 }
+
+                /// idle:
+                /// Receiving any frame other than HEADERS or PRIORITY on a stream
+                /// in this state MUST be treated as a connection error
+                /// (Section 5.4.1) of type PROTOCOL_ERROR.
+                #[test]
+                fn idle_sends_data_frame() {
+                    use __group::idle_sends_data_frame as test;
+                    $body
+                }
+
+                /// idle:
+                /// Receiving any frame other than HEADERS or PRIORITY on a stream
+                /// in this state MUST be treated as a connection error
+                /// (Section 5.4.1) of type PROTOCOL_ERROR.
+                #[test]
+                fn idle_sends_rst_stream_frame() {
+                    use __group::idle_sends_rst_stream_frame as test;
+                    $body
+                }
+
+                /// idle:
+                /// Receiving any frame other than HEADERS or PRIORITY on a stream
+                /// in this state MUST be treated as a connection error
+                /// (Section 5.4.1) of type PROTOCOL_ERROR.
+                #[test]
+                fn idle_sends_window_update_frame() {
+                    use __group::idle_sends_window_update_frame as test;
+                    $body
+                }
+
+                /// idle:
+                /// Receiving any frame other than HEADERS or PRIORITY on a stream
+                /// in this state MUST be treated as a connection error
+                /// (Section 5.4.1) of type PROTOCOL_ERROR.
+                #[test]
+                fn idle_sends_continuation_frame() {
+                    use __group::idle_sends_continuation_frame as test;
+                    $body
+                }
+
+                /// half-closed (remote):
+                /// If an endpoint receives additional frames, other than
+                /// WINDOW_UPDATE, PRIORITY, or RST_STREAM, for a stream that is in
+                /// this state, it MUST respond with a stream error (Section 5.4.2)
+                /// of type STREAM_CLOSED.
+                #[test]
+                fn half_closed_remote_sends_data_frame() {
+                    use __group::half_closed_remote_sends_data_frame as test;
+                    $body
+                }
+
+                /// half-closed (remote):
+                /// If an endpoint receives additional frames, other than
+                /// WINDOW_UPDATE, PRIORITY, or RST_STREAM, for a stream that is in
+                /// this state, it MUST respond with a stream error (Section 5.4.2)
+                /// of type STREAM_CLOSED.
+                #[test]
+                fn half_closed_remote_sends_headers_frame() {
+                    use __group::half_closed_remote_sends_headers_frame as test;
+                    $body
+                }
+
+                /// half-closed (remote):
+                /// If an endpoint receives additional frames, other than
+                /// WINDOW_UPDATE, PRIORITY, or RST_STREAM, for a stream that is in
+                /// this state, it MUST respond with a stream error (Section 5.4.2)
+                /// of type STREAM_CLOSED.
+                #[test]
+                fn half_closed_remote_sends_continuation_frame() {
+                    use __group::half_closed_remote_sends_continuation_frame as test;
+                    $body
+                }
+
+                /// closed:
+                /// An endpoint that receives any frame other than PRIORITY after
+                /// receiving a RST_STREAM MUST treat that as a stream error
+                /// (Section 5.4.2) of type STREAM_CLOSED.
+                #[test]
+                fn closed_sends_data_frame_after_rst_stream() {
+                    use __group::closed_sends_data_frame_after_rst_stream as test;
+                    $body
+                }
+
+                /// closed:
+                /// An endpoint that receives any frame other than PRIORITY after
+                /// receiving a RST_STREAM MUST treat that as a stream error
+                /// (Section 5.4.2) of type STREAM_CLOSED.
+                #[test]
+                fn closed_sends_headers_frame_after_rst_stream() {
+                    use __group::closed_sends_headers_frame_after_rst_stream as test;
+                    $body
+                }
+
+                /// closed:
+                /// An endpoint that receives any frame other than PRIORITY after
+                /// receiving a RST_STREAM MUST treat that as a stream error
+                /// (Section 5.4.2) of type STREAM_CLOSED.
+                #[test]
+                fn closed_sends_continuation_frame_after_rst_stream() {
+                    use __group::closed_sends_continuation_frame_after_rst_stream as test;
+                    $body
+                }
+
+                /// closed:
+                /// An endpoint that receives any frames after receiving a frame
+                /// with the END_STREAM flag set MUST treat that as a connection
+                /// error (Section 6.4.1) of type STREAM_CLOSED.
+                #[test]
+                fn closed_sends_data_frame() {
+                    use __group::closed_sends_data_frame as test;
+                    $body
+                }
+
+                /// closed:
+                /// An endpoint that receives any frames after receiving a frame
+                /// with the END_STREAM flag set MUST treat that as a connection
+                /// error (Section 6.4.1) of type STREAM_CLOSED.
+                #[test]
+                fn closed_sends_headers_frame() {
+                    use __group::closed_sends_headers_frame as test;
+                    $body
+                }
+
+                /// closed:
+                /// An endpoint that receives any frames after receiving a frame
+                /// with the END_STREAM flag set MUST treat that as a connection
+                /// error (Section 6.4.1) of type STREAM_CLOSED.
+                #[test]
+                fn closed_sends_continuation_frame() {
+                    use __group::closed_sends_continuation_frame as test;
+                    $body
+                }
+            }
+
+            /// Section 5.1: Stream States
+            mod _5_1_stream_states {
+                use super::__suite::_5_1_stream_states as __group;
+
+                /// idle:
+                /// Receiving any frame other than HEADERS or PRIORITY on a stream
+                /// in this state MUST be treated as a connection error
+                /// (Section 5.4.1) of type PROTOCOL_ERROR.
+                #[test]
+                fn idle_sends_data_frame() {
+                    use __group::idle_sends_data_frame as test;
+                    $body
+                }
+
+                /// idle:
+                /// Receiving any frame other than HEADERS or PRIORITY on a stream
+                /// in this state MUST be treated as a connection error
+                /// (Section 5.4.1) of type PROTOCOL_ERROR.
+                #[test]
+                fn idle_sends_rst_stream_frame() {
+                    use __group::idle_sends_rst_stream_frame as test;
+                    $body
+                }
+
+                /// idle:
+                /// Receiving any frame other than HEADERS or PRIORITY on a stream
+                /// in this state MUST be treated as a connection error
+                /// (Section 5.4.1) of type PROTOCOL_ERROR.
+                #[test]
+                fn idle_sends_window_update_frame() {
+                    use __group::idle_sends_window_update_frame as test;
+                    $body
+                }
+
+                /// idle:
+                /// Receiving any frame other than HEADERS or PRIORITY on a stream
+                /// in this state MUST be treated as a connection error
+                /// (Section 5.4.1) of type PROTOCOL_ERROR.
+                #[test]
+                fn idle_sends_continuation_frame() {
+                    use __group::idle_sends_continuation_frame as test;
+                    $body
+                }
+
+                /// half-closed (remote):
+                /// If an endpoint receives additional frames, other than
+                /// WINDOW_UPDATE, PRIORITY, or RST_STREAM, for a stream that is in
+                /// this state, it MUST respond with a stream error (Section 5.4.2)
+                /// of type STREAM_CLOSED.
+                #[test]
+                fn half_closed_remote_sends_data_frame() {
+                    use __group::half_closed_remote_sends_data_frame as test;
+                    $body
+                }
+
+                /// half-closed (remote):
+                /// If an endpoint receives additional frames, other than
+                /// WINDOW_UPDATE, PRIORITY, or RST_STREAM, for a stream that is in
+                /// this state, it MUST respond with a stream error (Section 5.4.2)
+                /// of type STREAM_CLOSED.
+                #[test]
+                fn half_closed_remote_sends_headers_frame() {
+                    use __group::half_closed_remote_sends_headers_frame as test;
+                    $body
+                }
+
+                /// half-closed (remote):
+                /// If an endpoint receives additional frames, other than
+                /// WINDOW_UPDATE, PRIORITY, or RST_STREAM, for a stream that is in
+                /// this state, it MUST respond with a stream error (Section 5.4.2)
+                /// of type STREAM_CLOSED.
+                #[test]
+                fn half_closed_remote_sends_continuation_frame() {
+                    use __group::half_closed_remote_sends_continuation_frame as test;
+                    $body
+                }
+
+                /// closed:
+                /// An endpoint that receives any frame other than PRIORITY after
+                /// receiving a RST_STREAM MUST treat that as a stream error
+                /// (Section 5.4.2) of type STREAM_CLOSED.
+                #[test]
+                fn closed_sends_data_frame_after_rst_stream() {
+                    use __group::closed_sends_data_frame_after_rst_stream as test;
+                    $body
+                }
+
+                /// closed:
+                /// An endpoint that receives any frame other than PRIORITY after
+                /// receiving a RST_STREAM MUST treat that as a stream error
+                /// (Section 5.4.2) of type STREAM_CLOSED.
+                #[test]
+                fn closed_sends_headers_frame_after_rst_stream() {
+                    use __group::closed_sends_headers_frame_after_rst_stream as test;
+                    $body
+                }
+
+                /// closed:
+                /// An endpoint that receives any frame other than PRIORITY after
+                /// receiving a RST_STREAM MUST treat that as a stream error
+                /// (Section 5.4.2) of type STREAM_CLOSED.
+                #[test]
+                fn closed_sends_continuation_frame_after_rst_stream() {
+                    use __group::closed_sends_continuation_frame_after_rst_stream as test;
+                    $body
+                }
+
+                /// closed:
+                /// An endpoint that receives any frames after receiving a frame
+                /// with the END_STREAM flag set MUST treat that as a connection
+                /// error (Section 6.4.1) of type STREAM_CLOSED.
+                #[test]
+                fn closed_sends_data_frame() {
+                    use __group::closed_sends_data_frame as test;
+                    $body
+                }
+
+                /// closed:
+                /// An endpoint that receives any frames after receiving a frame
+                /// with the END_STREAM flag set MUST treat that as a connection
+                /// error (Section 6.4.1) of type STREAM_CLOSED.
+                #[test]
+                fn closed_sends_headers_frame() {
+                    use __group::closed_sends_headers_frame as test;
+                    $body
+                }
+
+                /// closed:
+                /// An endpoint that receives any frames after receiving a frame
+                /// with the END_STREAM flag set MUST treat that as a connection
+                /// error (Section 6.4.1) of type STREAM_CLOSED.
+                #[test]
+                fn closed_sends_continuation_frame() {
+                    use __group::closed_sends_continuation_frame as test;
+                    $body
+                }
             }
         }
     };

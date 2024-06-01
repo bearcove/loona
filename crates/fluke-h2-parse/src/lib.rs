@@ -403,7 +403,7 @@ impl IntoPiece for Frame {
 
 /// See https://httpwg.org/specs/rfc9113.html#FrameHeader - the first bit
 /// is reserved, and the rest is a 31-bit stream id
-pub fn parse_reserved_and_u31(i: Roll) -> IResult<Roll, (u8, u32)> {
+pub fn parse_bit_and_u31(i: Roll) -> IResult<Roll, (u8, u32)> {
     fn reserved(i: (Roll, usize)) -> IResult<(Roll, usize), u8> {
         nom::bits::streaming::take(1_usize)(i)
     }
@@ -416,16 +416,20 @@ pub fn parse_reserved_and_u31(i: Roll) -> IResult<Roll, (u8, u32)> {
 }
 
 fn parse_reserved_and_stream_id(i: Roll) -> IResult<Roll, (u8, StreamId)> {
-    parse_reserved_and_u31(i).map(|(i, (reserved, stream_id))| (i, (reserved, StreamId(stream_id))))
+    parse_bit_and_u31(i).map(|(i, (reserved, stream_id))| (i, (reserved, StreamId(stream_id))))
 }
 
-/// Pack `reserved` into the first bit of a u32 and write it out as big-endian
-fn pack_reserved_and_stream_id(reserved: u8, stream_id: StreamId) -> [u8; 4] {
-    let mut bytes = stream_id.0.to_be_bytes();
-    if reserved != 0 {
+/// Pack a bit and a u31 into a 4-byte array (big-endian)
+pub fn pack_bit_and_u31(bit: u8, val: u32) -> [u8; 4] {
+    let mut bytes = val.to_be_bytes();
+    if bit != 0 {
         bytes[0] |= 0b1000_0000;
     }
     bytes
+}
+
+pub fn pack_reserved_and_stream_id(reserved: u8, stream_id: StreamId) -> [u8; 4] {
+    pack_bit_and_u31(reserved, stream_id.0)
 }
 
 // cf. https://httpwg.org/specs/rfc9113.html#HEADERS
@@ -466,7 +470,7 @@ impl IntoPiece for PrioritySpec {
 }
 
 #[derive(Clone, Copy)]
-pub struct ErrorCode(u32);
+pub struct ErrorCode(pub u32);
 
 impl ErrorCode {
     /// Returns the underlying u32
@@ -588,17 +592,18 @@ pub struct Settings {
     pub enable_push: bool,
 
     /// This setting indicates the maximum number of concurrent streams that the
-    /// sender will allow. This limit is directional: it applies to the number of
-    /// streams that the sender permits the receiver to create. Initially, there is
-    /// no limit to this value. It is recommended that this value be no smaller than
-    /// 100, so as to not unnecessarily limit parallelism.
+    /// sender will allow. This limit is directional: it applies to the number
+    /// of streams that the sender permits the receiver to create.
+    /// Initially, there is no limit to this value. It is recommended that
+    /// this value be no smaller than 100, so as to not unnecessarily limit
+    /// parallelism.
     ///
-    /// A value of 0 for SETTINGS_MAX_CONCURRENT_STREAMS SHOULD NOT be treated as
-    /// special by endpoints. A zero value does prevent the creation of new streams;
-    /// however, this can also happen for any limit that is exhausted with active
-    /// streams. Servers SHOULD only set a zero value for short durations; if a
-    /// server does not wish to accept requests, closing the connection is more
-    /// appropriate.
+    /// A value of 0 for SETTINGS_MAX_CONCURRENT_STREAMS SHOULD NOT be treated
+    /// as special by endpoints. A zero value does prevent the creation of
+    /// new streams; however, this can also happen for any limit that is
+    /// exhausted with active streams. Servers SHOULD only set a zero value
+    /// for short durations; if a server does not wish to accept requests,
+    /// closing the connection is more appropriate.
     pub max_concurrent_streams: u32,
 
     /// This setting indicates the sender's initial window size (in units of
@@ -616,9 +621,10 @@ pub struct Settings {
     /// sender is willing to receive, in units of octets.
     ///
     /// The initial value is 2^14 (16,384) octets. The value advertised by an
-    /// endpoint MUST be between this initial value and the maximum allowed frame
-    /// size (2^24-1 or 16,777,215 octets), inclusive. Values outside this range MUST
-    /// be treated as a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+    /// endpoint MUST be between this initial value and the maximum allowed
+    /// frame size (2^24-1 or 16,777,215 octets), inclusive. Values outside
+    /// this range MUST be treated as a connection error (Section 5.4.1) of
+    /// type PROTOCOL_ERROR.
     pub max_frame_size: u32,
 
     /// This advisory setting informs a peer of the maximum field section size
@@ -836,6 +842,37 @@ impl RstStream {
             rest,
             Self {
                 error_code: ErrorCode(error_code),
+            },
+        ))
+    }
+}
+
+/// Payload for a WINDOW_UPDATE frame
+pub struct WindowUpdate {
+    pub reserved: u8,
+    pub increment: u32,
+}
+
+impl IntoPiece for WindowUpdate {
+    fn into_piece(self, scratch: &mut RollMut) -> std::io::Result<Piece> {
+        let roll = scratch
+            .put_to_roll(4, |mut slice| {
+                slice.write_all(&pack_bit_and_u31(self.reserved, self.increment))?;
+                Ok(())
+            })
+            .unwrap();
+        Ok(roll.into())
+    }
+}
+
+impl WindowUpdate {
+    pub fn parse(i: Roll) -> IResult<Roll, Self> {
+        let (rest, (reserved, window_size_increment)) = parse_bit_and_u31(i)?;
+        Ok((
+            rest,
+            Self {
+                reserved,
+                increment: window_size_increment,
             },
         ))
     }

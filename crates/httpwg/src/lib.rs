@@ -8,8 +8,9 @@ use fluke_buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
     enumflags2,
     nom::{self, Finish},
-    ContinuationFlags, DataFlags, Frame, FrameType, GoAway, HeadersFlags, IntoPiece,
-    KnownErrorCode, PingFlags, PrioritySpec, RstStream, Settings, SettingsFlags, StreamId, PREFACE,
+    ContinuationFlags, DataFlags, ErrorCode, Frame, FrameType, GoAway, HeadersFlags, IntoPiece,
+    KnownErrorCode, PingFlags, PrioritySpec, RstStream, Settings, SettingsFlags, StreamId,
+    WindowUpdate, PREFACE,
 };
 use tokio::time::Instant;
 use tracing::{debug, trace};
@@ -139,6 +140,12 @@ pub enum ErrorC {
     EnhanceYourCalm,
     InadequateSecurity,
     Http1_1Required,
+}
+
+impl From<ErrorC> for ErrorCode {
+    fn from(value: ErrorC) -> Self {
+        ErrorCode(value as _)
+    }
 }
 
 impl From<KnownErrorCode> for ErrorC {
@@ -429,7 +436,8 @@ impl<IO: IntoHalves> Conn<IO> {
         }
     }
 
-    /// VerifyHeadersFrame verifies whether a HEADERS frame with specified stream ID has received.
+    /// VerifyHeadersFrame verifies whether a HEADERS frame with specified
+    /// stream ID has received.
     pub async fn verify_headers_frame(&mut self, stream_id: StreamId) -> eyre::Result<()> {
         let (frame, _payload) = self.wait_for_frame(FrameT::Headers).await.unwrap();
         assert_eq!(frame.stream_id, stream_id, "unexpected stream ID");
@@ -585,6 +593,30 @@ impl<IO: IntoHalves> Conn<IO> {
         }
 
         headers
+    }
+
+    pub async fn write_rst_stream(
+        &mut self,
+        stream_id: StreamId,
+        error_code: impl Into<ErrorCode>,
+    ) -> eyre::Result<()> {
+        let error_code = error_code.into();
+        let rst_stream = RstStream { error_code };
+        self.write_frame(FrameType::RstStream.into_frame(stream_id), rst_stream)
+            .await
+    }
+
+    async fn write_window_update(
+        &mut self,
+        stream_id: StreamId,
+        increment: u32,
+    ) -> eyre::Result<()> {
+        let window_update = WindowUpdate {
+            reserved: 0,
+            increment,
+        };
+        self.write_frame(FrameType::WindowUpdate.into_frame(stream_id), window_update)
+            .await
     }
 }
 
