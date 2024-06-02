@@ -655,32 +655,32 @@ impl Default for Settings {
 impl Settings {
     /// Apply a setting to the current settings, returning an error if the
     /// setting is invalid.
-    pub fn apply(&mut self, code: SettingCode, value: u32) -> Result<(), SettingsError> {
+    pub fn apply(&mut self, code: Setting, value: u32) -> Result<(), SettingsError> {
         match code {
-            SettingCode::HeaderTableSize => {
+            Setting::HeaderTableSize => {
                 self.header_table_size = value;
             }
-            SettingCode::EnablePush => match value {
+            Setting::EnablePush => match value {
                 0 => self.enable_push = false,
                 1 => self.enable_push = true,
                 _ => return Err(SettingsError::InvalidEnablePushValue { actual: value }),
             },
-            SettingCode::MaxConcurrentStreams => {
+            Setting::MaxConcurrentStreams => {
                 self.max_concurrent_streams = Some(value);
             }
-            SettingCode::InitialWindowSize => {
+            Setting::InitialWindowSize => {
                 if value > Self::MAX_INITIAL_WINDOW_SIZE {
                     return Err(SettingsError::InitialWindowSizeTooLarge { actual: value });
                 }
                 self.initial_window_size = value;
             }
-            SettingCode::MaxFrameSize => {
+            Setting::MaxFrameSize => {
                 if !Self::MAX_FRAME_SIZE_ALLOWED_RANGE.contains(&value) {
                     return Err(SettingsError::SettingsMaxFrameSizeInvalid { actual: value });
                 }
                 self.max_frame_size = value;
             }
-            SettingCode::MaxHeaderListSize => {
+            Setting::MaxHeaderListSize => {
                 self.max_header_list_size = value;
             }
         }
@@ -705,7 +705,7 @@ pub enum SettingsError {
 
 #[EnumRepr(type = "u16")]
 #[derive(Debug, Clone, Copy)]
-pub enum SettingCode {
+pub enum Setting {
     HeaderTableSize = 0x01,
     EnablePush = 0x02,
     MaxConcurrentStreams = 0x03,
@@ -726,7 +726,7 @@ impl Settings {
     /// Panics if the buf isn't a multiple of 6 bytes.
     pub fn parse<E>(
         buf: &[u8],
-        mut callback: impl FnMut(SettingCode, u32) -> Result<(), E>,
+        mut callback: impl FnMut(Setting, u32) -> Result<(), E>,
     ) -> Result<(), E> {
         assert!(
             buf.len() % 6 == 0,
@@ -736,7 +736,7 @@ impl Settings {
         for chunk in buf.chunks_exact(6) {
             let id = u16::from_be_bytes([chunk[0], chunk[1]]);
             let value = u32::from_be_bytes([chunk[2], chunk[3], chunk[4], chunk[5]]);
-            match SettingCode::from_repr(id) {
+            match Setting::from_repr(id) {
                 None => {}
                 Some(id) => {
                     callback(id, value)?;
@@ -746,57 +746,21 @@ impl Settings {
 
         Ok(())
     }
+}
 
-    /// Iterates over pairs of id/values
-    pub fn pairs(&self) -> impl Iterator<Item = (u16, u32)> {
-        [
-            (SettingCode::HeaderTableSize as u16, self.header_table_size),
-            (
-                // note: as a server, we're free to omit this, but it doesn't
-                // hurt to send 0 there I guess.
-                SettingCode::EnablePush as u16,
-                self.enable_push as u32,
-            ),
-            (
-                SettingCode::InitialWindowSize as u16,
-                self.initial_window_size,
-            ),
-            (SettingCode::MaxFrameSize as u16, self.max_frame_size),
-            (
-                SettingCode::MaxHeaderListSize as u16,
-                self.max_header_list_size,
-            ),
-        ]
-        .into_iter()
-        .chain(
-            self.max_concurrent_streams
-                .map(|val| (SettingCode::MaxConcurrentStreams as u16, val)),
-        )
-    }
+pub struct SettingPairs<'a>(pub &'a [(Setting, u32)]);
 
-    /// Encode these settings into (u16, u32) pairs as specified in
-    /// https://httpwg.org/specs/rfc9113.html#SETTINGS
-    pub fn write_into(self, mut w: impl std::io::Write) -> std::io::Result<()> {
-        use byteorder::{BigEndian, WriteBytesExt};
-
-        for (id, value) in self.pairs() {
-            w.write_u16::<BigEndian>(id)?;
-            w.write_u32::<BigEndian>(value)?;
-        }
-
-        Ok(())
+impl<'a> From<&'a [(Setting, u32)]> for SettingPairs<'a> {
+    fn from(value: &'a [(Setting, u32)]) -> Self {
+        Self(value)
     }
 }
 
-impl IntoPiece for Settings {
-    fn into_piece(self, mut scratch: &mut RollMut) -> std::io::Result<Piece> {
-        debug_assert_eq!(scratch.len(), 0);
-        self.write_into(&mut scratch)?;
-        Ok(scratch.take_all().into())
+impl<const N: usize> From<&'static [(Setting, u32); N]> for SettingPairs<'static> {
+    fn from(value: &'static [(Setting, u32); N]) -> Self {
+        Self(value)
     }
 }
-
-pub struct SettingPairs<'a>(pub &'a [(SettingCode, u32)]);
 
 impl<'a> IntoPiece for SettingPairs<'a> {
     fn into_piece(self, scratch: &mut RollMut) -> std::io::Result<Piece> {

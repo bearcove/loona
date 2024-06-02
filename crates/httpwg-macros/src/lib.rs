@@ -620,6 +620,163 @@ fn sends_goaway_frame_with_non_zero_stream_id() {
 use __group::sends_goaway_frame_with_non_zero_stream_id as test;
 $body
 }
+
+/// A receiver MUST treat the receipt of a WINDOW_UPDATE frame with
+/// a flow-control window increment of 0 as a stream error
+/// (Section 5.4.2) of type PROTOCOL_ERROR; errors on the connection
+/// flow-control window MUST be treated as a connection error
+/// (Section 5.4.1).
+#[test]
+fn sends_window_update_frame_with_zero_increment() {
+use __group::sends_window_update_frame_with_zero_increment as test;
+$body
+}
+
+/// A receiver MUST treat the receipt of a WINDOW_UPDATE frame with
+/// a flow-control window increment of 0 as a stream error
+/// (Section 5.4.2) of type PROTOCOL_ERROR; errors on the connection
+/// flow-control window MUST be treated as a connection error
+/// (Section 5.4.1).
+#[test]
+fn sends_window_update_frame_with_zero_increment_on_stream() {
+use __group::sends_window_update_frame_with_zero_increment_on_stream as test;
+$body
+}
+
+/// A WINDOW_UPDATE frame with a length other than 4 octets MUST
+/// be treated as a connection error (Section 5.4.1) of type
+/// FRAME_SIZE_ERROR.
+#[test]
+fn sends_window_update_frame_with_invalid_length() {
+use __group::sends_window_update_frame_with_invalid_length as test;
+$body
+}
+
+/// The sender MUST NOT send a flow-controlled frame with a length
+/// that exceeds the space available in either of the flow-control
+/// windows advertised by the receiver.
+#[test]
+fn sends_settings_frame_to_set_initial_window_size_to_1_and_sends_headers_frame() {
+use __group::sends_settings_frame_to_set_initial_window_size_to_1_and_sends_headers_frame as test;
+$body
+}
+
+/// A sender MUST NOT allow a flow-control window to exceed 2^31-1
+/// octets. If a sender receives a WINDOW_UPDATE that causes a
+/// flow-control window to exceed this maximum, it MUST terminate
+/// either the stream or the connection, as appropriate.
+/// For streams, the sender sends a RST_STREAM with an error code
+/// of FLOW_CONTROL_ERROR; for the connection, a GOAWAY frame with
+/// an error code of FLOW_CONTROL_ERROR is sent.
+#[test]
+fn sends_multiple_window_update_frames_increasing_flow_control_window_above_max() {
+use __group::sends_multiple_window_update_frames_increasing_flow_control_window_above_max as test;
+$body
+}
+
+/// A sender MUST NOT allow a flow-control window to exceed 2^31-1
+/// octets. If a sender receives a WINDOW_UPDATE that causes a
+/// flow-control window to exceed this maximum, it MUST terminate
+/// either the stream or the connection, as appropriate.
+/// For streams, the sender sends a RST_STREAM with an error code
+/// of FLOW_CONTROL_ERROR; for the connection, a GOAWAY frame with
+/// an error code of FLOW_CONTROL_ERROR is sent.
+#[test]
+fn sends_multiple_window_update_frames_increasing_flow_control_window_above_max_on_stream() {
+use __group::sends_multiple_window_update_frames_increasing_flow_control_window_above_max_on_stream as test;
+$body
+}
+
+/// When the value of SETTINGS_INITIAL_WINDOW_SIZE changes,
+/// a receiver MUST adjust the size of all stream flow-control
+/// windows that it maintains by the difference between the new
+/// value and the old value.
+#[test]
+fn changes_settings_initial_window_size_after_sending_headers_frame() {
+use __group::changes_settings_initial_window_size_after_sending_headers_frame as test;
+$body
+}
+
+/// A sender MUST track the negative flow-control window and
+/// MUST NOT send new flow-controlled frames until it receives
+/// WINDOW_UPDATE frames that cause the flow-control window to
+/// become positive.
+#[test]
+fn sends_settings_frame_for_window_size_to_be_negative() {
+use __group::sends_settings_frame_for_window_size_to_be_negative as test;
+$body
+}
+
+/// An endpoint MUST treat a change to SETTINGS_INITIAL_WINDOW_SIZE
+/// that causes any flow-control window to exceed the maximum size
+/// as a connection error (Section 5.4.1) of type FLOW_CONTROL_ERROR.
+#[test]
+fn sends_settings_initial_window_size_with_exceeded_max_window_size_value() {
+use __group::sends_settings_initial_window_size_with_exceeded_max_window_size_value as test;
+$body
+}
+
+/// The CONTINUATION frame (type=0x9) is used to continue a sequence
+/// of header block fragments (Section 4.3). Any number of
+/// CONTINUATION frames can be sent, as long as the preceding frame
+/// is on the same stream and is a HEADERS, PUSH_PROMISE,
+/// or CONTINUATION frame without the END_HEADERS flag set.
+#[test]
+fn sends_multiple_continuation_frames_preceded_by_headers_frame() {
+use __group::sends_multiple_continuation_frames_preceded_by_headers_frame as test;
+$body
+}
+
+/// END_HEADERS (0x4):
+/// If the END_HEADERS bit is not set, this frame MUST be followed
+/// by another CONTINUATION frame. A receiver MUST treat the receipt
+/// of any other type of frame or a frame on a different stream as
+/// a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+#[test]
+fn sends_continuation_frame_followed_by_non_continuation_frame() {
+use __group::sends_continuation_frame_followed_by_non_continuation_frame as test;
+$body
+}
+
+/// CONTINUATION frames MUST be associated with a stream. If a
+/// CONTINUATION frame is received whose stream identifier field is
+/// 0x0, the recipient MUST respond with a connection error
+/// (Section 5.4.1) of type PROTOCOL_ERROR.
+#[test]
+fn sends_continuation_frame_with_zero_stream_id() {
+use __group::sends_continuation_frame_with_zero_stream_id as test;
+$body
+}
+
+/// A CONTINUATION frame MUST be preceded by a HEADERS, PUSH_PROMISE
+/// or CONTINUATION frame without the END_HEADERS flag set.
+/// A recipient that observes violation of this rule MUST respond
+/// with a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+#[test]
+fn sends_continuation_frame_preceded_by_headers_frame_with_end_headers_flag() {
+use __group::sends_continuation_frame_preceded_by_headers_frame_with_end_headers_flag as test;
+$body
+}
+
+/// A CONTINUATION frame MUST be preceded by a HEADERS, PUSH_PROMISE
+/// or CONTINUATION frame without the END_HEADERS flag set.
+/// A recipient that observes violation of this rule MUST respond
+/// with a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+#[test]
+fn sends_continuation_frame_preceded_by_continuation_frame_with_end_headers_flag() {
+use __group::sends_continuation_frame_preceded_by_continuation_frame_with_end_headers_flag as test;
+$body
+}
+
+/// A CONTINUATION frame MUST be preceded by a HEADERS, PUSH_PROMISE
+/// or CONTINUATION frame without the END_HEADERS flag set.
+/// A recipient that observes violation of this rule MUST respond
+/// with a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+#[test]
+fn sends_continuation_frame_preceded_by_data_frame() {
+use __group::sends_continuation_frame_preceded_by_data_frame as test;
+$body
+}
 }
 }
 }

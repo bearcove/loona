@@ -11,7 +11,7 @@ use eyre::Context;
 use fluke_buffet::{Piece, PieceList, PieceStr, ReadOwned, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
     self as parse, enumflags2::BitFlags, nom::Finish, parse_bit_and_u31, ContinuationFlags,
-    DataFlags, Frame, FrameType, HeadersFlags, PingFlags, PrioritySpec, SettingCode, Settings,
+    DataFlags, Frame, FrameType, HeadersFlags, PingFlags, PrioritySpec, Setting, Settings,
     SettingsFlags, StreamId,
 };
 use http::{
@@ -1048,7 +1048,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     Settings::parse(&payload[..], |code, value| {
                         s.apply(code, value)?;
                         match code {
-                            SettingCode::HeaderTableSize => {
+                            Setting::HeaderTableSize => {
                                 self.hpack_enc.set_max_table_size(value as _);
                             }
                             _ => {

@@ -1,9 +1,10 @@
 //! Section 6.1: DATA
 
+use enumflags2::BitFlags;
 use fluke_buffet::{IntoHalves, Piece};
 use fluke_h2_parse::{
-    Frame, FrameType, GoAway, HeadersFlags, IntoPiece, KnownErrorCode, PrioritySpec, SettingCode,
-    SettingPairs, SettingsFlags, StreamId,
+    ContinuationFlags, Frame, FrameType, GoAway, HeadersFlags, IntoPiece, KnownErrorCode,
+    PrioritySpec, Setting, SettingPairs, SettingsFlags, StreamId,
 };
 
 use crate::{dummy_bytes, Conn, ErrorC, FrameT};
@@ -277,15 +278,14 @@ pub async fn sends_settings_frame_with_ack_and_payload<IO: IntoHalves + 'static>
 ) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    let frame = Frame::new(
-        FrameType::Settings(SettingsFlags::Ack.into()),
-        StreamId::CONNECTION,
+    conn.write_frame(
+        Frame::new(
+            FrameType::Settings(SettingsFlags::Ack.into()),
+            StreamId::CONNECTION,
+        ),
+        b"\x00",
     )
-    .with_len(1);
-    let frame_header = frame.into_piece(&mut conn.scratch)?;
-    conn.send(frame_header).await?;
-    // this may fail, we already broke the protocol
-    _ = conn.send(b"\x00").await;
+    .await?;
 
     conn.verify_connection_error(ErrorC::FrameSizeError).await?;
 
@@ -305,7 +305,7 @@ pub async fn sends_settings_frame_with_non_zero_stream_id<IO: IntoHalves + 'stat
 
     conn.write_frame(
         Frame::new(FrameType::Settings(Default::default()), StreamId(1)).with_len(6),
-        SettingPairs(&[(SettingCode::MaxConcurrentStreams, 0x64)]),
+        SettingPairs(&[(Setting::MaxConcurrentStreams, 0x64)]),
     )
     .await?;
 
@@ -326,15 +326,14 @@ pub async fn sends_settings_frame_with_invalid_length<IO: IntoHalves + 'static>(
 ) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    let frame = Frame::new(
-        FrameType::Settings(Default::default()),
-        StreamId::CONNECTION,
+    conn.write_frame(
+        Frame::new(
+            FrameType::Settings(Default::default()),
+            StreamId::CONNECTION,
+        ),
+        b"\x00\x03\x00",
     )
-    .with_len(3);
-    let frame = frame.into_piece(&mut conn.scratch)?;
-    conn.send(frame).await?;
-    // this may fail, we already broke the protocol
-    _ = conn.send(b"\x00\x03\x00").await;
+    .await?;
 
     conn.verify_connection_error(ErrorC::FrameSizeError).await?;
 
@@ -352,15 +351,7 @@ pub async fn sends_settings_enable_push_with_invalid_value<IO: IntoHalves + 'sta
 ) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    conn.write_frame(
-        Frame::new(
-            FrameType::Settings(Default::default()),
-            StreamId::CONNECTION,
-        )
-        .with_len(6),
-        SettingPairs(&[(SettingCode::EnablePush, 2)]),
-    )
-    .await?;
+    conn.write_settings(&[(Setting::EnablePush, 2)]).await?;
 
     conn.verify_connection_error(ErrorC::ProtocolError).await?;
 
@@ -376,15 +367,8 @@ pub async fn sends_settings_initial_window_size_with_invalid_value<IO: IntoHalve
 ) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    conn.write_frame(
-        Frame::new(
-            FrameType::Settings(Default::default()),
-            StreamId::CONNECTION,
-        )
-        .with_len(6),
-        SettingPairs(&[(SettingCode::InitialWindowSize, 1 << 31)]),
-    )
-    .await?;
+    conn.write_settings(&[(Setting::InitialWindowSize, 1 << 31)])
+        .await?;
 
     conn.verify_connection_error(ErrorC::FlowControlError)
         .await?;
@@ -405,15 +389,8 @@ pub async fn sends_settings_max_frame_size_with_invalid_value_below_initial<
 ) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    conn.write_frame(
-        Frame::new(
-            FrameType::Settings(Default::default()),
-            StreamId::CONNECTION,
-        )
-        .with_len(6),
-        SettingPairs(&[(SettingCode::MaxFrameSize, (1 << 14) - 1)]),
-    )
-    .await?;
+    conn.write_settings(&[(Setting::MaxFrameSize, (1 << 14) - 1)])
+        .await?;
 
     conn.verify_connection_error(ErrorC::ProtocolError).await?;
 
@@ -433,15 +410,8 @@ pub async fn sends_settings_max_frame_size_with_invalid_value_above_max<
 ) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    conn.write_frame(
-        Frame::new(
-            FrameType::Settings(Default::default()),
-            StreamId::CONNECTION,
-        )
-        .with_len(6),
-        SettingPairs(&[(SettingCode::MaxFrameSize, 1 << 24)]),
-    )
-    .await?;
+    conn.write_settings(&[(Setting::MaxFrameSize, 1 << 24)])
+        .await?;
 
     conn.verify_connection_error(ErrorC::ProtocolError).await?;
 
@@ -461,18 +431,12 @@ pub async fn sends_settings_frame_with_unknown_identifier<IO: IntoHalves + 'stat
             StreamId::CONNECTION,
         )
         .with_len(6),
-        // settings payloads in http/2 are groups of 6 bytes,
-        // composed of a (big-endian) 16-bit identifier and a 32-bit value
-        // here we want to send a setting with an unknown identifier
-        // 0xff, and value 0. here are its bytes:
+        // identifier 0xff, value 0x00
         b"\x00\xff\x00\x00\x00\x00",
     )
     .await?;
 
-    let data = [0; 8];
-    conn.write_ping(false, data.to_vec()).await?;
-
-    conn.verify_ping_frame_with_ack(&data).await?;
+    conn.verify_connection_still_alive().await?;
 
     Ok(())
 }
@@ -494,8 +458,8 @@ pub async fn sends_multiple_values_of_settings_initial_window_size<IO: IntoHalve
             StreamId::CONNECTION,
         ),
         SettingPairs(&[
-            (SettingCode::InitialWindowSize, 100),
-            (SettingCode::InitialWindowSize, 1),
+            (Setting::InitialWindowSize, 100),
+            (Setting::InitialWindowSize, 1),
         ]),
     )
     .await?;
@@ -532,7 +496,7 @@ pub async fn sends_settings_frame_without_ack_flag<IO: IntoHalves + 'static>(
             FrameType::Settings(Default::default()),
             StreamId::CONNECTION,
         ),
-        SettingPairs(&[(SettingCode::EnablePush, 0)]),
+        SettingPairs(&[(Setting::EnablePush, 0)]),
     )
     .await?;
 
@@ -604,10 +568,11 @@ pub async fn sends_ping_frame_with_invalid_length<IO: IntoHalves + 'static>(
 ) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    let frame = Frame::new(FrameType::Ping(Default::default()), StreamId::CONNECTION).with_len(6);
-    let frame_header = frame.into_piece(&mut conn.scratch)?;
-    conn.send(frame_header).await?;
-    conn.send(dummy_bytes(6)).await?;
+    conn.write_frame(
+        Frame::new(FrameType::Ping(Default::default()), StreamId::CONNECTION),
+        dummy_bytes(6),
+    )
+    .await?;
 
     conn.verify_connection_error(ErrorC::FrameSizeError).await?;
 
@@ -633,6 +598,427 @@ pub async fn sends_goaway_frame_with_non_zero_stream_id<IO: IntoHalves + 'static
         },
     )
     .await?;
+
+    conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+//----------------- 6.9
+
+/// A receiver MUST treat the receipt of a WINDOW_UPDATE frame with
+/// a flow-control window increment of 0 as a stream error
+/// (Section 5.4.2) of type PROTOCOL_ERROR; errors on the connection
+/// flow-control window MUST be treated as a connection error
+/// (Section 5.4.1).
+pub async fn sends_window_update_frame_with_zero_increment<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    conn.write_window_update(StreamId::CONNECTION, 0).await?;
+
+    conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+/// A receiver MUST treat the receipt of a WINDOW_UPDATE frame with
+/// a flow-control window increment of 0 as a stream error
+/// (Section 5.4.2) of type PROTOCOL_ERROR; errors on the connection
+/// flow-control window MUST be treated as a connection error
+/// (Section 5.4.1).
+pub async fn sends_window_update_frame_with_zero_increment_on_stream<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+
+    conn.handshake().await?;
+
+    let mut headers = conn.common_headers();
+    headers.insert(":method".into(), "POST".into());
+
+    let block_fragment = conn.encode_headers(&headers)?;
+
+    conn.write_headers(stream_id, HeadersFlags::EndHeaders, block_fragment)
+        .await?;
+
+    conn.write_window_update(stream_id, 0).await?;
+
+    conn.verify_stream_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+/// A WINDOW_UPDATE frame with a length other than 4 octets MUST
+/// be treated as a connection error (Section 5.4.1) of type
+/// FRAME_SIZE_ERROR.
+pub async fn sends_window_update_frame_with_invalid_length<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    conn.write_frame(
+        Frame::new(FrameType::WindowUpdate, StreamId::CONNECTION),
+        b"\x00\x00\x01",
+    )
+    .await?;
+
+    conn.verify_connection_error(ErrorC::FrameSizeError).await?;
+
+    Ok(())
+}
+
+//----------------- 6.9.1
+
+/// The sender MUST NOT send a flow-controlled frame with a length
+/// that exceeds the space available in either of the flow-control
+/// windows advertised by the receiver.
+pub async fn sends_settings_frame_to_set_initial_window_size_to_1_and_sends_headers_frame<
+    IO: IntoHalves + 'static,
+>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+
+    conn.handshake().await?;
+
+    conn.write_and_ack_settings(&[(Setting::InitialWindowSize, 1)])
+        .await?;
+
+    conn.encode_and_write_headers(
+        stream_id,
+        HeadersFlags::EndStream | HeadersFlags::EndHeaders,
+        &conn.common_headers("POST"),
+    )
+    .await?;
+
+    let (frame, _payload) = conn.wait_for_frame(FrameT::Data).await.unwrap();
+    assert_eq!(frame.len, 1);
+
+    Ok(())
+}
+
+/// A sender MUST NOT allow a flow-control window to exceed 2^31-1
+/// octets. If a sender receives a WINDOW_UPDATE that causes a
+/// flow-control window to exceed this maximum, it MUST terminate
+/// either the stream or the connection, as appropriate.
+/// For streams, the sender sends a RST_STREAM with an error code
+/// of FLOW_CONTROL_ERROR; for the connection, a GOAWAY frame with
+/// an error code of FLOW_CONTROL_ERROR is sent.
+pub async fn sends_multiple_window_update_frames_increasing_flow_control_window_above_max<
+    IO: IntoHalves + 'static,
+>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    conn.write_window_update(StreamId::CONNECTION, 1 << 31)
+        .await?;
+    conn.write_window_update(StreamId::CONNECTION, 1 << 31)
+        .await?;
+
+    conn.verify_connection_error(ErrorC::FlowControlError)
+        .await?;
+
+    Ok(())
+}
+
+/// A sender MUST NOT allow a flow-control window to exceed 2^31-1
+/// octets. If a sender receives a WINDOW_UPDATE that causes a
+/// flow-control window to exceed this maximum, it MUST terminate
+/// either the stream or the connection, as appropriate.
+/// For streams, the sender sends a RST_STREAM with an error code
+/// of FLOW_CONTROL_ERROR; for the connection, a GOAWAY frame with
+/// an error code of FLOW_CONTROL_ERROR is sent.
+pub async fn sends_multiple_window_update_frames_increasing_flow_control_window_above_max_on_stream<
+    IO: IntoHalves + 'static,
+>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+
+    conn.handshake().await?;
+
+    conn.encode_and_write_headers(
+        stream_id,
+        HeadersFlags::EndStream | HeadersFlags::EndHeaders,
+        &conn.common_headers("POST"),
+    )
+    .await?;
+
+    conn.write_window_update(stream_id, 1 << 31).await?;
+    conn.write_window_update(stream_id, 1 << 31).await?;
+
+    conn.verify_stream_error(ErrorC::FlowControlError).await?;
+
+    Ok(())
+}
+
+//----------------- 6.9.2
+
+/// When the value of SETTINGS_INITIAL_WINDOW_SIZE changes,
+/// a receiver MUST adjust the size of all stream flow-control
+/// windows that it maintains by the difference between the new
+/// value and the old value.
+pub async fn changes_settings_initial_window_size_after_sending_headers_frame<
+    IO: IntoHalves + 'static,
+>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+
+    conn.handshake().await?;
+
+    // prevent the peer from sending us data frames
+    conn.write_and_ack_settings(&[(Setting::InitialWindowSize, 0)])
+        .await?;
+
+    // make a request
+    conn.encode_and_write_headers(
+        stream_id,
+        HeadersFlags::EndStream | HeadersFlags::EndHeaders,
+        &conn.common_headers("POST"),
+    )
+    .await?;
+
+    // allow the peer to send us one byte
+    conn.write_settings(&[(Setting::InitialWindowSize, 1)])
+        .await?;
+
+    let (frame, _payload) = conn.wait_for_frame(FrameT::Data).await.unwrap();
+    assert_eq!(frame.len, 1);
+
+    Ok(())
+}
+
+/// A sender MUST track the negative flow-control window and
+/// MUST NOT send new flow-controlled frames until it receives
+/// WINDOW_UPDATE frames that cause the flow-control window to
+/// become positive.
+pub async fn sends_settings_frame_for_window_size_to_be_negative<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+
+    conn.handshake().await?;
+
+    // note: this test assumes the response body is 5 bytes or above
+
+    // make window size 3 & send request
+    conn.write_and_ack_settings(&[(Setting::InitialWindowSize, 3)])
+        .await?;
+    conn.send_empty_post_to_root(stream_id);
+
+    // wait for peer to send us all 3 bytes it can
+    let (_, payload) = conn.wait_for_frame(FrameT::Data).await.unwrap();
+    assert_eq!(payload.len(), 3);
+
+    // window size is 0, if we set SETTINGS_INITIAL_WINDOW_SIZE to 2
+    // (from 3 before), it should go to -1
+    conn.write_and_ack_settings(&[(Setting::InitialWindowSize, 2)])
+        .await?;
+
+    // bring it back up to 1
+    conn.write_window_update(stream_id, 2).await?;
+
+    // we should get exactly 1 byte
+    let (frame, _payload) = conn.wait_for_frame(FrameT::Data).await.unwrap();
+    assert_eq!(frame.len, 1);
+
+    Ok(())
+}
+
+/// An endpoint MUST treat a change to SETTINGS_INITIAL_WINDOW_SIZE
+/// that causes any flow-control window to exceed the maximum size
+/// as a connection error (Section 5.4.1) of type FLOW_CONTROL_ERROR.
+pub async fn sends_settings_initial_window_size_with_exceeded_max_window_size_value<
+    IO: IntoHalves + 'static,
+>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    conn.write_settings(&[(Setting::InitialWindowSize, 1 << 31)])
+        .await?;
+
+    conn.verify_connection_error(ErrorC::FlowControlError)
+        .await?;
+
+    Ok(())
+}
+
+//----------- 6.10
+
+/// The CONTINUATION frame (type=0x9) is used to continue a sequence
+/// of header block fragments (Section 4.3). Any number of
+/// CONTINUATION frames can be sent, as long as the preceding frame
+/// is on the same stream and is a HEADERS, PUSH_PROMISE,
+/// or CONTINUATION frame without the END_HEADERS flag set.
+pub async fn sends_multiple_continuation_frames_preceded_by_headers_frame<
+    IO: IntoHalves + 'static,
+>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+
+    conn.handshake().await?;
+
+    let headers = conn.common_headers("POST");
+    let block_fragment = conn.encode_headers(&headers)?;
+    conn.write_headers(stream_id, HeadersFlags::EndStream, block_fragment)
+        .await?;
+
+    let dummy_headers = conn.dummy_headers(1);
+    let block_fragment = conn.encode_headers(&dummy_headers)?;
+    conn.write_continuation(stream_id, BitFlags::empty(), block_fragment)
+        .await?;
+    let block_fragment = conn.encode_headers(&dummy_headers)?;
+    conn.write_continuation(stream_id, ContinuationFlags::EndHeaders, block_fragment)
+        .await?;
+
+    conn.verify_headers_frame(stream_id).await?;
+
+    Ok(())
+}
+
+/// END_HEADERS (0x4):
+/// If the END_HEADERS bit is not set, this frame MUST be followed
+/// by another CONTINUATION frame. A receiver MUST treat the receipt
+/// of any other type of frame or a frame on a different stream as
+/// a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+pub async fn sends_continuation_frame_followed_by_non_continuation_frame<
+    IO: IntoHalves + 'static,
+>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+
+    conn.handshake().await?;
+
+    let block_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
+    conn.write_headers(stream_id, HeadersFlags::EndStream, block_fragment)
+        .await?;
+
+    let dummy_headers = conn.dummy_headers(1);
+    let block_fragment = conn.encode_headers(&dummy_headers)?;
+    conn.write_continuation(stream_id, BitFlags::empty(), block_fragment)
+        .await?;
+    conn.write_data(stream_id, true, b"test").await?;
+
+    conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+/// CONTINUATION frames MUST be associated with a stream. If a
+/// CONTINUATION frame is received whose stream identifier field is
+/// 0x0, the recipient MUST respond with a connection error
+/// (Section 5.4.1) of type PROTOCOL_ERROR.
+pub async fn sends_continuation_frame_with_zero_stream_id<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+
+    conn.handshake().await?;
+
+    let block_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
+    conn.write_headers(stream_id, HeadersFlags::EndStream, block_fragment)
+        .await?;
+
+    let block_fragment = conn.encode_headers(&conn.dummy_headers(1))?;
+    conn.write_continuation(
+        StreamId::CONNECTION,
+        ContinuationFlags::EndHeaders,
+        block_fragment,
+    )
+    .await?;
+
+    conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+/// A CONTINUATION frame MUST be preceded by a HEADERS, PUSH_PROMISE
+/// or CONTINUATION frame without the END_HEADERS flag set.
+/// A recipient that observes violation of this rule MUST respond
+/// with a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+pub async fn sends_continuation_frame_preceded_by_headers_frame_with_end_headers_flag<
+    IO: IntoHalves + 'static,
+>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+
+    conn.handshake().await?;
+
+    let block_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
+    conn.write_headers(
+        stream_id,
+        HeadersFlags::EndStream | HeadersFlags::EndHeaders,
+        block_fragment,
+    )
+    .await?;
+
+    let dummy_headers = conn.dummy_headers(1);
+    let block_fragment = conn.encode_headers(&dummy_headers)?;
+    conn.write_continuation(stream_id, ContinuationFlags::EndHeaders, block_fragment)
+        .await?;
+
+    conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+/// A CONTINUATION frame MUST be preceded by a HEADERS, PUSH_PROMISE
+/// or CONTINUATION frame without the END_HEADERS flag set.
+/// A recipient that observes violation of this rule MUST respond
+/// with a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+pub async fn sends_continuation_frame_preceded_by_continuation_frame_with_end_headers_flag<
+    IO: IntoHalves + 'static,
+>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+
+    conn.handshake().await?;
+
+    let block_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
+    conn.write_headers(stream_id, HeadersFlags::EndStream, block_fragment)
+        .await?;
+
+    let dummy_headers = conn.dummy_headers(1);
+    let block_fragment = conn.encode_headers(&dummy_headers)?;
+    conn.write_continuation(stream_id, ContinuationFlags::EndHeaders, block_fragment)
+        .await?;
+    let block_fragment = conn.encode_headers(&dummy_headers)?;
+    conn.write_continuation(stream_id, ContinuationFlags::EndHeaders, block_fragment)
+        .await?;
+
+    conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+/// A CONTINUATION frame MUST be preceded by a HEADERS, PUSH_PROMISE
+/// or CONTINUATION frame without the END_HEADERS flag set.
+/// A recipient that observes violation of this rule MUST respond
+/// with a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+pub async fn sends_continuation_frame_preceded_by_data_frame<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+
+    conn.handshake().await?;
+
+    let block_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
+    conn.write_headers(stream_id, HeadersFlags::EndStream, block_fragment)
+        .await?;
+    conn.write_data(stream_id, true, b"test").await?;
+
+    let block_fragment = conn.encode_headers(&conn.dummy_headers(1))?;
+    conn.write_continuation(stream_id, BitFlags::empty(), block_fragment)
+        .await?;
 
     conn.verify_connection_error(ErrorC::ProtocolError).await?;
 

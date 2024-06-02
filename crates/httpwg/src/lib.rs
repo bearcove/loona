@@ -1,6 +1,6 @@
 use eyre::eyre;
 use multimap::MultiMap;
-use std::{rc::Rc, time::Duration};
+use std::{borrow::Borrow, rc::Rc, time::Duration};
 
 use enumflags2::{bitflags, BitFlags};
 use fluke_buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
@@ -8,8 +8,8 @@ use fluke_h2_parse::{
     enumflags2,
     nom::{self, Finish},
     ContinuationFlags, DataFlags, ErrorCode, Frame, FrameType, GoAway, HeadersFlags, IntoPiece,
-    KnownErrorCode, PingFlags, PrioritySpec, RstStream, SettingPairs, Settings, SettingsFlags,
-    StreamId, WindowUpdate, PREFACE,
+    KnownErrorCode, PingFlags, PrioritySpec, RstStream, Setting, SettingPairs, Settings,
+    SettingsFlags, StreamId, WindowUpdate, PREFACE,
 };
 use tokio::time::Instant;
 use tracing::{debug, trace};
@@ -279,6 +279,14 @@ impl<IO: IntoHalves> Conn<IO> {
             .await
     }
 
+    /// Send a PING frame and wait for the peer to acknowledge it.
+    pub async fn verify_connection_still_alive(&mut self) -> eyre::Result<()> {
+        let payload = b"pingpong";
+        self.write_ping(false, &payload[..]).await?;
+        self.verify_ping_frame_with_ack(payload).await?;
+        Ok(())
+    }
+
     pub async fn write_ping(&mut self, ack: bool, payload: impl IntoPiece) -> eyre::Result<()> {
         self.write_frame(
             FrameType::Ping(if ack {
@@ -292,18 +300,22 @@ impl<IO: IntoHalves> Conn<IO> {
         .await
     }
 
-    pub async fn write_settings(&mut self, settings: Settings) -> eyre::Result<()> {
-        self.write_frame(
-            FrameType::Settings(Default::default()).into_frame(StreamId::CONNECTION),
-            settings,
-        )
-        .await
+    pub async fn write_and_ack_settings(
+        &mut self,
+        settings: impl Into<SettingPairs<'_>>,
+    ) -> eyre::Result<()> {
+        self.write_settings(settings).await?;
+        self.verify_settings_frame_with_ack().await?;
+        Ok(())
     }
 
-    pub async fn write_setting_pairs(&mut self, settings: SettingPairs<'_>) -> eyre::Result<()> {
+    pub async fn write_settings(
+        &mut self,
+        settings: impl Into<SettingPairs<'_>>,
+    ) -> eyre::Result<()> {
         self.write_frame(
             FrameType::Settings(Default::default()).into_frame(StreamId::CONNECTION),
-            settings,
+            settings.into(),
         )
         .await
     }
@@ -602,7 +614,7 @@ impl<IO: IntoHalves> Conn<IO> {
         }
     }
 
-    fn common_headers(&self) -> Headers {
+    fn common_headers(&self, method: &'static str) -> Headers {
         let (scheme, default_port) = if self.config.tls {
             ("https", self.config.port == 443)
         } else {
@@ -616,7 +628,7 @@ impl<IO: IntoHalves> Conn<IO> {
         };
 
         let mut headers = Headers::default();
-        headers.insert(":method".into(), "POST".into());
+        headers.insert(":method".into(), method.into());
         headers.insert(":scheme".into(), scheme.into());
         headers.insert(":path".into(), self.config.path.clone().into_bytes().into());
         headers.insert(":authority".into(), authority.into_bytes().into());
@@ -647,6 +659,27 @@ impl<IO: IntoHalves> Conn<IO> {
             headers.insert(k.into(), v.into());
         }
         Ok(headers)
+    }
+
+    pub async fn send_empty_post_to_root(&mut self, stream_id: StreamId) -> eyre::Result<()> {
+        self.encode_and_write_headers(
+            stream_id,
+            HeadersFlags::EndStream | HeadersFlags::EndHeaders,
+            &self.common_headers("POST"),
+        )
+        .await
+    }
+
+    pub async fn encode_and_write_headers(
+        &mut self,
+        stream_id: StreamId,
+        flags: impl Into<BitFlags<HeadersFlags>>,
+        headers: &Headers,
+    ) -> eyre::Result<()> {
+        let flags = flags.into();
+        let block_fragment = self.encode_headers(headers)?;
+        self.write_headers(stream_id, flags, block_fragment).await?;
+        Ok(())
     }
 
     pub async fn write_headers(
