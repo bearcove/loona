@@ -37,11 +37,7 @@ pub async fn sends_data_frame_on_invalid_stream_state<IO: IntoHalves + 'static>(
 
     conn.handshake().await?;
 
-    let mut headers = conn.common_headers();
-    headers.insert(":method".into(), "POST".into());
-
-    let block_fragment = conn.encode_headers(&headers)?;
-
+    let block_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
     conn.write_headers(
         stream_id,
         HeadersFlags::EndStream | HeadersFlags::EndHeaders,
@@ -66,10 +62,8 @@ pub async fn sends_data_frame_with_invalid_pad_length<IO: IntoHalves + 'static>(
 
     conn.handshake().await?;
 
-    let mut headers = conn.common_headers();
-    headers.insert(":method".into(), "POST".into());
+    let mut headers = conn.common_headers("POST");
     headers.insert("content-length".into(), "4".into());
-
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(stream_id, HeadersFlags::EndHeaders, block_fragment)
@@ -96,8 +90,7 @@ pub async fn sends_headers_frame_with_zero_stream_id<IO: IntoHalves + 'static>(
 ) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    let headers = conn.common_headers();
-    let block_fragment = conn.encode_headers(&headers)?;
+    let block_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
 
     conn.write_headers(
         StreamId::CONNECTION,
@@ -120,8 +113,7 @@ pub async fn sends_headers_frame_with_invalid_pad_length<IO: IntoHalves + 'stati
 ) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    let headers = conn.common_headers();
-    let block_fragment = conn.encode_headers(&headers)?;
+    let block_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
 
     let frame = Frame::new(
         FrameType::Headers(
@@ -152,13 +144,15 @@ pub async fn sends_priority_frame_with_zero_stream_id<IO: IntoHalves + 'static>(
 ) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    let priority_param = PrioritySpec {
-        stream_dependency: StreamId::CONNECTION,
-        exclusive: false,
-        weight: 255,
-    };
-    conn.write_priority(StreamId::CONNECTION, priority_param)
-        .await?;
+    conn.write_priority(
+        StreamId::CONNECTION,
+        PrioritySpec {
+            stream_dependency: StreamId::CONNECTION,
+            exclusive: false,
+            weight: 255,
+        },
+    )
+    .await?;
 
     conn.verify_connection_error(ErrorC::ProtocolError).await?;
 
@@ -175,10 +169,7 @@ pub async fn sends_priority_frame_with_invalid_length<IO: IntoHalves + 'static>(
 
     conn.handshake().await?;
 
-    let mut headers = conn.common_headers();
-    headers.insert(":method".into(), "POST".into());
-
-    let block_fragment = conn.encode_headers(&headers)?;
+    let block_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
 
     conn.write_headers(
         stream_id,
@@ -187,10 +178,11 @@ pub async fn sends_priority_frame_with_invalid_length<IO: IntoHalves + 'static>(
     )
     .await?;
 
-    let frame = Frame::new(FrameType::Priority, stream_id).with_len(4);
-    let frame_header = frame.into_piece(&mut conn.scratch)?;
-    conn.send(frame_header).await?;
-    conn.send(b"\x80\x00\x00\x01").await?;
+    conn.write_frame(
+        Frame::new(FrameType::Priority, stream_id),
+        b"\x80\x00\x00\x01",
+    )
+    .await?;
 
     conn.verify_stream_error(ErrorC::FrameSizeError).await?;
 
@@ -242,11 +234,7 @@ pub async fn sends_rst_stream_frame_with_invalid_length<IO: IntoHalves + 'static
 
     conn.handshake().await?;
 
-    let mut headers = conn.common_headers();
-    headers.insert(":method".into(), "POST".into());
-
-    let block_fragment = conn.encode_headers(&headers)?;
-
+    let block_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
     conn.write_headers(
         stream_id,
         HeadersFlags::EndStream | HeadersFlags::EndHeaders,
@@ -466,11 +454,7 @@ pub async fn sends_multiple_values_of_settings_initial_window_size<IO: IntoHalve
 
     conn.verify_settings_frame_with_ack().await?;
 
-    let mut headers = conn.common_headers();
-    headers.insert(":method".into(), "POST".into());
-
-    let block_fragment = conn.encode_headers(&headers)?;
-
+    let block_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
     conn.write_headers(
         stream_id,
         HeadersFlags::EndStream | HeadersFlags::EndHeaders,
