@@ -187,12 +187,9 @@ pub async fn priority_frame_while_sending_headers<IO: IntoHalves + 'static>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
-
     conn.handshake().await?;
 
-    let headers = conn.common_headers("POST");
-    let block_fragment = conn.encode_headers(&headers)?;
-
+    let block_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
     conn.write_headers(stream_id, HeadersFlags::EndHeaders, block_fragment)
         .await?;
 
@@ -208,9 +205,7 @@ pub async fn priority_frame_while_sending_headers<IO: IntoHalves + 'static>(
     )
     .await?;
 
-    let dummy_headers = conn.dummy_headers(1);
-    let continuation_fragment = conn.encode_headers(&dummy_headers)?;
-
+    let continuation_fragment = conn.encode_headers(&conn.dummy_headers(1))?;
     // this may fail (we broke the protocol)
     _ = conn
         .write_continuation(
@@ -232,21 +227,19 @@ pub async fn headers_frame_to_another_stream<IO: IntoHalves + 'static>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
-
     conn.handshake().await?;
 
     let headers = conn.common_headers("POST");
-    let block_fragment = conn.encode_headers(&headers)?;
-
-    conn.write_headers(stream_id, BitFlags::default(), block_fragment)
+    let block_fragment_1 = conn.encode_headers(&headers)?;
+    conn.write_headers(stream_id, BitFlags::default(), block_fragment_1)
         .await?;
 
     // interleave a HEADERS frame for another stream
-    let headers_fragment_2 = conn.encode_headers(&headers)?;
+    let block_fragment_2 = conn.encode_headers(&headers)?;
     conn.write_headers(
         StreamId(stream_id.0 + 2),
         HeadersFlags::EndHeaders,
-        headers_fragment_2,
+        block_fragment_2,
     )
     .await?;
 

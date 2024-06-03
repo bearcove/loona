@@ -1,9 +1,11 @@
-//! Section 3.4: HTTP/2 connection preface
+//! Section 3: Starting HTTP/2
 
 use fluke_buffet::IntoHalves;
 use fluke_h2_parse::PREFACE;
 
 use crate::{rfc9113::default_settings, Conn, ErrorC, FrameT};
+
+//---- Section 3.4: HTTP/2 connection preface
 
 /// The server connection preface consists of a potentially empty
 /// SETTINGS frame (Section 6.5) that MUST be the first frame

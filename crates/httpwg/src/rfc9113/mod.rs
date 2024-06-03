@@ -25,8 +25,7 @@ pub fn default_settings() -> SettingPairs<'static> {
     )
 }
 
-pub mod _3_4_http2_connection_preface;
-
+pub mod _3_starting_http2;
 pub mod _4_http_frames;
 pub mod _5_streams_and_multiplexing;
 pub mod _6_frame_definitions;

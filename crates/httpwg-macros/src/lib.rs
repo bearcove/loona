@@ -26,9 +26,9 @@ macro_rules! tests {
 mod rfc9113 {
 use ::httpwg::rfc9113 as __suite;
 
-/// Section 3.4: HTTP/2 connection preface
-mod _3_4_http2_connection_preface {
-use super::__suite::_3_4_http2_connection_preface as __group;
+/// Section 3: Starting HTTP/2
+mod _3_starting_http2 {
+use super::__suite::_3_starting_http2 as __group;
 
 /// The server connection preface consists of a potentially empty
 /// SETTINGS frame (Section 6.5) that MUST be the first frame
