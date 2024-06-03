@@ -1027,6 +1027,82 @@ fn sends_headers_frame_with_pseudo_header_in_trailer() {
 use __group::sends_headers_frame_with_pseudo_header_in_trailer as test;
 $body
 }
+
+/// The same pseudo-header field name MUST NOT appear more than once in a field
+/// block. A field block for an HTTP request or response that contains a
+/// repeated pseudo-header field name MUST be treated as malformed (Section
+/// 8.1.1).
+#[test]
+fn sends_headers_frame_with_duplicate_pseudo_headers() {
+use __group::sends_headers_frame_with_duplicate_pseudo_headers as test;
+$body
+}
+
+/// A server SHOULD treat a request as malformed if it contains a Host header
+/// field that identifies an entity that differs from the entity in the
+/// ":authority" pseudo-header field. The values of fields need to be normalized
+/// to compare them (see Section 6.2 of [RFC3986]). An origin server can apply
+/// any normalization method, whereas other servers MUST perform scheme-based
+/// normalization (see Section 6.2.3 of [RFC3986]) of the two fields.
+///
+/// cf. <https://www.rfc-editor.org/rfc/rfc3986.html#section-6.2.3>
+#[test]
+fn sends_headers_frame_with_mismatched_host_authority() {
+use __group::sends_headers_frame_with_mismatched_host_authority as test;
+$body
+}
+
+/// A server SHOULD treat a request as malformed if it contains a Host header
+/// field that identifies an entity that differs from the entity in the
+/// ":authority" pseudo-header field. The values of fields need to be normalized
+/// to compare them (see Section 6.2 of [RFC3986]).
+#[test]
+fn sends_headers_frame_with_host_authority_with_port() {
+use __group::sends_headers_frame_with_host_authority_with_port as test;
+$body
+}
+
+/// This pseudo-header field MUST NOT be empty for "http" or "https" URIs;
+/// "http" or "https" URIs that do not contain a path component MUST include a
+/// value of '/'. The exceptions to this rule are:
+///
+/// an OPTIONS request for an "http" or "https" URI that does not include a path
+/// component; these MUST include a ":path" pseudo-header field with a value of
+/// '*' (see Section 7.1 of [HTTP]). CONNECT requests (Section 8.5), where the
+/// ":path" pseudo-header field is omitted.
+#[test]
+fn sends_headers_frame_with_empty_path_component() {
+use __group::sends_headers_frame_with_empty_path_component as test;
+$body
+}
+
+/// All HTTP/2 requests MUST include exactly one valid value for the ":method",
+/// ":scheme", and ":path" pseudo-header fields, unless they are CONNECT
+/// requests (Section 8.5). An HTTP request that omits mandatory pseudo-header
+/// fields is malformed (Section 8.1.1).
+#[test]
+fn sends_headers_frame_without_method() {
+use __group::sends_headers_frame_without_method as test;
+$body
+}
+
+#[test]
+fn sends_headers_frame_without_scheme() {
+use __group::sends_headers_frame_without_scheme as test;
+$body
+}
+
+#[test]
+fn sends_headers_frame_without_path() {
+use __group::sends_headers_frame_without_path as test;
+$body
+}
+
+#[test]
+fn sends_headers_frame_without_status() {
+use __group::sends_headers_frame_without_status as test;
+$body
+}
 }
 }
 }

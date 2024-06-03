@@ -1,7 +1,7 @@
 //! Section 8: Expressing HTTP Semantics in HTTP/2
 
 use fluke_buffet::IntoHalves;
-use fluke_h2_parse::{HeadersFlags, StreamId};
+use fluke_h2_parse::{FrameType, HeadersFlags, StreamId};
 
 use crate::{Conn, ErrorC, FrameT, Headers};
 
@@ -469,6 +469,181 @@ pub async fn sends_headers_frame_with_pseudo_header_in_trailer<IO: IntoHalves>(
     let status = std::str::from_utf8(status)?;
     let status = status.parse::<u16>().unwrap();
     assert_eq!(status, 400);
+
+    Ok(())
+}
+
+/// The same pseudo-header field name MUST NOT appear more than once in a field
+/// block. A field block for an HTTP request or response that contains a
+/// repeated pseudo-header field name MUST be treated as malformed (Section
+/// 8.1.1).
+pub async fn sends_headers_frame_with_duplicate_pseudo_headers<IO: IntoHalves>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let mut headers = conn.common_headers("POST");
+    headers.insert(":method".into(), "POST".into());
+    headers.insert(":method".into(), "POST".into());
+    conn.send_req_and_expect_status(StreamId(1), &headers, 400)
+        .await?;
+
+    Ok(())
+}
+
+/// A server SHOULD treat a request as malformed if it contains a Host header
+/// field that identifies an entity that differs from the entity in the
+/// ":authority" pseudo-header field. The values of fields need to be normalized
+/// to compare them (see Section 6.2 of [RFC3986]). An origin server can apply
+/// any normalization method, whereas other servers MUST perform scheme-based
+/// normalization (see Section 6.2.3 of [RFC3986]) of the two fields.
+///
+/// cf. <https://www.rfc-editor.org/rfc/rfc3986.html#section-6.2.3>
+pub async fn sends_headers_frame_with_mismatched_host_authority<IO: IntoHalves>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let mut headers = conn.common_headers("POST");
+    headers.insert(
+        ":authority".into(),
+        conn.config.host.clone().into_bytes().into(),
+    );
+    headers.insert(
+        "host".into(),
+        format!("{}.different", conn.config.host)
+            .into_bytes()
+            .into(),
+    );
+    conn.send_req_and_expect_status(StreamId(1), &headers, 400)
+        .await?;
+
+    Ok(())
+}
+
+/// A server SHOULD treat a request as malformed if it contains a Host header
+/// field that identifies an entity that differs from the entity in the
+/// ":authority" pseudo-header field. The values of fields need to be normalized
+/// to compare them (see Section 6.2 of [RFC3986]).
+pub async fn sends_headers_frame_with_host_authority_with_port<IO: IntoHalves>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let mut headers = conn.common_headers("POST");
+    headers.insert(
+        ":authority".into(),
+        conn.config.host.clone().into_bytes().into(),
+    );
+    headers.insert(
+        "host".into(),
+        format!("{}:{}", conn.config.host, conn.config.port)
+            .into_bytes()
+            .into(),
+    );
+    conn.send_req_and_expect_status(StreamId(1), &headers, 200)
+        .await?;
+
+    Ok(())
+}
+
+/// This pseudo-header field MUST NOT be empty for "http" or "https" URIs;
+/// "http" or "https" URIs that do not contain a path component MUST include a
+/// value of '/'. The exceptions to this rule are:
+///
+/// an OPTIONS request for an "http" or "https" URI that does not include a path
+/// component; these MUST include a ":path" pseudo-header field with a value of
+/// '*' (see Section 7.1 of [HTTP]). CONNECT requests (Section 8.5), where the
+/// ":path" pseudo-header field is omitted.
+pub async fn sends_headers_frame_with_empty_path_component<IO: IntoHalves>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let mut headers = conn.common_headers("POST");
+    headers.insert(":path".into(), "".into());
+    conn.send_req_and_expect_status(StreamId(1), &headers, 400)
+        .await?;
+
+    Ok(())
+}
+
+/// All HTTP/2 requests MUST include exactly one valid value for the ":method",
+/// ":scheme", and ":path" pseudo-header fields, unless they are CONNECT
+/// requests (Section 8.5). An HTTP request that omits mandatory pseudo-header
+/// fields is malformed (Section 8.1.1).
+
+pub async fn sends_headers_frame_without_method<IO: IntoHalves>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let mut headers = conn.common_headers("POST");
+    headers.remove(&":method".into());
+    conn.send_req_and_expect_status(StreamId(1), &headers, 400)
+        .await?;
+
+    Ok(())
+}
+
+pub async fn sends_headers_frame_without_scheme<IO: IntoHalves>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let mut headers = conn.common_headers("POST");
+    headers.remove(&":scheme".into());
+    conn.send_req_and_expect_status(StreamId(1), &headers, 400)
+        .await?;
+
+    Ok(())
+}
+
+pub async fn sends_headers_frame_without_path<IO: IntoHalves>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let mut headers = conn.common_headers("POST");
+    headers.remove(&":path".into());
+    conn.send_req_and_expect_status(StreamId(1), &headers, 400)
+        .await?;
+
+    Ok(())
+}
+
+//---- Section 8.3.2: Response Pseudo-Header Fields
+
+pub async fn sends_headers_frame_without_status<IO: IntoHalves>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let block_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
+    conn.write_frame(
+        FrameType::Headers(HeadersFlags::EndStream | HeadersFlags::EndHeaders)
+            .into_frame(StreamId(1)),
+        block_fragment,
+    )
+    .await?;
+
+    // wait for the response
+    let (frame, payload) = conn.wait_for_frame(FrameT::Headers).await.unwrap();
+    assert!(frame.is_end_headers(), "the test makes that assumption");
+    let headers = conn.decode_headers(payload.into())?;
+
+    let mut found_status = false;
+    for (name, _) in headers.iter() {
+        if name == b":status" {
+            found_status = true;
+        } else {
+            assert!(
+                !name.starts_with(b":"),
+                "no header name should start with ':'"
+            );
+        }
+    }
+    assert!(found_status, "the :status pseudo-header must be present");
 
     Ok(())
 }
