@@ -34,7 +34,7 @@ pub async fn priority_frame_while_sending_headers<IO: IntoHalves + 'static>(
 
     conn.handshake().await?;
 
-    let headers = conn.common_headers();
+    let headers = conn.common_headers("POST");
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(stream_id, HeadersFlags::EndHeaders, block_fragment)
@@ -79,7 +79,7 @@ pub async fn headers_frame_to_another_stream<IO: IntoHalves + 'static>(
 
     conn.handshake().await?;
 
-    let headers = conn.common_headers();
+    let headers = conn.common_headers("POST");
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(stream_id, BitFlags::default(), block_fragment)

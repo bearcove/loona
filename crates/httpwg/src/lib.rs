@@ -9,8 +9,8 @@ use fluke_h2_parse::{
     enumflags2,
     nom::{self, Finish},
     ContinuationFlags, DataFlags, ErrorCode, Frame, FrameType, GoAway, HeadersFlags, IntoPiece,
-    KnownErrorCode, PingFlags, PrioritySpec, RstStream, Setting, SettingPairs, Settings,
-    SettingsFlags, StreamId, WindowUpdate, PREFACE,
+    KnownErrorCode, PingFlags, PrioritySpec, RstStream, SettingPairs, Settings, SettingsFlags,
+    StreamId, WindowUpdate, PREFACE,
 };
 use tokio::time::Instant;
 use tracing::{debug, trace};

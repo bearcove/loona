@@ -15,7 +15,7 @@ pub async fn data_frame_with_max_length<IO: IntoHalves + 'static>(
 
     conn.handshake().await?;
 
-    let mut headers = conn.common_headers();
+    let mut headers = conn.common_headers("POST");
     headers.insert(":method".into(), "POST".into());
     let block_fragment = conn.encode_headers(&headers)?;
 
@@ -41,7 +41,7 @@ pub async fn frame_exceeding_max_size<IO: IntoHalves + 'static>(
 
     conn.handshake().await?;
 
-    let mut headers = conn.common_headers();
+    let mut headers = conn.common_headers("POST");
     headers.insert(":method".into(), "POST".into());
     let block_fragment = conn.encode_headers(&headers)?;
 
@@ -74,7 +74,7 @@ pub async fn large_headers_frame_exceeding_max_size<IO: IntoHalves + 'static>(
 
     conn.handshake().await?;
 
-    let mut headers = conn.common_headers();
+    let mut headers = conn.common_headers("POST");
     headers.extend(conn.dummy_headers(5));
     let block_fragment = conn.encode_headers(&headers)?;
 

@@ -13,7 +13,7 @@ pub async fn sends_even_numbered_stream_identifier<IO: IntoHalves + 'static>(
 ) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    let headers = conn.common_headers();
+    let headers = conn.common_headers("POST");
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(
@@ -36,7 +36,7 @@ pub async fn sends_smaller_stream_identifier<IO: IntoHalves + 'static>(
 ) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    let headers = conn.common_headers();
+    let headers = conn.common_headers("POST");
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(

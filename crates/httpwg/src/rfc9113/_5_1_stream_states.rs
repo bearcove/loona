@@ -69,7 +69,7 @@ pub async fn idle_sends_continuation_frame<IO: IntoHalves + 'static>(
 ) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    let headers = conn.common_headers();
+    let headers = conn.common_headers("POST");
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_continuation(StreamId(1), ContinuationFlags::EndHeaders, block_fragment)
@@ -92,7 +92,7 @@ pub async fn half_closed_remote_sends_data_frame<IO: IntoHalves + 'static>(
 
     conn.handshake().await?;
 
-    let headers = conn.common_headers();
+    let headers = conn.common_headers("POST");
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(
@@ -121,7 +121,7 @@ pub async fn half_closed_remote_sends_headers_frame<IO: IntoHalves + 'static>(
 
     conn.handshake().await?;
 
-    let headers = conn.common_headers();
+    let headers = conn.common_headers("POST");
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(
@@ -155,7 +155,7 @@ pub async fn half_closed_remote_sends_continuation_frame<IO: IntoHalves + 'stati
 
     conn.handshake().await?;
 
-    let headers = conn.common_headers();
+    let headers = conn.common_headers("POST");
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(
@@ -190,7 +190,7 @@ pub async fn closed_sends_data_frame_after_rst_stream<IO: IntoHalves + 'static>(
 
     conn.handshake().await?;
 
-    let headers = conn.common_headers();
+    let headers = conn.common_headers("POST");
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(stream_id, HeadersFlags::EndHeaders, block_fragment)
@@ -216,7 +216,7 @@ pub async fn closed_sends_headers_frame_after_rst_stream<IO: IntoHalves + 'stati
 
     conn.handshake().await?;
 
-    let headers = conn.common_headers();
+    let headers = conn.common_headers("POST");
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(stream_id, HeadersFlags::EndHeaders, block_fragment.clone())
@@ -247,7 +247,7 @@ pub async fn closed_sends_continuation_frame_after_rst_stream<IO: IntoHalves + '
 
     conn.handshake().await?;
 
-    let headers = conn.common_headers();
+    let headers = conn.common_headers("POST");
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(stream_id, HeadersFlags::EndHeaders, block_fragment)
@@ -287,7 +287,7 @@ pub async fn closed_sends_data_frame<IO: IntoHalves + 'static>(
 
     conn.handshake().await?;
 
-    let headers = conn.common_headers();
+    let headers = conn.common_headers("POST");
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(
@@ -317,7 +317,7 @@ pub async fn closed_sends_headers_frame<IO: IntoHalves + 'static>(
 
     conn.handshake().await?;
 
-    let headers = conn.common_headers();
+    let headers = conn.common_headers("POST");
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(
@@ -352,7 +352,7 @@ pub async fn closed_sends_continuation_frame<IO: IntoHalves + 'static>(
 
     conn.handshake().await?;
 
-    let headers = conn.common_headers();
+    let headers = conn.common_headers("POST");
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(

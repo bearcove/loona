@@ -10,7 +10,7 @@
 //!
 //! cf. <https://httpwg.org/specs/rfc9113.html>
 
-use fluke_h2_parse::{Setting, SettingPairs, Settings};
+use fluke_h2_parse::{Setting, SettingPairs};
 
 pub const DEFAULT_WINDOW_SIZE: u32 = 65536;
 pub const DEFAULT_FRAME_SIZE: u32 = 16384;

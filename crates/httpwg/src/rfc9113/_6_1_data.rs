@@ -619,7 +619,7 @@ pub async fn sends_window_update_frame_with_zero_increment_on_stream<IO: IntoHal
 
     conn.handshake().await?;
 
-    let mut headers = conn.common_headers();
+    let mut headers = conn.common_headers("POST");
     headers.insert(":method".into(), "POST".into());
 
     let block_fragment = conn.encode_headers(&headers)?;

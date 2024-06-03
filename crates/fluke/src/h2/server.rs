@@ -11,8 +11,8 @@ use eyre::Context;
 use fluke_buffet::{Piece, PieceList, PieceStr, ReadOwned, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
     self as parse, enumflags2::BitFlags, nom::Finish, parse_bit_and_u31, ContinuationFlags,
-    DataFlags, Frame, FrameType, HeadersFlags, PingFlags, PrioritySpec, Setting, Settings,
-    SettingsFlags, StreamId,
+    DataFlags, Frame, FrameType, HeadersFlags, PingFlags, PrioritySpec, Setting, SettingPairs,
+    Settings, SettingsFlags, StreamId,
 };
 use http::{
     header,
@@ -139,12 +139,27 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         // then send our initial settings
         {
             debug!("Sending initial settings");
-            let payload = self.state.self_settings.into_piece(&mut self.out_scratch)?;
+            let setting_payload = {
+                let s = &self.state.self_settings;
+                SettingPairs(&[
+                    (Setting::EnablePush, 0),
+                    (Setting::HeaderTableSize, s.header_table_size),
+                    (Setting::InitialWindowSize, s.initial_window_size),
+                    (
+                        Setting::MaxConcurrentStreams,
+                        s.max_concurrent_streams.unwrap_or(u32::MAX),
+                    ),
+                    (Setting::MaxFrameSize, s.max_frame_size),
+                    (Setting::MaxHeaderListSize, s.max_header_list_size),
+                ])
+                .into_piece(&mut self.out_scratch)?
+            };
             let frame = Frame::new(
                 FrameType::Settings(Default::default()),
                 StreamId::CONNECTION,
             );
-            self.write_frame(frame, PieceList::single(payload)).await?;
+            self.write_frame(frame, PieceList::single(setting_payload))
+                .await?;
         }
 
         let mut goaway_err: Option<H2ConnectionError> = None;

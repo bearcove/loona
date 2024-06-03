@@ -15,7 +15,7 @@ pub async fn unknown_extension_frame_in_header_block<IO: IntoHalves + 'static>(
 
     conn.handshake().await?;
 
-    let headers = conn.common_headers();
+    let headers = conn.common_headers("POST");
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(stream_id, HeadersFlags::EndStream, block_fragment)
