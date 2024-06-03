@@ -761,6 +761,21 @@ impl<IO: IntoHalves> Conn<IO> {
         Ok(())
     }
 
+    /// Generates a set of dummy headers.
+    ///
+    /// # Parameters
+    /// - `len`: The number of headers to generate.
+    ///
+    /// # Returns
+    /// - A `Headers` map containing `len` number of headers, where each header
+    ///   has a key in the form of `x-dummy{i}` and a value of `dummy_bytes`
+    ///   with a length equal to `self.config.max_header_len`.
+    ///
+    /// # Properties
+    /// - The size of each header value is equal to
+    ///   `self.config.max_header_len`.
+    /// - The total number of headers in the returned `Headers` map is equal to
+    ///   `len`.
     fn dummy_headers(&self, len: usize) -> Headers {
         let mut headers = Headers::default();
         let dummy = dummy_bytes(self.config.max_header_len);

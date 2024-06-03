@@ -48,9 +48,9 @@ $body
 }
 }
 
-/// Section 4.1: Frame Format
-mod _4_1_frame_format {
-use super::__suite::_4_1_frame_format as __group;
+/// Section 4: HTTP Frames
+mod _4_http_frames {
+use super::__suite::_4_http_frames as __group;
 
 /// Implementations MUST ignore and discard frames of unknown types.
 #[test]
@@ -75,11 +75,6 @@ fn sends_frame_with_reserved_bit_set() {
 use __group::sends_frame_with_reserved_bit_set as test;
 $body
 }
-}
-
-/// Section 4.2: Frame Size
-mod _4_2_frame_size {
-use super::__suite::_4_2_frame_size as __group;
 
 #[test]
 fn data_frame_with_max_length() {
@@ -107,11 +102,6 @@ fn large_headers_frame_exceeding_max_size() {
 use __group::large_headers_frame_exceeding_max_size as test;
 $body
 }
-}
-
-/// Section 4.3: Header Compression and Decompression
-mod _4_3_header_compression_and_decompression {
-use super::__suite::_4_3_header_compression_and_decompression as __group;
 
 /// A decoding error in a header block MUST be treated as a connection error
 /// (Section 5.4.1) of type COMPRESSION_ERROR.

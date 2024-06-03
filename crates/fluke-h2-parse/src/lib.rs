@@ -462,13 +462,13 @@ fn test_pack_and_parse_bit_and_u31() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "bit should be 0 or 1: 2")]
 fn test_pack_bit_and_u31_panic_not_a_bit() {
     pack_bit_and_u31(2, 0);
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "val is too large: 80000000")]
 fn test_pack_bit_and_u31_panic_val_too_large() {
     pack_bit_and_u31(0, 1 << 31);
 }
