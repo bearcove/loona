@@ -2,7 +2,7 @@
 
 use std::io::Write;
 
-use fluke_buffet::IntoHalves;
+use fluke_buffet::{IntoHalves, RollMut};
 use fluke_h2_parse::{pack_bit_and_u31, FrameType, HeadersFlags, StreamId};
 
 use crate::{Conn, ErrorC, FrameT, Headers};
@@ -745,6 +745,87 @@ pub async fn sends_connect_without_authority<IO: IntoHalves>(
     headers.insert(":method".into(), "CONNECT".into());
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
+
+    Ok(())
+}
+
+//---- Section 8.6: The Upgrade Header Field
+
+// (No tests for this section: 101 is not a thing in HTTP/2)
+
+//---- Section 8.7: Request Reliability
+
+// This section is hard to test without guaranteeing server behavior: if we had
+// a way to check that the server has processed a request, we could test GOAWAY
+// with "highest stream number processed" by sending a couple request, causing
+// a protocol error, then sending another request and checking what has and
+// hasn't been processed.
+//
+// However, that certainly wouldn't work against arbitrary http/2 servers. But
+// maybe that's fine?
+
+// TODO: implement that scheme, make sure the tests are annotated so that they
+// can be skipped when run as a CLI.
+
+/// HTTP/2 provides two mechanisms for providing a guarantee to a client that a
+/// request has not been processed:
+///
+/// The GOAWAY frame indicates the highest stream number that might have been
+/// processed. Requests on streams with higher numbers are therefore guaranteed
+/// to be safe to retry. The REFUSED_STREAM error code can be included in a
+/// RST_STREAM frame to indicate that the stream is being closed prior to any
+/// processing having occurred. Any request that was sent on the reset stream
+/// can be safely retried. Requests that have not been processed have not
+/// failed; clients MAY automatically retry them, even those with non-idempotent
+/// methods.
+///
+/// A server MUST NOT indicate that a stream has not been processed unless it
+/// can guarantee that fact. If frames that are on a stream are passed to the
+/// application layer for any stream, then REFUSED_STREAM MUST NOT be used for
+/// that stream, and a GOAWAY frame MUST include a stream identifier that is
+/// greater than or equal to the given stream identifier.
+pub async fn sends_goaway_with_highest_stream_processed<IO: IntoHalves>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    // Note: in this instance, we're going to send everything as a single write,
+    // to avoid "broken pipe" errors. This means we're not going to use
+    // `write_headers`, `write_data`, etc.
+
+    // let mut buf = RollMut::;
+
+    // Send a valid request
+    let headers_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
+    conn.write_headers(StreamId(1), HeadersFlags::EndHeaders, headers_fragment)
+        .await?;
+    conn.write_data(StreamId(1), true, b"test").await?;
+
+    // Send a request that will cause a protocol error
+    let mut invalid_headers = conn.common_headers("POST");
+    invalid_headers.insert("invalid:field".into(), "value".into());
+    conn.send_req_and_expect_status(StreamId(3), &invalid_headers, 400)
+        .await?;
+
+    // Send another valid request
+    let headers_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
+    conn.write_headers(StreamId(5), HeadersFlags::EndHeaders, headers_fragment)
+        .await?;
+    conn.write_data(StreamId(5), true, b"test").await?;
+
+    // Wait for GOAWAY frame
+    let (frame, payload) = conn.wait_for_frame(FrameT::Goaway).await.unwrap();
+    let last_stream_id = StreamId(u32::from_be_bytes([
+        payload[0], payload[1], payload[2], payload[3],
+    ]));
+
+    // Ensure the last processed stream is at least 3 (the one with the protocol
+    // error)
+    assert!(
+        last_stream_id.0 >= 3,
+        "Expected last processed stream ID to be at least 3, got {}",
+        last_stream_id.0
+    );
 
     Ok(())
 }
