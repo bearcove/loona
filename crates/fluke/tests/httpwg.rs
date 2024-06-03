@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use fluke::{Body, Encoder, ExpectResponseHeaders, Responder, Response, ResponseDone};
+use fluke::{Body, BodyChunk, Encoder, ExpectResponseHeaders, Responder, Response, ResponseDone};
 use fluke_buffet::{IntoHalves, PipeRead, PipeWrite, ReadOwned, RollMut, WriteOwned};
 use http::StatusCode;
 use tracing::Level;
@@ -40,7 +40,7 @@ impl fluke::ServerDriver for TestDriver {
     async fn handle<E: Encoder>(
         &self,
         _req: fluke::Request,
-        _req_body: &mut impl Body,
+        req_body: &mut impl Body,
         mut res: Responder<E, ExpectResponseHeaders>,
     ) -> eyre::Result<Responder<E, ResponseDone>> {
         // if the client sent `expect: 100-continue`, we must send a 100 status code
@@ -54,11 +54,33 @@ impl fluke::ServerDriver for TestDriver {
             }
         }
 
-        let res = res
+        // then read the full request body
+        let mut req_body_len = 0;
+        loop {
+            let chunk = req_body.next_chunk().await?;
+            match chunk {
+                BodyChunk::Done { trailers } => {
+                    // yey
+                    if let Some(trailers) = trailers {
+                        tracing::debug!(trailers_len = %trailers.len(), "received trailers");
+                    }
+                    break;
+                }
+                BodyChunk::Chunk(chunk) => {
+                    req_body_len += chunk.len();
+                }
+            }
+        }
+        tracing::debug!(%req_body_len, "read request body");
+
+        let mut res = res
             .write_final_response(Response {
                 status: StatusCode::OK,
                 ..Default::default()
             })
+            .await?;
+
+        res.write_chunk("it's less dire to lose, than to lose oneself".into())
             .await?;
 
         let res = res.finish_body(None).await?;

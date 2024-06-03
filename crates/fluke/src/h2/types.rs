@@ -9,7 +9,7 @@ use tokio::sync::Notify;
 use crate::Response;
 
 use super::body::StreamIncoming;
-use fluke_h2_parse::{FrameType, KnownErrorCode, Settings, StreamId};
+use fluke_h2_parse::{FrameType, KnownErrorCode, Settings, SettingsError, StreamId};
 
 pub(crate) struct ConnState {
     pub(crate) streams: HashMap<StreamId, StreamState>,
@@ -361,7 +361,7 @@ pub(crate) enum H2ConnectionError {
     PingFrameInvalidLength { len: u32 },
 
     #[error("received settings frame with invalid length {len}")]
-    SettingsAckWithPayload { len: u32 },
+    SettingsInvalidLength { len: u32 },
 
     #[error("received settings frame with non-zero stream id")]
     SettingsWithNonZeroStreamId { stream_id: StreamId },
@@ -383,6 +383,9 @@ pub(crate) enum H2ConnectionError {
 
     #[error("received window update frame with invalid length {len}")]
     WindowUpdateInvalidLength { len: usize },
+
+    #[error("bad setting value: {0}")]
+    BadSettingValue(SettingsError),
 }
 
 impl H2ConnectionError {
@@ -392,7 +395,7 @@ impl H2ConnectionError {
             H2ConnectionError::FrameTooLarge { .. } => KnownErrorCode::FrameSizeError,
             H2ConnectionError::PaddedFrameEmpty { .. } => KnownErrorCode::FrameSizeError,
             H2ConnectionError::PingFrameInvalidLength { .. } => KnownErrorCode::FrameSizeError,
-            H2ConnectionError::SettingsAckWithPayload { .. } => KnownErrorCode::FrameSizeError,
+            H2ConnectionError::SettingsInvalidLength { .. } => KnownErrorCode::FrameSizeError,
             H2ConnectionError::WindowUpdateInvalidLength { .. } => KnownErrorCode::FrameSizeError,
             // flow control errors
             H2ConnectionError::WindowUpdateOverflow => KnownErrorCode::FlowControlError,
@@ -400,6 +403,9 @@ impl H2ConnectionError {
             H2ConnectionError::StreamWindowSizeOverflowDueToSettings { .. } => {
                 KnownErrorCode::FlowControlError
             }
+            H2ConnectionError::BadSettingValue(SettingsError::InitialWindowSizeTooLarge {
+                ..
+            }) => KnownErrorCode::FlowControlError,
             // compression errors
             H2ConnectionError::CompressionError(_) => KnownErrorCode::CompressionError,
             // stream closed error

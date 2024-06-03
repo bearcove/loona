@@ -1,5 +1,6 @@
 use eyre::eyre;
 use multimap::MultiMap;
+use rfc9113::DEFAULT_FRAME_SIZE;
 use std::{rc::Rc, time::Duration};
 
 use enumflags2::{bitflags, BitFlags};
@@ -248,6 +249,11 @@ impl<IO: IntoHalves> Conn<IO> {
         };
         fluke_buffet::spawn(async move { recv_fut.await.unwrap() });
 
+        let mut settings: Settings = Default::default();
+        for (code, value) in default_settings().0 {
+            settings.apply(*code, *value).unwrap();
+        }
+
         Self {
             w,
             scratch: RollMut::alloc().unwrap(),
@@ -255,7 +261,11 @@ impl<IO: IntoHalves> Conn<IO> {
             config,
             hpack_enc: Default::default(),
             hpack_dec: Default::default(),
-            settings: default_settings(),
+            settings: Settings {
+                initial_window_size: DEFAULT_FRAME_SIZE,
+                max_frame_size: DEFAULT_FRAME_SIZE,
+                ..Default::default()
+            },
         }
     }
 
@@ -279,6 +289,14 @@ impl<IO: IntoHalves> Conn<IO> {
             .await
     }
 
+    /// Send a PING frame and wait for the peer to acknowledge it.
+    pub async fn verify_connection_still_alive(&mut self) -> eyre::Result<()> {
+        let payload = b"pingpong";
+        self.write_ping(false, &payload[..]).await?;
+        self.verify_ping_frame_with_ack(payload).await?;
+        Ok(())
+    }
+
     pub async fn write_ping(&mut self, ack: bool, payload: impl IntoPiece) -> eyre::Result<()> {
         self.write_frame(
             FrameType::Ping(if ack {
@@ -292,18 +310,22 @@ impl<IO: IntoHalves> Conn<IO> {
         .await
     }
 
-    pub async fn write_settings(&mut self, settings: Settings) -> eyre::Result<()> {
-        self.write_frame(
-            FrameType::Settings(Default::default()).into_frame(StreamId::CONNECTION),
-            settings,
-        )
-        .await
+    pub async fn write_and_ack_settings(
+        &mut self,
+        settings: impl Into<SettingPairs<'_>>,
+    ) -> eyre::Result<()> {
+        self.write_settings(settings).await?;
+        self.verify_settings_frame_with_ack().await?;
+        Ok(())
     }
 
-    pub async fn write_setting_pairs(&mut self, settings: SettingPairs<'_>) -> eyre::Result<()> {
+    pub async fn write_settings(
+        &mut self,
+        settings: impl Into<SettingPairs<'_>>,
+    ) -> eyre::Result<()> {
         self.write_frame(
             FrameType::Settings(Default::default()).into_frame(StreamId::CONNECTION),
-            settings,
+            settings.into(),
         )
         .await
     }
@@ -384,11 +406,7 @@ impl<IO: IntoHalves> Conn<IO> {
             "server should send their settings first thing (no ack)"
         );
 
-        {
-            // parse settings
-            let (_rest, settings) = Settings::default().make_parser()(payload).finish().unwrap();
-            self.settings = settings
-        }
+        Settings::parse(&payload[..], |k, v| self.settings.apply(k, v))?;
 
         self.write_frame(
             Frame::new(
@@ -606,7 +624,7 @@ impl<IO: IntoHalves> Conn<IO> {
         }
     }
 
-    fn common_headers(&self) -> Headers {
+    fn common_headers(&self, method: &'static str) -> Headers {
         let (scheme, default_port) = if self.config.tls {
             ("https", self.config.port == 443)
         } else {
@@ -620,7 +638,7 @@ impl<IO: IntoHalves> Conn<IO> {
         };
 
         let mut headers = Headers::default();
-        headers.insert(":method".into(), "POST".into());
+        headers.insert(":method".into(), method.into());
         headers.insert(":scheme".into(), scheme.into());
         headers.insert(":path".into(), self.config.path.clone().into_bytes().into());
         headers.insert(":authority".into(), authority.into_bytes().into());
@@ -651,6 +669,27 @@ impl<IO: IntoHalves> Conn<IO> {
             headers.insert(k.into(), v.into());
         }
         Ok(headers)
+    }
+
+    pub async fn send_empty_post_to_root(&mut self, stream_id: StreamId) -> eyre::Result<()> {
+        self.encode_and_write_headers(
+            stream_id,
+            HeadersFlags::EndStream | HeadersFlags::EndHeaders,
+            &self.common_headers("POST"),
+        )
+        .await
+    }
+
+    pub async fn encode_and_write_headers(
+        &mut self,
+        stream_id: StreamId,
+        flags: impl Into<BitFlags<HeadersFlags>>,
+        headers: &Headers,
+    ) -> eyre::Result<()> {
+        let flags = flags.into();
+        let block_fragment = self.encode_headers(headers)?;
+        self.write_headers(stream_id, flags, block_fragment).await?;
+        Ok(())
     }
 
     pub async fn write_headers(
@@ -722,6 +761,21 @@ impl<IO: IntoHalves> Conn<IO> {
         Ok(())
     }
 
+    /// Generates a set of dummy headers.
+    ///
+    /// # Parameters
+    /// - `len`: The number of headers to generate.
+    ///
+    /// # Returns
+    /// - A `Headers` map containing `len` number of headers, where each header
+    ///   has a key in the form of `x-dummy{i}` and a value of `dummy_bytes`
+    ///   with a length equal to `self.config.max_header_len`.
+    ///
+    /// # Properties
+    /// - The size of each header value is equal to
+    ///   `self.config.max_header_len`.
+    /// - The total number of headers in the returned `Headers` map is equal to
+    ///   `len`.
     fn dummy_headers(&self, len: usize) -> Headers {
         let mut headers = Headers::default();
         let dummy = dummy_bytes(self.config.max_header_len);
@@ -750,12 +804,24 @@ impl<IO: IntoHalves> Conn<IO> {
         stream_id: StreamId,
         increment: u32,
     ) -> eyre::Result<()> {
-        let window_update = WindowUpdate {
+        let update = WindowUpdate {
             reserved: 0,
             increment,
         };
-        self.write_frame(FrameType::WindowUpdate.into_frame(stream_id), window_update)
+        let mut rm = RollMut::alloc().unwrap();
+        let piece = update.into_piece(&mut rm).unwrap();
+        tracing::debug!(?update, "writing window_update, bytes = {:x?}", &piece[..]);
+
+        self.write_frame(FrameType::WindowUpdate.into_frame(stream_id), update)
             .await
+    }
+
+    // verify_settings_frame_with_ack verifies whether a SETTINGS frame with
+    // ACK flag was received.
+    async fn verify_settings_frame_with_ack(&mut self) -> eyre::Result<()> {
+        let (frame, _payload) = self.wait_for_frame(FrameT::Settings).await.unwrap();
+        assert!(frame.is_ack());
+        Ok(())
     }
 }
 

@@ -10,9 +10,9 @@ use byteorder::{BigEndian, WriteBytesExt};
 use eyre::Context;
 use fluke_buffet::{Piece, PieceList, PieceStr, ReadOwned, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
-    self as parse, enumflags2::BitFlags, nom::Finish, parse_bit_and_u31, ContinuationFlags,
-    DataFlags, Frame, FrameType, HeadersFlags, PingFlags, PrioritySpec, Settings, SettingsFlags,
-    StreamId,
+    self as parse, enumflags2::BitFlags, nom::Finish, ContinuationFlags, DataFlags, Frame,
+    FrameType, HeadersFlags, PingFlags, PrioritySpec, Setting, SettingPairs, Settings,
+    SettingsFlags, StreamId, WindowUpdate,
 };
 use http::{
     header,
@@ -139,12 +139,27 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         // then send our initial settings
         {
             debug!("Sending initial settings");
-            let payload = self.state.self_settings.into_piece(&mut self.out_scratch)?;
+            let setting_payload = {
+                let s = &self.state.self_settings;
+                SettingPairs(&[
+                    (Setting::EnablePush, 0),
+                    (Setting::HeaderTableSize, s.header_table_size),
+                    (Setting::InitialWindowSize, s.initial_window_size),
+                    (
+                        Setting::MaxConcurrentStreams,
+                        s.max_concurrent_streams.unwrap_or(u32::MAX),
+                    ),
+                    (Setting::MaxFrameSize, s.max_frame_size),
+                    (Setting::MaxHeaderListSize, s.max_header_list_size),
+                ])
+                .into_piece(&mut self.out_scratch)?
+            };
             let frame = Frame::new(
                 FrameType::Settings(Default::default()),
                 StreamId::CONNECTION,
             );
-            self.write_frame(frame, PieceList::single(payload)).await?;
+            self.write_frame(frame, PieceList::single(setting_payload))
+                .await?;
         }
 
         let mut goaway_err: Option<H2ConnectionError> = None;
@@ -1028,58 +1043,63 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     });
                 }
 
+                if payload.len() % 6 != 0 {
+                    return Err(H2ConnectionError::SettingsInvalidLength {
+                        len: payload.len() as _,
+                    });
+                }
+
                 if s.contains(SettingsFlags::Ack) {
                     debug!("Peer has acknowledged our settings, cool");
                     if !payload.is_empty() {
-                        return Err(H2ConnectionError::SettingsAckWithPayload {
+                        return Err(H2ConnectionError::SettingsInvalidLength {
                             len: payload.len() as _,
                         });
                     }
                 } else {
-                    let (_, settings) = match nom::combinator::complete(
-                        self.state.peer_settings.make_parser(),
-                    )(payload)
-                    .finish()
-                    {
-                        Err(_) => {
-                            return Err(H2ConnectionError::ReadError(eyre::eyre!(
-                                "could not parse settings frame"
-                            )));
+                    let original_initial_window_size = self.state.peer_settings.initial_window_size;
+                    let s = &mut self.state.peer_settings;
+
+                    Settings::parse(&payload[..], |code, value| {
+                        s.apply(code, value)?;
+                        match code {
+                            Setting::HeaderTableSize => {
+                                self.hpack_enc.set_max_table_size(value as _);
+                            }
+                            _ => {
+                                // nothing to do
+                            }
                         }
-                        Ok(t) => t,
-                    };
+                        Ok(())
+                    })
+                    .map_err(H2ConnectionError::BadSettingValue)?;
 
-                    self.hpack_enc
-                        .set_max_table_size(settings.header_table_size as usize);
-
-                    let initial_window_size_delta = (settings.initial_window_size as i64)
-                        - (self.state.peer_settings.initial_window_size as i64);
-                    debug!(%initial_window_size_delta, "Peer sent us {settings:#?}");
+                    let initial_window_size_delta =
+                        (s.initial_window_size as i64) - (original_initial_window_size as i64);
 
                     let mut maybe_send_data = false;
-
-                    // apply that delta to all streams
-                    for (id, stream) in self.state.streams.iter_mut() {
-                        if let Some(outgoing) = stream.outgoing_mut() {
-                            let next_cap = outgoing.capacity + initial_window_size_delta;
-                            if next_cap > MAX_WINDOW_SIZE {
-                                return Err(
-                                    H2ConnectionError::StreamWindowSizeOverflowDueToSettings {
-                                        stream_id: *id,
-                                    },
-                                );
+                    if initial_window_size_delta != 0 {
+                        // apply that delta to all streams
+                        for (id, stream) in self.state.streams.iter_mut() {
+                            if let Some(outgoing) = stream.outgoing_mut() {
+                                let next_cap = outgoing.capacity + initial_window_size_delta;
+                                if next_cap > MAX_WINDOW_SIZE {
+                                    return Err(
+                                        H2ConnectionError::StreamWindowSizeOverflowDueToSettings {
+                                            stream_id: *id,
+                                        },
+                                    );
+                                }
+                                // if capacity was negative or zero, and is now greater than zero,
+                                // we need to maybe send data
+                                if next_cap > 0 && outgoing.capacity <= 0 {
+                                    debug!(?id, %next_cap, "stream capacity was <= 0, now > 0");
+                                    maybe_send_data = true;
+                                }
+                                outgoing.capacity = next_cap;
                             }
-                            // if capacity was negative or zero, and is now greater than zero,
-                            // we need to maybe send data
-                            if next_cap > 0 && outgoing.capacity <= 0 {
-                                debug!(?id, %next_cap, "stream capacity was <= 0, now > 0");
-                                maybe_send_data = true;
-                            }
-                            outgoing.capacity = next_cap;
                         }
                     }
-
-                    self.state.peer_settings = settings;
 
                     let frame = Frame::new(
                         FrameType::Settings(SettingsFlags::Ack.into()),
@@ -1138,17 +1158,17 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     });
                 }
 
-                let increment;
-                (_, (_, increment)) = parse_bit_and_u31(payload)
+                let (_, update) = WindowUpdate::parse(payload)
                     .finish()
                     .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
+                debug!(?update, "Received window update");
 
-                if increment == 0 {
+                if update.increment == 0 {
                     return Err(H2ConnectionError::WindowUpdateZeroIncrement);
                 }
 
                 if frame.stream_id == StreamId::CONNECTION {
-                    let new_capacity = self.state.outgoing_capacity + increment as i64;
+                    let new_capacity = self.state.outgoing_capacity + update.increment as i64;
                     if new_capacity > MAX_WINDOW_SIZE {
                         return Err(H2ConnectionError::WindowUpdateOverflow);
                     };
@@ -1171,7 +1191,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         }
                     };
 
-                    let new_capacity = outgoing.capacity + increment as i64;
+                    let new_capacity = outgoing.capacity + update.increment as i64;
                     if new_capacity > MAX_WINDOW_SIZE {
                         // reset the stream
                         self.rst(frame.stream_id, H2StreamError::WindowUpdateOverflow)

@@ -15,7 +15,7 @@ pub use nom;
 
 use nom::{
     combinator::map,
-    number::streaming::{be_u16, be_u24, be_u32, be_u8},
+    number::streaming::{be_u24, be_u32, be_u8},
     sequence::tuple,
     IResult,
 };
@@ -404,15 +404,13 @@ impl IntoPiece for Frame {
 /// See https://httpwg.org/specs/rfc9113.html#FrameHeader - the first bit
 /// is reserved, and the rest is a 31-bit stream id
 pub fn parse_bit_and_u31(i: Roll) -> IResult<Roll, (u8, u32)> {
-    fn reserved(i: (Roll, usize)) -> IResult<(Roll, usize), u8> {
-        nom::bits::streaming::take(1_usize)(i)
-    }
+    // first, parse a u32:
+    let (i, x) = be_u32(i)?;
 
-    fn stream_id(i: (Roll, usize)) -> IResult<(Roll, usize), u32> {
-        nom::bits::streaming::take(31_usize)(i)
-    }
+    let bit = (x >> 31) as u8;
+    let val = x & 0x7FFF_FFFF;
 
-    nom::bits::bits(tuple((reserved, stream_id)))(i)
+    Ok((i, (bit, val)))
 }
 
 fn parse_reserved_and_stream_id(i: Roll) -> IResult<Roll, (u8, StreamId)> {
@@ -421,15 +419,58 @@ fn parse_reserved_and_stream_id(i: Roll) -> IResult<Roll, (u8, StreamId)> {
 
 /// Pack a bit and a u31 into a 4-byte array (big-endian)
 pub fn pack_bit_and_u31(bit: u8, val: u32) -> [u8; 4] {
+    // assert val is in range
+    assert_eq!(val & 0x7FFF_FFFF, val, "val is too large: {val:x}");
+
+    // assert bit is in range
+    assert_eq!(bit & 0x1, bit, "bit should be 0 or 1: {bit:x}");
+
+    // pack
     let mut bytes = val.to_be_bytes();
     if bit != 0 {
-        bytes[0] |= 0b1000_0000;
+        bytes[0] |= 0x80;
     }
+
     bytes
 }
 
 pub fn pack_reserved_and_stream_id(reserved: u8, stream_id: StreamId) -> [u8; 4] {
     pack_bit_and_u31(reserved, stream_id.0)
+}
+
+#[test]
+fn test_pack_and_parse_bit_and_u31() {
+    // Test round-tripping through parse_bit_and_u31 and pack_bit_and_u31
+    let test_cases = [
+        (0, 0),
+        (1, 0),
+        (0, 1),
+        (1, 1),
+        (0, 0x7FFF_FFFF),
+        (1, 0x7FFF_FFFF),
+    ];
+
+    let mut roll = RollMut::alloc().unwrap();
+    for &(bit, number) in &test_cases {
+        let packed = pack_bit_and_u31(bit, number);
+        roll.reserve_at_least(4).unwrap();
+        roll.put(&packed[..]).unwrap();
+        let (_, (parsed_bit, parsed_number)) = parse_bit_and_u31(roll.take_all()).unwrap();
+        assert_eq!(dbg!(bit), dbg!(parsed_bit));
+        assert_eq!(dbg!(number), dbg!(parsed_number));
+    }
+}
+
+#[test]
+#[should_panic(expected = "bit should be 0 or 1: 2")]
+fn test_pack_bit_and_u31_panic_not_a_bit() {
+    pack_bit_and_u31(2, 0);
+}
+
+#[test]
+#[should_panic(expected = "val is too large: 80000000")]
+fn test_pack_bit_and_u31_panic_val_too_large() {
+    pack_bit_and_u31(0, 1 << 31);
 }
 
 // cf. https://httpwg.org/specs/rfc9113.html#HEADERS
@@ -652,9 +693,60 @@ impl Default for Settings {
     }
 }
 
+impl Settings {
+    /// Apply a setting to the current settings, returning an error if the
+    /// setting is invalid.
+    pub fn apply(&mut self, code: Setting, value: u32) -> Result<(), SettingsError> {
+        match code {
+            Setting::HeaderTableSize => {
+                self.header_table_size = value;
+            }
+            Setting::EnablePush => match value {
+                0 => self.enable_push = false,
+                1 => self.enable_push = true,
+                _ => return Err(SettingsError::InvalidEnablePushValue { actual: value }),
+            },
+            Setting::MaxConcurrentStreams => {
+                self.max_concurrent_streams = Some(value);
+            }
+            Setting::InitialWindowSize => {
+                if value > Self::MAX_INITIAL_WINDOW_SIZE {
+                    return Err(SettingsError::InitialWindowSizeTooLarge { actual: value });
+                }
+                self.initial_window_size = value;
+            }
+            Setting::MaxFrameSize => {
+                if !Self::MAX_FRAME_SIZE_ALLOWED_RANGE.contains(&value) {
+                    return Err(SettingsError::SettingsMaxFrameSizeInvalid { actual: value });
+                }
+                self.max_frame_size = value;
+            }
+            Setting::MaxHeaderListSize => {
+                self.max_header_list_size = value;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum SettingsError {
+    #[error("ENABLE_PUSH setting is supposed to be either 0 or 1, got {actual}")]
+    InvalidEnablePushValue { actual: u32 },
+
+    #[error("bad INITIAL_WINDOW_SIZE value {actual}, should be than or equal to 2^31-1")]
+    InitialWindowSizeTooLarge { actual: u32 },
+
+    #[error(
+        "bad SETTINGS_MAX_FRAME_SIZE value {actual}, should be between 2^14 and 2^24-1 inclusive"
+    )]
+    SettingsMaxFrameSizeInvalid { actual: u32 },
+}
+
 #[EnumRepr(type = "u16")]
 #[derive(Debug, Clone, Copy)]
-pub enum SettingIdentifier {
+pub enum Setting {
     HeaderTableSize = 0x01,
     EnablePush = 0x02,
     MaxConcurrentStreams = 0x03,
@@ -664,125 +756,52 @@ pub enum SettingIdentifier {
 }
 
 impl Settings {
-    const MAX_INITIAL_WINDOW_SIZE: u32 = (1 << 31) - 1;
-    const MAX_FRAME_SIZE_ALLOWED_RANGE: RangeInclusive<u32> = (1 << 14)..=((1 << 24) - 1);
+    pub const MAX_INITIAL_WINDOW_SIZE: u32 = (1 << 31) - 1;
+    pub const MAX_FRAME_SIZE_ALLOWED_RANGE: RangeInclusive<u32> = (1 << 14)..=((1 << 24) - 1);
 
-    pub fn make_parser(&self) -> impl FnMut(Roll) -> IResult<Roll, Self> {
-        let mut settings = *self;
-        move |mut i| {
-            tracing::trace!("parsing settings frame, roll length: {}", i.len());
+    /// Parse a series of settings from a buffer, calls the callback for each
+    /// known setting found.
+    ///
+    /// Unknown settings are ignored.
+    ///
+    /// Panics if the buf isn't a multiple of 6 bytes.
+    pub fn parse<E>(
+        buf: &[u8],
+        mut callback: impl FnMut(Setting, u32) -> Result<(), E>,
+    ) -> Result<(), E> {
+        assert!(
+            buf.len() % 6 == 0,
+            "buffer length must be a multiple of 6 bytes"
+        );
 
-            while !i.is_empty() {
-                let (rest, (id, value)) = tuple((be_u16, be_u32))(i)?;
-                tracing::trace!(%id, %value, "Got setting pair");
-                match SettingIdentifier::from_repr(id) {
-                    None => {
-                        // ignore unknown settings
-                    }
-                    Some(id) => match id {
-                        SettingIdentifier::HeaderTableSize => {
-                            settings.header_table_size = value;
-                        }
-                        SettingIdentifier::EnablePush => {
-                            settings.enable_push = match value {
-                                0 => false,
-                                1 => true,
-                                _ => {
-                                    return Err(nom::Err::Error(nom::error::Error::new(
-                                        rest,
-                                        nom::error::ErrorKind::Digit,
-                                    )));
-                                }
-                            }
-                        }
-                        SettingIdentifier::MaxConcurrentStreams => {
-                            settings.max_concurrent_streams = Some(value);
-                        }
-                        SettingIdentifier::InitialWindowSize => {
-                            if value > Self::MAX_INITIAL_WINDOW_SIZE {
-                                return Err(nom::Err::Error(nom::error::Error::new(
-                                    rest,
-                                    nom::error::ErrorKind::Digit,
-                                )));
-                            }
-                            settings.initial_window_size = value;
-                        }
-                        SettingIdentifier::MaxFrameSize => {
-                            if !Self::MAX_FRAME_SIZE_ALLOWED_RANGE.contains(&value) {
-                                return Err(nom::Err::Error(nom::error::Error::new(
-                                    rest,
-                                    // FIXME: this isn't really representative of
-                                    // the quality error handling we're striving for
-                                    nom::error::ErrorKind::Digit,
-                                )));
-                            }
-                            settings.max_frame_size = value;
-                        }
-                        SettingIdentifier::MaxHeaderListSize => {
-                            settings.max_header_list_size = value;
-                        }
-                    },
+        for chunk in buf.chunks_exact(6) {
+            let id = u16::from_be_bytes([chunk[0], chunk[1]]);
+            let value = u32::from_be_bytes([chunk[2], chunk[3], chunk[4], chunk[5]]);
+            match Setting::from_repr(id) {
+                None => {}
+                Some(id) => {
+                    callback(id, value)?;
                 }
-                i = rest;
             }
-
-            Ok((i, settings))
-        }
-    }
-
-    /// Iterates over pairs of id/values
-    pub fn pairs(&self) -> impl Iterator<Item = (u16, u32)> {
-        [
-            (
-                SettingIdentifier::HeaderTableSize as u16,
-                self.header_table_size,
-            ),
-            (
-                // note: as a server, we're free to omit this, but it doesn't
-                // hurt to send 0 there I guess.
-                SettingIdentifier::EnablePush as u16,
-                self.enable_push as u32,
-            ),
-            (
-                SettingIdentifier::InitialWindowSize as u16,
-                self.initial_window_size,
-            ),
-            (SettingIdentifier::MaxFrameSize as u16, self.max_frame_size),
-            (
-                SettingIdentifier::MaxHeaderListSize as u16,
-                self.max_header_list_size,
-            ),
-        ]
-        .into_iter()
-        .chain(
-            self.max_concurrent_streams
-                .map(|val| (SettingIdentifier::MaxConcurrentStreams as u16, val)),
-        )
-    }
-
-    /// Encode these settings into (u16, u32) pairs as specified in
-    /// https://httpwg.org/specs/rfc9113.html#SETTINGS
-    pub fn write_into(self, mut w: impl std::io::Write) -> std::io::Result<()> {
-        use byteorder::{BigEndian, WriteBytesExt};
-
-        for (id, value) in self.pairs() {
-            w.write_u16::<BigEndian>(id)?;
-            w.write_u32::<BigEndian>(value)?;
         }
 
         Ok(())
     }
 }
 
-impl IntoPiece for Settings {
-    fn into_piece(self, mut scratch: &mut RollMut) -> std::io::Result<Piece> {
-        debug_assert_eq!(scratch.len(), 0);
-        self.write_into(&mut scratch)?;
-        Ok(scratch.take_all().into())
+pub struct SettingPairs<'a>(pub &'a [(Setting, u32)]);
+
+impl<'a> From<&'a [(Setting, u32)]> for SettingPairs<'a> {
+    fn from(value: &'a [(Setting, u32)]) -> Self {
+        Self(value)
     }
 }
 
-pub struct SettingPairs<'a>(pub &'a [(SettingIdentifier, u32)]);
+impl<const N: usize> From<&'static [(Setting, u32); N]> for SettingPairs<'static> {
+    fn from(value: &'static [(Setting, u32); N]) -> Self {
+        Self(value)
+    }
+}
 
 impl<'a> IntoPiece for SettingPairs<'a> {
     fn into_piece(self, scratch: &mut RollMut) -> std::io::Result<Piece> {
@@ -867,6 +886,7 @@ impl RstStream {
 }
 
 /// Payload for a WINDOW_UPDATE frame
+#[derive(Debug, Clone, Copy)]
 pub struct WindowUpdate {
     pub reserved: u8,
     pub increment: u32,
@@ -876,7 +896,8 @@ impl IntoPiece for WindowUpdate {
     fn into_piece(self, scratch: &mut RollMut) -> std::io::Result<Piece> {
         let roll = scratch
             .put_to_roll(4, |mut slice| {
-                slice.write_all(&pack_bit_and_u31(self.reserved, self.increment))?;
+                let packed = pack_bit_and_u31(self.reserved, self.increment);
+                slice.write_all(&packed)?;
                 Ok(())
             })
             .unwrap();
@@ -886,12 +907,12 @@ impl IntoPiece for WindowUpdate {
 
 impl WindowUpdate {
     pub fn parse(i: Roll) -> IResult<Roll, Self> {
-        let (rest, (reserved, window_size_increment)) = parse_bit_and_u31(i)?;
+        let (rest, (reserved, increment)) = parse_bit_and_u31(i)?;
         Ok((
             rest,
             Self {
                 reserved,
-                increment: window_size_increment,
+                increment,
             },
         ))
     }
