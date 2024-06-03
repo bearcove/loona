@@ -1009,6 +1009,24 @@ fn sends_headers_frame_with_te_not_trailers() {
 use __group::sends_headers_frame_with_te_not_trailers as test;
 $body
 }
+
+/// [...] pseudo-header fields defined for responses MUST NOT appear in requests
+/// [...] Endpoints MUST treat a request or response that contains undefined or
+/// invalid pseudo-header fields as malformed (Section 8.1.1).
+#[test]
+fn sends_headers_frame_with_response_pseudo_header() {
+use __group::sends_headers_frame_with_response_pseudo_header as test;
+$body
+}
+
+/// [...] Pseudo-header fields MUST NOT appear in a trailer section. Endpoints
+/// MUST treat a request or response that contains undefined or invalid
+/// pseudo-header fields as malformed (Section 8.1.1).
+#[test]
+fn sends_headers_frame_with_pseudo_header_in_trailer() {
+use __group::sends_headers_frame_with_pseudo_header_in_trailer as test;
+$body
+}
 }
 }
 }

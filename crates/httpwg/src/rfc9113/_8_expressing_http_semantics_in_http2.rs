@@ -3,7 +3,7 @@
 use fluke_buffet::IntoHalves;
 use fluke_h2_parse::{HeadersFlags, StreamId};
 
-use crate::{Conn, ErrorC, Headers};
+use crate::{Conn, ErrorC, FrameT, Headers};
 
 //---- Section 8.1: HTTP Message Framing
 
@@ -410,6 +410,65 @@ pub async fn sends_headers_frame_with_te_not_trailers<IO: IntoHalves>(
     headers.insert("te".into(), "not-trailers".into());
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
+
+    Ok(())
+}
+
+//---- Section 8.2.3: Compressing the Cookie Header Field
+
+// That can't really be tested without controlling both sides of the
+// connection, so, not suited for this test suite.
+
+//---- Section 8.3: HTTP Control Data
+
+/// [...] pseudo-header fields defined for responses MUST NOT appear in requests
+/// [...] Endpoints MUST treat a request or response that contains undefined or
+/// invalid pseudo-header fields as malformed (Section 8.1.1).
+pub async fn sends_headers_frame_with_response_pseudo_header<IO: IntoHalves>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let mut headers = conn.common_headers("POST");
+    headers.insert(":status".into(), "200".into());
+    conn.send_req_and_expect_status(StreamId(1), &headers, 400)
+        .await?;
+
+    Ok(())
+}
+
+/// [...] Pseudo-header fields MUST NOT appear in a trailer section. Endpoints
+/// MUST treat a request or response that contains undefined or invalid
+/// pseudo-header fields as malformed (Section 8.1.1).
+pub async fn sends_headers_frame_with_pseudo_header_in_trailer<IO: IntoHalves>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+    conn.handshake().await?;
+
+    let headers_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
+    conn.write_headers(stream_id, HeadersFlags::EndHeaders, headers_fragment)
+        .await?;
+    conn.write_data(stream_id, false, b"test").await?;
+
+    let mut trailers = Headers::new();
+    trailers.insert(":method".into(), "POST".into());
+    let trailers_fragment = conn.encode_headers(&trailers)?;
+    conn.write_headers(
+        stream_id,
+        HeadersFlags::EndHeaders | HeadersFlags::EndStream,
+        trailers_fragment,
+    )
+    .await?;
+
+    // wait for headers frame, expect 400 status
+    let (frame, payload) = conn.wait_for_frame(FrameT::Headers).await.unwrap();
+    assert!(frame.is_end_headers(), "this test makes that assumption");
+    let headers = conn.decode_headers(payload.into())?;
+    let status = headers.get(&":status".into()).unwrap();
+    let status = std::str::from_utf8(status)?;
+    let status = status.parse::<u16>().unwrap();
+    assert_eq!(status, 400);
 
     Ok(())
 }

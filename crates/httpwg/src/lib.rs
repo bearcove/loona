@@ -848,16 +848,14 @@ impl<IO: IntoHalves> Conn<IO> {
         .await?;
 
         let (frame, payload) = self.wait_for_frame(FrameT::Headers).await.unwrap();
-        match frame.frame_type {
-            FrameType::Headers(flags) => {
-                assert!(flags.contains(HeadersFlags::EndHeaders), "we expect the server to send the error in one headers frame, or else the test doesn't work")
-            }
-            _ => unreachable!(),
-        }
+        assert!(
+            frame.is_end_headers(),
+            "the server is free to answer with headers in several frames but this breaks that test"
+        );
 
         let headers = self.decode_headers(payload.into())?;
         let status = headers
-            .get(&Piece::from(":status"))
+            .get(&":status".into())
             .expect("response should contain :status");
         let status = std::str::from_utf8(&status[..])
             .expect("status should be valid utf-8")
@@ -900,7 +898,7 @@ impl Default for Config {
 
             max_header_len: 4000,
 
-            timeout: Duration::from_secs(1),
+            timeout: Duration::from_millis(100),
         }
     }
 }
