@@ -1,6 +1,7 @@
 use eyre::eyre;
 use multimap::MultiMap;
-use std::{borrow::Borrow, rc::Rc, time::Duration};
+use rfc9113::DEFAULT_FRAME_SIZE;
+use std::{rc::Rc, time::Duration};
 
 use enumflags2::{bitflags, BitFlags};
 use fluke_buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
@@ -248,6 +249,11 @@ impl<IO: IntoHalves> Conn<IO> {
         };
         fluke_buffet::spawn(async move { recv_fut.await.unwrap() });
 
+        let mut settings: Settings = Default::default();
+        for (code, value) in default_settings().0 {
+            settings.apply(*code, *value).unwrap();
+        }
+
         Self {
             w,
             scratch: RollMut::alloc().unwrap(),
@@ -255,7 +261,11 @@ impl<IO: IntoHalves> Conn<IO> {
             config,
             hpack_enc: Default::default(),
             hpack_dec: Default::default(),
-            settings: default_settings(),
+            settings: Settings {
+                initial_window_size: DEFAULT_FRAME_SIZE,
+                max_frame_size: DEFAULT_FRAME_SIZE,
+                ..Default::default()
+            },
         }
     }
 
