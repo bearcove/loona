@@ -668,6 +668,16 @@ impl<IO: IntoHalves> Conn<IO> {
         for (k, v) in res {
             headers.insert(k.into(), v.into());
         }
+
+        tracing::trace!("decoded {} headers:", headers.len());
+        for (k, v) in headers.iter() {
+            tracing::trace!(
+                "    {:?} => {:?}",
+                String::from_utf8_lossy(&k[..]),
+                String::from_utf8_lossy(&v[..])
+            );
+        }
+
         Ok(headers)
     }
 
@@ -821,6 +831,40 @@ impl<IO: IntoHalves> Conn<IO> {
     async fn verify_settings_frame_with_ack(&mut self) -> eyre::Result<()> {
         let (frame, _payload) = self.wait_for_frame(FrameT::Settings).await.unwrap();
         assert!(frame.is_ack());
+        Ok(())
+    }
+
+    async fn send_req_and_expect_status(
+        &mut self,
+        stream_id: StreamId,
+        headers: &MultiMap<Piece, Piece>,
+        expected_status: u16,
+    ) -> eyre::Result<()> {
+        self.encode_and_write_headers(
+            stream_id,
+            HeadersFlags::EndHeaders | HeadersFlags::EndStream,
+            headers,
+        )
+        .await?;
+
+        let (frame, payload) = self.wait_for_frame(FrameT::Headers).await.unwrap();
+        match frame.frame_type {
+            FrameType::Headers(flags) => {
+                assert!(flags.contains(HeadersFlags::EndHeaders), "we expect the server to send the error in one headers frame, or else the test doesn't work")
+            }
+            _ => unreachable!(),
+        }
+
+        let headers = self.decode_headers(payload.into())?;
+        let status = headers
+            .get(&Piece::from(":status"))
+            .expect("response should contain :status");
+        let status = std::str::from_utf8(&status[..])
+            .expect("status should be valid utf-8")
+            .parse::<u16>()
+            .expect("status should be a u16");
+        assert_eq!(status, expected_status);
+
         Ok(())
     }
 }

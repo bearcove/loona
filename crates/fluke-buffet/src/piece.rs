@@ -1,13 +1,20 @@
 //! Types for performing vectored I/O.
 
 use http::header::HeaderName;
-use std::{collections::VecDeque, fmt, ops::Deref, rc::Rc, str::Utf8Error};
+use std::{
+    collections::VecDeque,
+    fmt,
+    hash::{Hash, Hasher},
+    ops::Deref,
+    rc::Rc,
+    str::Utf8Error,
+};
 
 use crate::{Roll, RollStr};
 
 /// A piece of data (arbitrary bytes) with a stable address, suitable for
 /// passing to the kernel (io_uring writes).
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone)]
 pub enum Piece {
     Full {
         core: PieceCore,
@@ -19,6 +26,21 @@ pub enum Piece {
     },
 }
 
+impl<T: AsRef<[u8]>> PartialEq<T> for Piece {
+    fn eq(&self, other: &T) -> bool {
+        let s: &[u8] = self.as_ref();
+        s.eq(other.as_ref())
+    }
+}
+
+impl Eq for Piece {}
+
+impl Hash for Piece {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_ref().hash(state)
+    }
+}
+
 impl Piece {
     /// Returns an empty piece
     pub fn empty() -> Self {
@@ -28,7 +50,7 @@ impl Piece {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Hash)]
 pub enum PieceCore {
     Static(&'static [u8]),
     Vec(Rc<Vec<u8>>),

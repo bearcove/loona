@@ -21,8 +21,9 @@
 //! ]);
 //! ```
 //!
-//! A more complex example where the callback API is used, providing the client a
-//! borrowed representation of each header, rather than an owned representation.
+//! A more complex example where the callback API is used, providing the client
+//! a borrowed representation of each header, rather than an owned
+//! representation.
 //!
 //! ```rust
 //! use fluke_hpack::Decoder;
@@ -48,7 +49,7 @@
 use std::borrow::Cow;
 use std::num::Wrapping;
 
-use tracing::{debug, trace};
+use tracing::trace;
 
 use super::huffman::HuffmanDecoder;
 use super::huffman::HuffmanDecoderError;
@@ -133,7 +134,7 @@ fn decode_integer(buf: &[u8], prefix_size: u8) -> Result<(usize, usize), Decoder
 /// bytes consumed from the given buffer.
 fn decode_string(buf: &[u8]) -> Result<(Cow<'_, [u8]>, usize), DecoderError> {
     let (len, consumed) = decode_integer(buf, 7)?;
-    debug!("decode_string: Consumed = {}, len = {}", consumed, len);
+    trace!("decode_string: Consumed = {}, len = {}", consumed, len);
     if consumed + len > buf.len() {
         return Err(DecoderError::StringDecodingError(
             StringDecodingError::NotEnoughOctets,
@@ -141,7 +142,7 @@ fn decode_string(buf: &[u8]) -> Result<(Cow<'_, [u8]>, usize), DecoderError> {
     }
     let raw_string = &buf[consumed..consumed + len];
     if buf[0] & 128 == 128 {
-        debug!("decode_string: Using the Huffman code");
+        trace!("decode_string: Using the Huffman code");
         // Huffman coding used: pass the raw octets to the Huffman decoder
         // and return its result.
         let mut decoder = HuffmanDecoder::new();
@@ -156,7 +157,7 @@ fn decode_string(buf: &[u8]) -> Result<(Cow<'_, [u8]>, usize), DecoderError> {
         Ok((Cow::Owned(decoded), consumed + len))
     } else {
         // The octets were transmitted raw
-        debug!("decode_string: Raw octet string received");
+        trace!("decode_string: Raw octet string received");
         Ok((Cow::Borrowed(raw_string), consumed + len))
     }
 }
@@ -320,21 +321,25 @@ impl<'a> Decoder<'a> {
         self.max_allowed_table_size = Some(max_allowed_size);
     }
 
-    /// Decodes the headers found in the given buffer `buf`. Invokes the callback `cb` for each
-    /// decoded header in turn, by providing it the header name and value as `Cow` byte array
-    /// slices.
+    /// Decodes the headers found in the given buffer `buf`. Invokes the
+    /// callback `cb` for each decoded header in turn, by providing it the
+    /// header name and value as `Cow` byte array slices.
     ///
-    /// The callback is free to decide how to handle the emitted header, however the `Cow` cannot
-    /// outlive the closure body without assuming ownership or otherwise copying the contents.
+    /// The callback is free to decide how to handle the emitted header, however
+    /// the `Cow` cannot outlive the closure body without assuming ownership
+    /// or otherwise copying the contents.
     ///
-    /// This is due to the fact that the header might be found (fully or partially) in the header
-    /// table of the decoder, in which case the callback will have received a borrow of its
-    /// contents. However, when one of the following headers is decoded, it is possible that the
-    /// header table might have to be modified; so the borrow is only valid until the next header
-    /// decoding begins, meaning until the end of the callback's body.
+    /// This is due to the fact that the header might be found (fully or
+    /// partially) in the header table of the decoder, in which case the
+    /// callback will have received a borrow of its contents. However, when
+    /// one of the following headers is decoded, it is possible that the
+    /// header table might have to be modified; so the borrow is only valid
+    /// until the next header decoding begins, meaning until the end of the
+    /// callback's body.
     ///
-    /// If an error is encountered during the decoding of any header, decoding halts and the
-    /// appropriate error is returned as the `Err` variant of the `Result`.
+    /// If an error is encountered during the decoding of any header, decoding
+    /// halts and the appropriate error is returned as the `Err` variant of
+    /// the `Result`.
     pub fn decode_with_cb<F>(&mut self, buf: &[u8], mut cb: F) -> Result<(), DecoderError>
     where
         F: FnMut(Cow<[u8]>, Cow<[u8]>),
@@ -420,8 +425,9 @@ impl<'a> Decoder<'a> {
 
     /// Decode the header block found in the given buffer.
     ///
-    /// The decoded representation is returned as a sequence of headers, where both the name and
-    /// value of each header is represented by an owned byte sequence (i.e. `Vec<u8>`).
+    /// The decoded representation is returned as a sequence of headers, where
+    /// both the name and value of each header is represented by an owned
+    /// byte sequence (i.e. `Vec<u8>`).
     ///
     /// The buffer should represent the entire block that should be decoded.
     /// For example, in HTTP/2, all continuation frames need to be concatenated
@@ -439,9 +445,10 @@ impl<'a> Decoder<'a> {
     /// Decodes an indexed header representation.
     fn decode_indexed(&self, buf: &[u8]) -> Result<DecodedLiteralSlice<'_>, DecoderError> {
         let (index, consumed) = decode_integer(buf, 7)?;
-        debug!(
+        trace!(
             "Decoding indexed: index = {}, consumed = {}",
-            index, consumed
+            index,
+            consumed
         );
 
         let (name, value) = self.get_from_table(index)?;
@@ -698,7 +705,8 @@ mod tests {
 
     #[test]
     fn test_decode_string_no_huffman() {
-        /// Checks that the result matches the expectation, but also that the `Cow` is borrowed!
+        /// Checks that the result matches the expectation, but also that the
+        /// `Cow` is borrowed!
         fn assert_borrowed_eq(expected: (&[u8], usize), result: (Cow<'_, [u8]>, usize)) {
             let (expected_str, expected_len) = expected;
             let (actual_str, actual_len) = result;
@@ -1652,7 +1660,7 @@ mod interop_tests {
 
         for fixture in files {
             let file_name = fixture.unwrap().path();
-            debug!("Testing fixture: {:?}", file_name);
+            trace!("Testing fixture: {:?}", file_name);
             test_story(file_name);
         }
     }

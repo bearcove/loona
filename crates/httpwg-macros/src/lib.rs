@@ -319,6 +319,21 @@ fn sends_second_headers_frame_without_end_stream() {
 use __group::sends_second_headers_frame_without_end_stream as test;
 $body
 }
+
+/// A field name MUST NOT contain characters in the ranges 0x00-0x20, 0x41-0x5a,
+/// or 0x7f-0xff (all ranges inclusive). This specifically excludes all
+/// non-visible ASCII characters, ASCII SP (0x20), and uppercase characters ('A'
+/// to 'Z', ASCII 0x41 to 0x5a).
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_uppercase_field_name() {
+use __group::sends_headers_frame_with_uppercase_field_name as test;
+$body
+}
 }
 
 /// Section 6: Frame Definitions
