@@ -1,7 +1,9 @@
 //! Section 8: Expressing HTTP Semantics in HTTP/2
 
+use std::io::Write;
+
 use fluke_buffet::IntoHalves;
-use fluke_h2_parse::{FrameType, HeadersFlags, StreamId};
+use fluke_h2_parse::{pack_bit_and_u31, FrameType, HeadersFlags, StreamId};
 
 use crate::{Conn, ErrorC, FrameT, Headers};
 
@@ -644,6 +646,105 @@ pub async fn sends_headers_frame_without_status<IO: IntoHalves>(
         }
     }
     assert!(found_status, "the :status pseudo-header must be present");
+
+    Ok(())
+}
+
+//--- Section 8.4: Server Push
+
+// Server push is discouraged now:
+//
+// In practice, server push is difficult to use effectively, because it requires
+// the server to correctly anticipate the additional requests the client will
+// make, taking into account factors such as caching, content negotiation, and
+// user behavior. Errors in prediction can lead to performance degradation, due
+// to the opportunity cost that the additional data on the wire represents. In
+// particular, pushing any significant amount of data can cause contention
+// issues with responses that are more important.
+
+/// A client cannot push. Thus, servers MUST treat the receipt of a PUSH_PROMISE
+/// frame as a connection error (Section 5.4.1) of type PROTOCOL_ERROR. A server
+/// cannot set the SETTINGS_ENABLE_PUSH setting to a value other than 0 (see
+/// Section 6.5.2).
+pub async fn client_sends_push_promise_frame<IO: IntoHalves>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let stream_id = StreamId(1);
+    let promised_stream_id = StreamId(2);
+
+    let mut headers = Headers::default();
+    headers.insert(":status".into(), "200".into());
+    let block_fragment = conn.encode_headers(&headers)?;
+    let payload = conn
+        .scratch
+        .put_to_roll(block_fragment.len() + 4, |mut s| {
+            s.write_all(&pack_bit_and_u31(0, promised_stream_id.0))?;
+            s.write_all(&block_fragment)?;
+            Ok(())
+        })?;
+    conn.write_frame(FrameType::PushPromise.into_frame(stream_id), payload)
+        .await?;
+
+    conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+//---- Section 8.5: The CONNECT Method
+
+/// The CONNECT method (Section 9.3.6 of [HTTP]) is used to convert an HTTP
+/// connection into a tunnel to a remote host. CONNECT is primarily used with
+/// HTTP proxies to establish a TLS session with an origin server for the
+/// purposes of interacting with "https" resources.
+///
+/// In HTTP/2, the CONNECT method establishes a tunnel over a single HTTP/2
+/// stream to a remote host, rather than converting the entire connection to a
+/// tunnel. A CONNECT header section is constructed as defined in Section 8.3.1
+/// ("Request Pseudo-Header Fields"), with a few differences. Specifically:
+///
+/// The ":method" pseudo-header field is set to CONNECT.
+/// The ":scheme" and ":path" pseudo-header fields MUST be omitted.
+/// The ":authority" pseudo-header field contains the host and port to connect
+/// to (equivalent to the authority-form of the request-target of CONNECT
+/// requests; see Section 3.2.3 of [HTTP/1.1]).
+
+pub async fn sends_connect_with_scheme<IO: IntoHalves>(mut conn: Conn<IO>) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let mut headers = Headers::new();
+    headers.insert(":method".into(), "CONNECT".into());
+    headers.insert(":scheme".into(), "https".into());
+    headers.insert(":authority".into(), "example.com:443".into());
+    conn.send_req_and_expect_status(StreamId(1), &headers, 400)
+        .await?;
+
+    Ok(())
+}
+
+pub async fn sends_connect_with_path<IO: IntoHalves>(mut conn: Conn<IO>) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let mut headers = Headers::new();
+    headers.insert(":method".into(), "CONNECT".into());
+    headers.insert(":path".into(), "/".into());
+    headers.insert(":authority".into(), "example.com:443".into());
+    conn.send_req_and_expect_status(StreamId(1), &headers, 400)
+        .await?;
+
+    Ok(())
+}
+
+pub async fn sends_connect_without_authority<IO: IntoHalves>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let mut headers = Headers::new();
+    headers.insert(":method".into(), "CONNECT".into());
+    conn.send_req_and_expect_status(StreamId(1), &headers, 400)
+        .await?;
 
     Ok(())
 }

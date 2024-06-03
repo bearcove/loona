@@ -1103,6 +1103,49 @@ fn sends_headers_frame_without_status() {
 use __group::sends_headers_frame_without_status as test;
 $body
 }
+
+/// A client cannot push. Thus, servers MUST treat the receipt of a PUSH_PROMISE
+/// frame as a connection error (Section 5.4.1) of type PROTOCOL_ERROR. A server
+/// cannot set the SETTINGS_ENABLE_PUSH setting to a value other than 0 (see
+/// Section 6.5.2).
+#[test]
+fn client_sends_push_promise_frame() {
+use __group::client_sends_push_promise_frame as test;
+$body
+}
+
+/// The CONNECT method (Section 9.3.6 of [HTTP]) is used to convert an HTTP
+/// connection into a tunnel to a remote host. CONNECT is primarily used with
+/// HTTP proxies to establish a TLS session with an origin server for the
+/// purposes of interacting with "https" resources.
+///
+/// In HTTP/2, the CONNECT method establishes a tunnel over a single HTTP/2
+/// stream to a remote host, rather than converting the entire connection to a
+/// tunnel. A CONNECT header section is constructed as defined in Section 8.3.1
+/// ("Request Pseudo-Header Fields"), with a few differences. Specifically:
+///
+/// The ":method" pseudo-header field is set to CONNECT.
+/// The ":scheme" and ":path" pseudo-header fields MUST be omitted.
+/// The ":authority" pseudo-header field contains the host and port to connect
+/// to (equivalent to the authority-form of the request-target of CONNECT
+/// requests; see Section 3.2.3 of [HTTP/1.1]).
+#[test]
+fn sends_connect_with_scheme() {
+use __group::sends_connect_with_scheme as test;
+$body
+}
+
+#[test]
+fn sends_connect_with_path() {
+use __group::sends_connect_with_path as test;
+$body
+}
+
+#[test]
+fn sends_connect_without_authority() {
+use __group::sends_connect_without_authority as test;
+$body
+}
 }
 }
 }
