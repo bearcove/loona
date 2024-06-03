@@ -789,11 +789,15 @@ impl<IO: IntoHalves> Conn<IO> {
         stream_id: StreamId,
         increment: u32,
     ) -> eyre::Result<()> {
-        let window_update = WindowUpdate {
+        let update = WindowUpdate {
             reserved: 0,
             increment,
         };
-        self.write_frame(FrameType::WindowUpdate.into_frame(stream_id), window_update)
+        let mut rm = RollMut::alloc().unwrap();
+        let piece = update.into_piece(&mut rm).unwrap();
+        tracing::debug!(?update, "writing window_update, bytes = {:x?}", &piece[..]);
+
+        self.write_frame(FrameType::WindowUpdate.into_frame(stream_id), update)
             .await
     }
 

@@ -697,9 +697,9 @@ pub async fn sends_multiple_window_update_frames_increasing_flow_control_window_
 ) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    conn.write_window_update(StreamId::CONNECTION, 1 << 31)
+    conn.write_window_update(StreamId::CONNECTION, (1 << 31) - 1)
         .await?;
-    conn.write_window_update(StreamId::CONNECTION, 1 << 31)
+    conn.write_window_update(StreamId::CONNECTION, (1 << 31) - 1)
         .await?;
 
     conn.verify_connection_error(ErrorC::FlowControlError)
@@ -726,13 +726,14 @@ pub async fn sends_multiple_window_update_frames_increasing_flow_control_window_
 
     conn.encode_and_write_headers(
         stream_id,
-        HeadersFlags::EndStream | HeadersFlags::EndHeaders,
+        HeadersFlags::EndHeaders,
         &conn.common_headers("POST"),
     )
     .await?;
 
-    conn.write_window_update(stream_id, 1 << 31).await?;
-    conn.write_window_update(stream_id, 1 << 31).await?;
+    conn.write_window_update(stream_id, (1 << 31) - 1).await?;
+    // that write might fail: the window may already have exceeded the max
+    _ = conn.write_window_update(stream_id, (1 << 31) - 1).await;
 
     conn.verify_stream_error(ErrorC::FlowControlError).await?;
 
@@ -792,7 +793,7 @@ pub async fn sends_settings_frame_for_window_size_to_be_negative<IO: IntoHalves 
     // make window size 3 & send request
     conn.write_and_ack_settings(&[(Setting::InitialWindowSize, 3)])
         .await?;
-    conn.send_empty_post_to_root(stream_id);
+    conn.send_empty_post_to_root(stream_id).await?;
 
     // wait for peer to send us all 3 bytes it can
     let (_, payload) = conn.wait_for_frame(FrameT::Data).await.unwrap();
@@ -1001,8 +1002,11 @@ pub async fn sends_continuation_frame_preceded_by_data_frame<IO: IntoHalves + 's
     conn.write_data(stream_id, true, b"test").await?;
 
     let block_fragment = conn.encode_headers(&conn.dummy_headers(1))?;
-    conn.write_continuation(stream_id, BitFlags::empty(), block_fragment)
-        .await?;
+    // this may fail with broken pipe, the server may close the connection
+    // in the middle of the write
+    _ = conn
+        .write_continuation(stream_id, BitFlags::empty(), block_fragment)
+        .await;
 
     conn.verify_connection_error(ErrorC::ProtocolError).await?;
 

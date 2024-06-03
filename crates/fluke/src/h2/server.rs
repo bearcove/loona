@@ -10,9 +10,9 @@ use byteorder::{BigEndian, WriteBytesExt};
 use eyre::Context;
 use fluke_buffet::{Piece, PieceList, PieceStr, ReadOwned, Roll, RollMut, WriteOwned};
 use fluke_h2_parse::{
-    self as parse, enumflags2::BitFlags, nom::Finish, parse_bit_and_u31, ContinuationFlags,
-    DataFlags, Frame, FrameType, HeadersFlags, PingFlags, PrioritySpec, Setting, SettingPairs,
-    Settings, SettingsFlags, StreamId,
+    self as parse, enumflags2::BitFlags, nom::Finish, ContinuationFlags, DataFlags, Frame,
+    FrameType, HeadersFlags, PingFlags, PrioritySpec, Setting, SettingPairs, Settings,
+    SettingsFlags, StreamId, WindowUpdate,
 };
 use http::{
     header,
@@ -1158,17 +1158,17 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     });
                 }
 
-                let increment;
-                (_, (_, increment)) = parse_bit_and_u31(payload)
+                let (_, update) = WindowUpdate::parse(payload)
                     .finish()
                     .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
+                debug!(?update, "Received window update");
 
-                if increment == 0 {
+                if update.increment == 0 {
                     return Err(H2ConnectionError::WindowUpdateZeroIncrement);
                 }
 
                 if frame.stream_id == StreamId::CONNECTION {
-                    let new_capacity = self.state.outgoing_capacity + increment as i64;
+                    let new_capacity = self.state.outgoing_capacity + update.increment as i64;
                     if new_capacity > MAX_WINDOW_SIZE {
                         return Err(H2ConnectionError::WindowUpdateOverflow);
                     };
@@ -1191,7 +1191,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         }
                     };
 
-                    let new_capacity = outgoing.capacity + increment as i64;
+                    let new_capacity = outgoing.capacity + update.increment as i64;
                     if new_capacity > MAX_WINDOW_SIZE {
                         // reset the stream
                         self.rst(frame.stream_id, H2StreamError::WindowUpdateOverflow)

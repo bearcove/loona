@@ -404,15 +404,13 @@ impl IntoPiece for Frame {
 /// See https://httpwg.org/specs/rfc9113.html#FrameHeader - the first bit
 /// is reserved, and the rest is a 31-bit stream id
 pub fn parse_bit_and_u31(i: Roll) -> IResult<Roll, (u8, u32)> {
-    fn reserved(i: (Roll, usize)) -> IResult<(Roll, usize), u8> {
-        nom::bits::streaming::take(1_usize)(i)
-    }
+    // first, parse a u32:
+    let (i, x) = be_u32(i)?;
 
-    fn stream_id(i: (Roll, usize)) -> IResult<(Roll, usize), u32> {
-        nom::bits::streaming::take(31_usize)(i)
-    }
+    let bit = (x >> 31) as u8;
+    let val = x & 0x7FFF_FFFF;
 
-    nom::bits::bits(tuple((reserved, stream_id)))(i)
+    Ok((i, (bit, val)))
 }
 
 fn parse_reserved_and_stream_id(i: Roll) -> IResult<Roll, (u8, StreamId)> {
@@ -421,15 +419,58 @@ fn parse_reserved_and_stream_id(i: Roll) -> IResult<Roll, (u8, StreamId)> {
 
 /// Pack a bit and a u31 into a 4-byte array (big-endian)
 pub fn pack_bit_and_u31(bit: u8, val: u32) -> [u8; 4] {
+    // assert val is in range
+    assert_eq!(val & 0x7FFF_FFFF, val, "val is too large: {val:x}");
+
+    // assert bit is in range
+    assert_eq!(bit & 0x1, bit, "bit should be 0 or 1: {bit:x}");
+
+    // pack
     let mut bytes = val.to_be_bytes();
     if bit != 0 {
-        bytes[0] |= 0b1000_0000;
+        bytes[0] |= 0x80;
     }
+
     bytes
 }
 
 pub fn pack_reserved_and_stream_id(reserved: u8, stream_id: StreamId) -> [u8; 4] {
     pack_bit_and_u31(reserved, stream_id.0)
+}
+
+#[test]
+fn test_pack_and_parse_bit_and_u31() {
+    // Test round-tripping through parse_bit_and_u31 and pack_bit_and_u31
+    let test_cases = [
+        (0, 0),
+        (1, 0),
+        (0, 1),
+        (1, 1),
+        (0, 0x7FFF_FFFF),
+        (1, 0x7FFF_FFFF),
+    ];
+
+    let mut roll = RollMut::alloc().unwrap();
+    for &(bit, number) in &test_cases {
+        let packed = pack_bit_and_u31(bit, number);
+        roll.reserve_at_least(4).unwrap();
+        roll.put(&packed[..]).unwrap();
+        let (_, (parsed_bit, parsed_number)) = parse_bit_and_u31(roll.take_all()).unwrap();
+        assert_eq!(dbg!(bit), dbg!(parsed_bit));
+        assert_eq!(dbg!(number), dbg!(parsed_number));
+    }
+}
+
+#[test]
+#[should_panic]
+fn test_pack_bit_and_u31_panic_not_a_bit() {
+    pack_bit_and_u31(2, 0);
+}
+
+#[test]
+#[should_panic]
+fn test_pack_bit_and_u31_panic_val_too_large() {
+    pack_bit_and_u31(0, 1 << 31);
 }
 
 // cf. https://httpwg.org/specs/rfc9113.html#HEADERS
@@ -845,6 +886,7 @@ impl RstStream {
 }
 
 /// Payload for a WINDOW_UPDATE frame
+#[derive(Debug, Clone, Copy)]
 pub struct WindowUpdate {
     pub reserved: u8,
     pub increment: u32,
@@ -854,7 +896,8 @@ impl IntoPiece for WindowUpdate {
     fn into_piece(self, scratch: &mut RollMut) -> std::io::Result<Piece> {
         let roll = scratch
             .put_to_roll(4, |mut slice| {
-                slice.write_all(&pack_bit_and_u31(self.reserved, self.increment))?;
+                let packed = pack_bit_and_u31(self.reserved, self.increment);
+                slice.write_all(&packed)?;
                 Ok(())
             })
             .unwrap();
@@ -864,12 +907,12 @@ impl IntoPiece for WindowUpdate {
 
 impl WindowUpdate {
     pub fn parse(i: Roll) -> IResult<Roll, Self> {
-        let (rest, (reserved, window_size_increment)) = parse_bit_and_u31(i)?;
+        let (rest, (reserved, increment)) = parse_bit_and_u31(i)?;
         Ok((
             rest,
             Self {
                 reserved,
-                increment: window_size_increment,
+                increment,
             },
         ))
     }
