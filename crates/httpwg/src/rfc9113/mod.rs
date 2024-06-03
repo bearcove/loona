@@ -31,15 +31,5 @@ pub mod _4_1_frame_format;
 pub mod _4_2_frame_size;
 pub mod _4_3_header_compression_and_decompression;
 
-pub mod _5_1_stream_states;
-
-pub mod _5_1_1_stream_identifiers;
-pub mod _5_1_2_stream_concurrency;
-
-pub mod _5_3_1_stream_dependencies;
-
-pub mod _5_4_1_connection_error_handling;
-
-pub mod _5_5_extending_http2;
-
-pub mod _6_1_data;
+pub mod _5_streams_and_multiplexing;
+pub mod _6_frame_definitions;

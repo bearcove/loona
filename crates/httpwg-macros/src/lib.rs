@@ -140,9 +140,9 @@ $body
 }
 }
 
-/// Section 5.1: Stream States
-mod _5_1_stream_states {
-use super::__suite::_5_1_stream_states as __group;
+/// Section 5: Streams and Multiplexing
+mod _5_streams_and_multiplexing {
+use super::__suite::_5_streams_and_multiplexing as __group;
 
 /// idle:
 /// Receiving any frame other than HEADERS or PRIORITY on a stream
@@ -276,11 +276,6 @@ fn closed_sends_continuation_frame() {
 use __group::closed_sends_continuation_frame as test;
 $body
 }
-}
-
-/// Section 5.1.1: Stream Identifiers
-mod _5_1_1_stream_identifiers {
-use super::__suite::_5_1_1_stream_identifiers as __group;
 
 /// An endpoint that receives an unexpected stream identifier
 /// MUST respond with a connection error (Section 5.4.1) of
@@ -299,43 +294,12 @@ fn sends_smaller_stream_identifier() {
 use __group::sends_smaller_stream_identifier as test;
 $body
 }
-}
-
-/// Section 5.1.2: Stream Concurrency
-mod _5_1_2_stream_concurrency {
-use super::__suite::_5_1_2_stream_concurrency as __group;
 
 #[test]
 fn exceeds_concurrent_stream_limit() {
 use __group::exceeds_concurrent_stream_limit as test;
 $body
 }
-}
-
-/// Section 5.3: Stream Dependencies
-mod _5_3_1_stream_dependencies {
-use super::__suite::_5_3_1_stream_dependencies as __group;
-
-/// A stream cannot depend on itself. An endpoint MUST treat this
-/// as a stream error (Section 5.4.2) of type PROTOCOL_ERROR.
-#[test]
-fn headers_frame_depends_on_itself() {
-use __group::headers_frame_depends_on_itself as test;
-$body
-}
-
-/// A stream cannot depend on itself. An endpoint MUST treat this
-/// as a stream error (Section 5.4.2) of type PROTOCOL_ERROR.
-#[test]
-fn priority_frame_depends_on_itself() {
-use __group::priority_frame_depends_on_itself as test;
-$body
-}
-}
-
-/// Section 5.4.1: Connection Error Handling
-mod _5_4_1_connection_error_handling {
-use super::__suite::_5_4_1_connection_error_handling as __group;
 
 /// After sending the GOAWAY frame for an error condition,
 /// the endpoint MUST close the TCP connection.
@@ -350,11 +314,6 @@ fn test_invalid_ping_frame_for_goaway() {
 use __group::test_invalid_ping_frame_for_goaway as test;
 $body
 }
-}
-
-/// Section 5.5: Extending HTTP/2
-mod _5_5_extending_http2 {
-use super::__suite::_5_5_extending_http2 as __group;
 
 /// Extension frames that appear in the middle of a header block
 /// (Section 4.3) are not permitted; these MUST be treated as
@@ -366,9 +325,9 @@ $body
 }
 }
 
-/// Section 6.1: DATA
-mod _6_1_data {
-use super::__suite::_6_1_data as __group;
+/// Section 6: Frame Definitions
+mod _6_frame_definitions {
+use super::__suite::_6_frame_definitions as __group;
 
 /// DATA frames MUST be associated with a stream. If a DATA frame is
 /// received whose stream identifier field is 0x0, the recipient

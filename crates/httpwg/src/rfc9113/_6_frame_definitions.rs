@@ -1,4 +1,4 @@
-//! Section 6.1: DATA
+//! Section 6: Frame Definitions
 
 use enumflags2::BitFlags;
 use fluke_buffet::{IntoHalves, Piece};
@@ -8,6 +8,8 @@ use fluke_h2_parse::{
 };
 
 use crate::{dummy_bytes, Conn, ErrorC, FrameT};
+
+//---- Section 6.1: DATA
 
 /// DATA frames MUST be associated with a stream. If a DATA frame is
 /// received whose stream identifier field is 0x0, the recipient
@@ -79,7 +81,7 @@ pub async fn sends_data_frame_with_invalid_pad_length<IO: IntoHalves + 'static>(
     Ok(())
 }
 
-//------------- 6.2
+//---- Section 6.2: HEADERS
 
 /// HEADERS frames MUST be associated with a stream. If a HEADERS
 /// frame is received whose stream identifier field is 0x0, the
@@ -133,7 +135,7 @@ pub async fn sends_headers_frame_with_invalid_pad_length<IO: IntoHalves + 'stati
     Ok(())
 }
 
-//------------- 6.3
+//---- Section 6.3: PRIORITY
 
 /// The PRIORITY frame always identifies a stream. If a PRIORITY
 /// frame is received with a stream identifier of 0x0, the recipient
@@ -189,7 +191,7 @@ pub async fn sends_priority_frame_with_invalid_length<IO: IntoHalves + 'static>(
     Ok(())
 }
 
-//------------- 6.4
+//---- Section 6.4: RST_STREAM
 
 /// RST_STREAM frames MUST be associated with a stream. If a
 /// RST_STREAM frame is received with a stream identifier of 0x0,
@@ -252,7 +254,8 @@ pub async fn sends_rst_stream_frame_with_invalid_length<IO: IntoHalves + 'static
     Ok(())
 }
 
-//------------- 6.5
+//---- Section 6.5: SETTINGS
+//---- Section 6.5.1: SETTINGS Format
 
 /// ACK (0x1):
 /// When set, bit 0 indicates that this frame acknowledges receipt
@@ -328,7 +331,7 @@ pub async fn sends_settings_frame_with_invalid_length<IO: IntoHalves + 'static>(
     Ok(())
 }
 
-//------------- 6.5.2
+//---- Section 6.5.2: Defined SETTINGS Parameters
 
 /// SETTINGS_ENABLE_PUSH (0x2):
 /// The initial value is 1, which indicates that server push is
@@ -429,7 +432,7 @@ pub async fn sends_settings_frame_with_unknown_identifier<IO: IntoHalves + 'stat
     Ok(())
 }
 
-//------------- 6.5.3
+//---- Section 6.5.3: Settings Synchronization
 
 /// The values in the SETTINGS frame MUST be processed in the order
 /// they appear, with no other frame processing between values.
@@ -489,7 +492,9 @@ pub async fn sends_settings_frame_without_ack_flag<IO: IntoHalves + 'static>(
     Ok(())
 }
 
-//----------------- 6.7
+// (Note: Section 6.6 is skipped: push promise is discouraged nowadays)
+
+//---- Section 6.7: PING
 
 /// Receivers of a PING frame that does not include an ACK flag MUST
 /// send a PING frame with the ACK flag set in response, with an
@@ -563,7 +568,7 @@ pub async fn sends_ping_frame_with_invalid_length<IO: IntoHalves + 'static>(
     Ok(())
 }
 
-//----------------- 6.8
+//---- Section 6.8: GOAWAY
 
 /// An endpoint MUST treat a GOAWAY frame with a stream identifier
 /// other than 0x0 as a connection error (Section 5.4.1) of type
@@ -588,7 +593,7 @@ pub async fn sends_goaway_frame_with_non_zero_stream_id<IO: IntoHalves + 'static
     Ok(())
 }
 
-//----------------- 6.9
+//---- Section 6.9: WINDOW_UPDATE
 
 /// A receiver MUST treat the receipt of a WINDOW_UPDATE frame with
 /// a flow-control window increment of 0 as a stream error
@@ -653,7 +658,7 @@ pub async fn sends_window_update_frame_with_invalid_length<IO: IntoHalves + 'sta
     Ok(())
 }
 
-//----------------- 6.9.1
+//---- Section 6.9.1: The Flow-Control Window
 
 /// The sender MUST NOT send a flow-controlled frame with a length
 /// that exceeds the space available in either of the flow-control
@@ -740,7 +745,7 @@ pub async fn sends_multiple_window_update_frames_increasing_flow_control_window_
     Ok(())
 }
 
-//----------------- 6.9.2
+//---- Section 6.9.2: Initial Flow-Control Window Size
 
 /// When the value of SETTINGS_INITIAL_WINDOW_SIZE changes,
 /// a receiver MUST adjust the size of all stream flow-control
@@ -833,7 +838,9 @@ pub async fn sends_settings_initial_window_size_with_exceeded_max_window_size_va
     Ok(())
 }
 
-//----------- 6.10
+// Note: 6.9.3 (reducing the stream window size) is really tricky to test.
+
+//---- Section 6.10: CONTINUATION
 
 /// The CONTINUATION frame (type=0x9) is used to continue a sequence
 /// of header block fragments (Section 4.3). Any number of
