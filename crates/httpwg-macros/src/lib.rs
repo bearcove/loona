@@ -313,27 +313,6 @@ fn unknown_extension_frame_in_header_block() {
 use __group::unknown_extension_frame_in_header_block as test;
 $body
 }
-
-#[test]
-fn sends_second_headers_frame_without_end_stream() {
-use __group::sends_second_headers_frame_without_end_stream as test;
-$body
-}
-
-/// A field name MUST NOT contain characters in the ranges 0x00-0x20, 0x41-0x5a,
-/// or 0x7f-0xff (all ranges inclusive). This specifically excludes all
-/// non-visible ASCII characters, ASCII SP (0x20), and uppercase characters ('A'
-/// to 'Z', ASCII 0x41 to 0x5a).
-///
-/// When a request message violates one of these requirements, an implementation
-/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
-/// [HTTP]), unless a more suitable status code is defined or the status code
-/// cannot be sent (e.g., because the error occurs in a trailer field).
-#[test]
-fn sends_headers_frame_with_uppercase_field_name() {
-use __group::sends_headers_frame_with_uppercase_field_name as test;
-$body
-}
 }
 
 /// Section 6: Frame Definitions
@@ -768,6 +747,92 @@ $body
 #[test]
 fn sends_rst_stream_frame_with_unknown_error_code() {
 use __group::sends_rst_stream_frame_with_unknown_error_code as test;
+$body
+}
+}
+
+/// Section 8: Expressing HTTP Semantics in HTTP/2
+mod _8_expressing_http_semantics_in_http2 {
+use super::__suite::_8_expressing_http_semantics_in_http2 as __group;
+
+#[test]
+fn sends_second_headers_frame_without_end_stream() {
+use __group::sends_second_headers_frame_without_end_stream as test;
+$body
+}
+
+/// A field name MUST NOT contain characters in the ranges 0x00-0x20, 0x41-0x5a,
+/// or 0x7f-0xff (all ranges inclusive). This specifically excludes all
+/// non-visible ASCII characters, ASCII SP (0x20), and uppercase characters ('A'
+/// to 'Z', ASCII 0x41 to 0x5a).
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_uppercase_field_name() {
+use __group::sends_headers_frame_with_uppercase_field_name as test;
+$body
+}
+
+/// A field name MUST NOT contain characters in the ranges 0x00-0x20, 0x41-0x5a,
+/// or 0x7f-0xff (all ranges inclusive). This specifically excludes all
+/// non-visible ASCII characters, ASCII SP (0x20), and uppercase characters ('A'
+/// to 'Z', ASCII 0x41 to 0x5a).
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_space_in_field_name() {
+use __group::sends_headers_frame_with_space_in_field_name as test;
+$body
+}
+
+/// A field name MUST NOT contain characters in the ranges 0x00-0x20, 0x41-0x5a,
+/// or 0x7f-0xff (all ranges inclusive). This specifically excludes all
+/// non-visible ASCII characters, ASCII SP (0x20), and uppercase characters ('A'
+/// to 'Z', ASCII 0x41 to 0x5a).
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_non_visible_ascii() {
+use __group::sends_headers_frame_with_non_visible_ascii as test;
+$body
+}
+
+/// A field name MUST NOT contain characters in the ranges 0x00-0x20, 0x41-0x5a,
+/// or 0x7f-0xff (all ranges inclusive). This specifically excludes all
+/// non-visible ASCII characters, ASCII SP (0x20), and uppercase characters ('A'
+/// to 'Z', ASCII 0x41 to 0x5a).
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_del_character() {
+use __group::sends_headers_frame_with_del_character as test;
+$body
+}
+
+/// A field name MUST NOT contain characters in the ranges 0x00-0x20, 0x41-0x5a,
+/// or 0x7f-0xff (all ranges inclusive). This specifically excludes all
+/// non-visible ASCII characters, ASCII SP (0x20), and uppercase characters ('A'
+/// to 'Z', ASCII 0x41 to 0x5a).
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_non_ascii_character() {
+use __group::sends_headers_frame_with_non_ascii_character as test;
 $body
 }
 }
