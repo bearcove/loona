@@ -313,6 +313,12 @@ fn unknown_extension_frame_in_header_block() {
 use __group::unknown_extension_frame_in_header_block as test;
 $body
 }
+
+#[test]
+fn sends_second_headers_frame_without_end_stream() {
+use __group::sends_second_headers_frame_without_end_stream as test;
+$body
+}
 }
 
 /// Section 6: Frame Definitions

@@ -6,7 +6,7 @@ use fluke_h2_parse::{
     ContinuationFlags, EncodedFrameType, FrameType, HeadersFlags, Setting, StreamId,
 };
 
-use crate::{dummy_bytes, Conn, ErrorC};
+use crate::{dummy_bytes, Conn, ErrorC, Headers};
 
 //---- Section 5.1: Stream States
 
@@ -401,6 +401,34 @@ pub async fn unknown_extension_frame_in_header_block<IO: IntoHalves + 'static>(
     .await?;
 
     conn.verify_connection_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+//---- Section 8.1: HTTP Message Framing
+
+// An endpoint that receives a HEADERS frame without the
+// END_STREAM flag set after receiving a final (non-informational)
+// status code MUST treat the corresponding request or response
+// as malformed (Section 8.1.2.6).
+pub async fn sends_second_headers_frame_without_end_stream<IO: IntoHalves + 'static>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+    conn.handshake().await?;
+
+    let headers_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
+    conn.write_headers(stream_id, HeadersFlags::EndHeaders, headers_fragment)
+        .await?;
+    conn.write_data(stream_id, false, b"test").await?;
+
+    let mut trailers = Headers::new();
+    trailers.insert("x-test".into(), "ok".into());
+    let trailers_fragment = conn.encode_headers(&trailers)?;
+    conn.write_headers(stream_id, HeadersFlags::EndHeaders, trailers_fragment)
+        .await?;
+
+    conn.verify_stream_error(ErrorC::ProtocolError).await?;
 
     Ok(())
 }
