@@ -15,7 +15,7 @@ use crate::{dummy_bytes, Conn, ErrorC, FrameT};
 /// received whose stream identifier field is 0x0, the recipient
 /// MUST respond with a connection error (Section 5.4.1) of type
 /// PROTOCOL_ERROR.
-pub async fn sends_data_frame_with_zero_stream_id<IO: IntoHalves + 'static>(
+pub async fn sends_data_frame_with_zero_stream_id<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -32,7 +32,7 @@ pub async fn sends_data_frame_with_zero_stream_id<IO: IntoHalves + 'static>(
 /// a stream error (Section 5.4.2) of type STREAM_CLOSED.
 ///
 /// Note: This test case is duplicated with 5.1.
-pub async fn sends_data_frame_on_invalid_stream_state<IO: IntoHalves + 'static>(
+pub async fn sends_data_frame_on_invalid_stream_state<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -57,7 +57,7 @@ pub async fn sends_data_frame_on_invalid_stream_state<IO: IntoHalves + 'static>(
 /// If the length of the padding is the length of the frame payload
 /// or greater, the recipient MUST treat this as a connection error
 /// (Section 5.4.1) of type PROTOCOL_ERROR.
-pub async fn sends_data_frame_with_invalid_pad_length<IO: IntoHalves + 'static>(
+pub async fn sends_data_frame_with_invalid_pad_length<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -87,7 +87,7 @@ pub async fn sends_data_frame_with_invalid_pad_length<IO: IntoHalves + 'static>(
 /// frame is received whose stream identifier field is 0x0, the
 /// recipient MUST respond with a connection error (Section 5.4.1)
 /// of type PROTOCOL_ERROR.
-pub async fn sends_headers_frame_with_zero_stream_id<IO: IntoHalves + 'static>(
+pub async fn sends_headers_frame_with_zero_stream_id<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -110,7 +110,7 @@ pub async fn sends_headers_frame_with_zero_stream_id<IO: IntoHalves + 'static>(
 /// are identical to those defined for DATA frames (Section 6.1).
 /// Padding that exceeds the size remaining for the header block
 /// fragment MUST be treated as a PROTOCOL_ERROR.
-pub async fn sends_headers_frame_with_invalid_pad_length<IO: IntoHalves + 'static>(
+pub async fn sends_headers_frame_with_invalid_pad_length<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -141,7 +141,7 @@ pub async fn sends_headers_frame_with_invalid_pad_length<IO: IntoHalves + 'stati
 /// frame is received with a stream identifier of 0x0, the recipient
 /// MUST respond with a connection error (Section 5.4.1) of type
 /// PROTOCOL_ERROR.
-pub async fn sends_priority_frame_with_zero_stream_id<IO: IntoHalves + 'static>(
+pub async fn sends_priority_frame_with_zero_stream_id<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -164,7 +164,7 @@ pub async fn sends_priority_frame_with_zero_stream_id<IO: IntoHalves + 'static>(
 /// A PRIORITY frame with a length other than 5 octets MUST be
 /// treated as a stream error (Section 5.4.2) of type
 /// FRAME_SIZE_ERROR.
-pub async fn sends_priority_frame_with_invalid_length<IO: IntoHalves + 'static>(
+pub async fn sends_priority_frame_with_invalid_length<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -197,7 +197,7 @@ pub async fn sends_priority_frame_with_invalid_length<IO: IntoHalves + 'static>(
 /// RST_STREAM frame is received with a stream identifier of 0x0,
 /// the recipient MUST treat this as a connection error
 /// (Section 5.4.1) of type PROTOCOL_ERROR.
-pub async fn sends_rst_stream_frame_with_zero_stream_id<IO: IntoHalves + 'static>(
+pub async fn sends_rst_stream_frame_with_zero_stream_id<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -214,7 +214,7 @@ pub async fn sends_rst_stream_frame_with_zero_stream_id<IO: IntoHalves + 'static
 /// state. If a RST_STREAM frame identifying an idle stream is
 /// received, the recipient MUST treat this as a connection error
 /// (Section 5.4.1) of type PROTOCOL_ERROR.
-pub async fn sends_rst_stream_frame_on_idle_stream<IO: IntoHalves + 'static>(
+pub async fn sends_rst_stream_frame_on_idle_stream<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -229,7 +229,7 @@ pub async fn sends_rst_stream_frame_on_idle_stream<IO: IntoHalves + 'static>(
 /// A RST_STREAM frame with a length other than 4 octets MUST be
 /// treated as a connection error (Section 5.4.1) of type
 /// FRAME_SIZE_ERROR.
-pub async fn sends_rst_stream_frame_with_invalid_length<IO: IntoHalves + 'static>(
+pub async fn sends_rst_stream_frame_with_invalid_length<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -264,7 +264,7 @@ pub async fn sends_rst_stream_frame_with_invalid_length<IO: IntoHalves + 'static
 /// a SETTINGS frame with the ACK flag set and a length field value
 /// other than 0 MUST be treated as a connection error (Section 5.4.1)
 /// of type FRAME_SIZE_ERROR.
-pub async fn sends_settings_frame_with_ack_and_payload<IO: IntoHalves + 'static>(
+pub async fn sends_settings_frame_with_ack_and_payload<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -289,7 +289,7 @@ pub async fn sends_settings_frame_with_ack_and_payload<IO: IntoHalves + 'static>
 /// stream identifier field is anything other than 0x0, the
 /// endpoint MUST respond with a connection error (Section 5.4.1)
 /// of type PROTOCOL_ERROR.
-pub async fn sends_settings_frame_with_non_zero_stream_id<IO: IntoHalves + 'static>(
+pub async fn sends_settings_frame_with_non_zero_stream_id<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -312,7 +312,7 @@ pub async fn sends_settings_frame_with_non_zero_stream_id<IO: IntoHalves + 'stat
 /// A SETTINGS frame with a length other than a multiple of 6 octets
 /// MUST be treated as a connection error (Section 5.4.1) of type
 /// FRAME_SIZE_ERROR.
-pub async fn sends_settings_frame_with_invalid_length<IO: IntoHalves + 'static>(
+pub async fn sends_settings_frame_with_invalid_length<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -337,7 +337,7 @@ pub async fn sends_settings_frame_with_invalid_length<IO: IntoHalves + 'static>(
 /// The initial value is 1, which indicates that server push is
 /// permitted. Any value other than 0 or 1 MUST be treated as a
 /// connection error (Section 5.4.1) of type PROTOCOL_ERROR.
-pub async fn sends_settings_enable_push_with_invalid_value<IO: IntoHalves + 'static>(
+pub async fn sends_settings_enable_push_with_invalid_value<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -353,7 +353,7 @@ pub async fn sends_settings_enable_push_with_invalid_value<IO: IntoHalves + 'sta
 /// Values above the maximum flow-control window size of 2^31-1
 /// MUST be treated as a connection error (Section 5.4.1) of
 /// type FLOW_CONTROL_ERROR.
-pub async fn sends_settings_initial_window_size_with_invalid_value<IO: IntoHalves + 'static>(
+pub async fn sends_settings_initial_window_size_with_invalid_value<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -373,9 +373,7 @@ pub async fn sends_settings_initial_window_size_with_invalid_value<IO: IntoHalve
 /// maximum allowed frame size (2^24-1 or 16,777,215 octets),
 /// inclusive. Values outside this range MUST be treated as a
 /// connection error (Section 5.4.1) of type PROTOCOL_ERROR.
-pub async fn sends_settings_max_frame_size_with_invalid_value_below_initial<
-    IO: IntoHalves + 'static,
->(
+pub async fn sends_settings_max_frame_size_with_invalid_value_below_initial<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -394,9 +392,7 @@ pub async fn sends_settings_max_frame_size_with_invalid_value_below_initial<
 /// maximum allowed frame size (2^24-1 or 16,777,215 octets),
 /// inclusive. Values outside this range MUST be treated as a
 /// connection error (Section 5.4.1) of type PROTOCOL_ERROR.
-pub async fn sends_settings_max_frame_size_with_invalid_value_above_max<
-    IO: IntoHalves + 'static,
->(
+pub async fn sends_settings_max_frame_size_with_invalid_value_above_max<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -411,7 +407,7 @@ pub async fn sends_settings_max_frame_size_with_invalid_value_above_max<
 
 /// An endpoint that receives a SETTINGS frame with any unknown
 /// or unsupported identifier MUST ignore that setting.
-pub async fn sends_settings_frame_with_unknown_identifier<IO: IntoHalves + 'static>(
+pub async fn sends_settings_frame_with_unknown_identifier<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -436,7 +432,7 @@ pub async fn sends_settings_frame_with_unknown_identifier<IO: IntoHalves + 'stat
 
 /// The values in the SETTINGS frame MUST be processed in the order
 /// they appear, with no other frame processing between values.
-pub async fn sends_multiple_values_of_settings_initial_window_size<IO: IntoHalves + 'static>(
+pub async fn sends_multiple_values_of_settings_initial_window_size<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -473,7 +469,7 @@ pub async fn sends_multiple_values_of_settings_initial_window_size<IO: IntoHalve
 
 /// Once all values have been processed, the recipient MUST
 /// immediately emit a SETTINGS frame with the ACK flag set.
-pub async fn sends_settings_frame_without_ack_flag<IO: IntoHalves + 'static>(
+pub async fn sends_settings_frame_without_ack_flag<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -499,7 +495,7 @@ pub async fn sends_settings_frame_without_ack_flag<IO: IntoHalves + 'static>(
 /// Receivers of a PING frame that does not include an ACK flag MUST
 /// send a PING frame with the ACK flag set in response, with an
 /// identical payload.
-pub async fn sends_ping_frame<IO: IntoHalves + 'static>(mut conn: Conn<IO>) -> eyre::Result<()> {
+pub async fn sends_ping_frame<IO: IntoHalves>(mut conn: Conn<IO>) -> eyre::Result<()> {
     conn.handshake().await?;
 
     let data = b"h2spec\0\0";
@@ -515,9 +511,7 @@ pub async fn sends_ping_frame<IO: IntoHalves + 'static>(mut conn: Conn<IO>) -> e
 /// response. An endpoint MUST set this flag in PING responses.
 /// An endpoint MUST NOT respond to PING frames containing this
 /// flag.
-pub async fn sends_ping_frame_with_ack<IO: IntoHalves + 'static>(
-    mut conn: Conn<IO>,
-) -> eyre::Result<()> {
+pub async fn sends_ping_frame_with_ack<IO: IntoHalves>(mut conn: Conn<IO>) -> eyre::Result<()> {
     conn.handshake().await?;
 
     let unexpected_data = b"invalid\0";
@@ -533,7 +527,7 @@ pub async fn sends_ping_frame_with_ack<IO: IntoHalves + 'static>(
 /// If a PING frame is received with a stream identifier field value
 /// other than 0x0, the recipient MUST respond with a connection
 /// error (Section 5.4.1) of type PROTOCOL_ERROR.
-pub async fn sends_ping_frame_with_non_zero_stream_id<IO: IntoHalves + 'static>(
+pub async fn sends_ping_frame_with_non_zero_stream_id<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -552,7 +546,7 @@ pub async fn sends_ping_frame_with_non_zero_stream_id<IO: IntoHalves + 'static>(
 /// Receipt of a PING frame with a length field value other than 8
 /// MUST be treated as a connection error (Section 5.4.1) of type
 /// FRAME_SIZE_ERROR.
-pub async fn sends_ping_frame_with_invalid_length<IO: IntoHalves + 'static>(
+pub async fn sends_ping_frame_with_invalid_length<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -573,7 +567,7 @@ pub async fn sends_ping_frame_with_invalid_length<IO: IntoHalves + 'static>(
 /// An endpoint MUST treat a GOAWAY frame with a stream identifier
 /// other than 0x0 as a connection error (Section 5.4.1) of type
 /// PROTOCOL_ERROR.
-pub async fn sends_goaway_frame_with_non_zero_stream_id<IO: IntoHalves + 'static>(
+pub async fn sends_goaway_frame_with_non_zero_stream_id<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -600,7 +594,7 @@ pub async fn sends_goaway_frame_with_non_zero_stream_id<IO: IntoHalves + 'static
 /// (Section 5.4.2) of type PROTOCOL_ERROR; errors on the connection
 /// flow-control window MUST be treated as a connection error
 /// (Section 5.4.1).
-pub async fn sends_window_update_frame_with_zero_increment<IO: IntoHalves + 'static>(
+pub async fn sends_window_update_frame_with_zero_increment<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -617,7 +611,7 @@ pub async fn sends_window_update_frame_with_zero_increment<IO: IntoHalves + 'sta
 /// (Section 5.4.2) of type PROTOCOL_ERROR; errors on the connection
 /// flow-control window MUST be treated as a connection error
 /// (Section 5.4.1).
-pub async fn sends_window_update_frame_with_zero_increment_on_stream<IO: IntoHalves + 'static>(
+pub async fn sends_window_update_frame_with_zero_increment_on_stream<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -642,7 +636,7 @@ pub async fn sends_window_update_frame_with_zero_increment_on_stream<IO: IntoHal
 /// A WINDOW_UPDATE frame with a length other than 4 octets MUST
 /// be treated as a connection error (Section 5.4.1) of type
 /// FRAME_SIZE_ERROR.
-pub async fn sends_window_update_frame_with_invalid_length<IO: IntoHalves + 'static>(
+pub async fn sends_window_update_frame_with_invalid_length<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -664,7 +658,7 @@ pub async fn sends_window_update_frame_with_invalid_length<IO: IntoHalves + 'sta
 /// that exceeds the space available in either of the flow-control
 /// windows advertised by the receiver.
 pub async fn sends_settings_frame_to_set_initial_window_size_to_1_and_sends_headers_frame<
-    IO: IntoHalves + 'static,
+    IO: IntoHalves,
 >(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
@@ -696,7 +690,7 @@ pub async fn sends_settings_frame_to_set_initial_window_size_to_1_and_sends_head
 /// of FLOW_CONTROL_ERROR; for the connection, a GOAWAY frame with
 /// an error code of FLOW_CONTROL_ERROR is sent.
 pub async fn sends_multiple_window_update_frames_increasing_flow_control_window_above_max<
-    IO: IntoHalves + 'static,
+    IO: IntoHalves,
 >(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
@@ -721,7 +715,7 @@ pub async fn sends_multiple_window_update_frames_increasing_flow_control_window_
 /// of FLOW_CONTROL_ERROR; for the connection, a GOAWAY frame with
 /// an error code of FLOW_CONTROL_ERROR is sent.
 pub async fn sends_multiple_window_update_frames_increasing_flow_control_window_above_max_on_stream<
-    IO: IntoHalves + 'static,
+    IO: IntoHalves,
 >(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
@@ -751,9 +745,7 @@ pub async fn sends_multiple_window_update_frames_increasing_flow_control_window_
 /// a receiver MUST adjust the size of all stream flow-control
 /// windows that it maintains by the difference between the new
 /// value and the old value.
-pub async fn changes_settings_initial_window_size_after_sending_headers_frame<
-    IO: IntoHalves + 'static,
->(
+pub async fn changes_settings_initial_window_size_after_sending_headers_frame<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -786,7 +778,7 @@ pub async fn changes_settings_initial_window_size_after_sending_headers_frame<
 /// MUST NOT send new flow-controlled frames until it receives
 /// WINDOW_UPDATE frames that cause the flow-control window to
 /// become positive.
-pub async fn sends_settings_frame_for_window_size_to_be_negative<IO: IntoHalves + 'static>(
+pub async fn sends_settings_frame_for_window_size_to_be_negative<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -823,7 +815,7 @@ pub async fn sends_settings_frame_for_window_size_to_be_negative<IO: IntoHalves 
 /// that causes any flow-control window to exceed the maximum size
 /// as a connection error (Section 5.4.1) of type FLOW_CONTROL_ERROR.
 pub async fn sends_settings_initial_window_size_with_exceeded_max_window_size_value<
-    IO: IntoHalves + 'static,
+    IO: IntoHalves,
 >(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
@@ -847,9 +839,7 @@ pub async fn sends_settings_initial_window_size_with_exceeded_max_window_size_va
 /// CONTINUATION frames can be sent, as long as the preceding frame
 /// is on the same stream and is a HEADERS, PUSH_PROMISE,
 /// or CONTINUATION frame without the END_HEADERS flag set.
-pub async fn sends_multiple_continuation_frames_preceded_by_headers_frame<
-    IO: IntoHalves + 'static,
->(
+pub async fn sends_multiple_continuation_frames_preceded_by_headers_frame<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -879,9 +869,7 @@ pub async fn sends_multiple_continuation_frames_preceded_by_headers_frame<
 /// by another CONTINUATION frame. A receiver MUST treat the receipt
 /// of any other type of frame or a frame on a different stream as
 /// a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
-pub async fn sends_continuation_frame_followed_by_non_continuation_frame<
-    IO: IntoHalves + 'static,
->(
+pub async fn sends_continuation_frame_followed_by_non_continuation_frame<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -907,7 +895,7 @@ pub async fn sends_continuation_frame_followed_by_non_continuation_frame<
 /// CONTINUATION frame is received whose stream identifier field is
 /// 0x0, the recipient MUST respond with a connection error
 /// (Section 5.4.1) of type PROTOCOL_ERROR.
-pub async fn sends_continuation_frame_with_zero_stream_id<IO: IntoHalves + 'static>(
+pub async fn sends_continuation_frame_with_zero_stream_id<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -936,7 +924,7 @@ pub async fn sends_continuation_frame_with_zero_stream_id<IO: IntoHalves + 'stat
 /// A recipient that observes violation of this rule MUST respond
 /// with a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
 pub async fn sends_continuation_frame_preceded_by_headers_frame_with_end_headers_flag<
-    IO: IntoHalves + 'static,
+    IO: IntoHalves,
 >(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
@@ -967,7 +955,7 @@ pub async fn sends_continuation_frame_preceded_by_headers_frame_with_end_headers
 /// A recipient that observes violation of this rule MUST respond
 /// with a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
 pub async fn sends_continuation_frame_preceded_by_continuation_frame_with_end_headers_flag<
-    IO: IntoHalves + 'static,
+    IO: IntoHalves,
 >(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
@@ -996,7 +984,7 @@ pub async fn sends_continuation_frame_preceded_by_continuation_frame_with_end_he
 /// or CONTINUATION frame without the END_HEADERS flag set.
 /// A recipient that observes violation of this rule MUST respond
 /// with a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
-pub async fn sends_continuation_frame_preceded_by_data_frame<IO: IntoHalves + 'static>(
+pub async fn sends_continuation_frame_preceded_by_data_frame<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);

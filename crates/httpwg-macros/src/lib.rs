@@ -835,6 +835,180 @@ fn sends_headers_frame_with_non_ascii_character() {
 use __group::sends_headers_frame_with_non_ascii_character as test;
 $body
 }
+
+/// With the exception of pseudo-header fields (Section 8.3), which have a name
+/// that starts with a single colon, field names MUST NOT include a colon (ASCII
+/// COLON, 0x3a).
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_colon_in_field_name() {
+use __group::sends_headers_frame_with_colon_in_field_name as test;
+$body
+}
+
+/// A field value MUST NOT contain the zero value (ASCII NUL, 0x00), line feed
+/// (ASCII LF, 0x0a), or carriage return (ASCII CR, 0x0d) at any position.
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_lf_in_field_value() {
+use __group::sends_headers_frame_with_lf_in_field_value as test;
+$body
+}
+
+/// A field value MUST NOT contain the zero value (ASCII NUL, 0x00), line feed
+/// (ASCII LF, 0x0a), or carriage return (ASCII CR, 0x0d) at any position.
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_cr_in_field_value() {
+use __group::sends_headers_frame_with_cr_in_field_value as test;
+$body
+}
+
+/// A field value MUST NOT contain the zero value (ASCII NUL, 0x00), line feed
+/// (ASCII LF, 0x0a), or carriage return (ASCII CR, 0x0d) at any position.
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_nul_in_field_value() {
+use __group::sends_headers_frame_with_nul_in_field_value as test;
+$body
+}
+
+/// A field value MUST NOT start or end with an ASCII whitespace character
+/// (ASCII SP or HTAB, 0x20 or 0x09).
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_leading_space_in_field_value() {
+use __group::sends_headers_frame_with_leading_space_in_field_value as test;
+$body
+}
+
+/// A field value MUST NOT start or end with an ASCII whitespace character
+/// (ASCII SP or HTAB, 0x20 or 0x09).
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_trailing_tab_in_field_value() {
+use __group::sends_headers_frame_with_trailing_tab_in_field_value as test;
+$body
+}
+
+/// HTTP/2 does not use the Connection header field (Section 7.6.1 of [HTTP]) to
+/// indicate connection-specific header fields; in this protocol,
+/// connection-specific metadata is conveyed by other means. An endpoint MUST
+/// NOT generate an HTTP/2 message containing connection-specific header fields.
+/// This includes the Connection header field and those listed as having
+/// connection-specific semantics in Section 7.6.1 of [HTTP] (that is,
+/// Proxy-Connection, Keep-Alive, Transfer-Encoding, and Upgrade). Any message
+/// containing connection-specific header fields MUST be treated as malformed
+/// (Section 8.1.1).
+#[test]
+fn sends_headers_frame_with_connection_header() {
+use __group::sends_headers_frame_with_connection_header as test;
+$body
+}
+
+/// HTTP/2 does not use the Connection header field (Section 7.6.1 of [HTTP]) to
+/// indicate connection-specific header fields; in this protocol,
+/// connection-specific metadata is conveyed by other means. An endpoint MUST
+/// NOT generate an HTTP/2 message containing connection-specific header fields.
+///
+/// This includes the Connection header field and those listed as having
+/// connection-specific semantics in Section 7.6.1 of [HTTP] (that is,
+/// Proxy-Connection, Keep-Alive, Transfer-Encoding, and Upgrade). Any message
+/// containing connection-specific header fields MUST be treated as malformed
+/// (Section 8.1.1).
+#[test]
+fn sends_headers_frame_with_proxy_connection_header() {
+use __group::sends_headers_frame_with_proxy_connection_header as test;
+$body
+}
+
+/// HTTP/2 does not use the Connection header field (Section 7.6.1 of [HTTP]) to
+/// indicate connection-specific header fields; in this protocol,
+/// connection-specific metadata is conveyed by other means. An endpoint MUST
+/// NOT generate an HTTP/2 message containing connection-specific header fields.
+///
+/// This includes the Connection header field and those listed as having
+/// connection-specific semantics in Section 7.6.1 of [HTTP] (that is,
+/// Proxy-Connection, Keep-Alive, Transfer-Encoding, and Upgrade). Any message
+/// containing connection-specific header fields MUST be treated as malformed
+/// (Section 8.1.1).
+#[test]
+fn sends_headers_frame_with_keep_alive_header() {
+use __group::sends_headers_frame_with_keep_alive_header as test;
+$body
+}
+
+/// HTTP/2 does not use the Connection header field (Section 7.6.1 of [HTTP]) to
+/// indicate connection-specific header fields; in this protocol,
+/// connection-specific metadata is conveyed by other means. An endpoint MUST
+/// NOT generate an HTTP/2 message containing connection-specific header fields.
+///
+/// This includes the Connection header field and those listed as having
+/// connection-specific semantics in Section 7.6.1 of [HTTP] (that is,
+/// Proxy-Connection, Keep-Alive, Transfer-Encoding, and Upgrade). Any message
+/// containing connection-specific header fields MUST be treated as malformed
+/// (Section 8.1.1).
+#[test]
+fn sends_headers_frame_with_transfer_encoding_header() {
+use __group::sends_headers_frame_with_transfer_encoding_header as test;
+$body
+}
+
+/// HTTP/2 does not use the Connection header field (Section 7.6.1 of [HTTP]) to
+/// indicate connection-specific header fields; in this protocol,
+/// connection-specific metadata is conveyed by other means. An endpoint MUST
+/// NOT generate an HTTP/2 message containing connection-specific header fields.
+///
+/// This includes the Connection header field and those listed as having
+/// connection-specific semantics in Section 7.6.1 of [HTTP] (that is,
+/// Proxy-Connection, Keep-Alive, Transfer-Encoding, and Upgrade). Any message
+/// containing connection-specific header fields MUST be treated as malformed
+/// (Section 8.1.1).
+#[test]
+fn sends_headers_frame_with_upgrade_header() {
+use __group::sends_headers_frame_with_upgrade_header as test;
+$body
+}
+
+/// The only exception to this is the TE header field, which MAY be present in
+/// an HTTP/2 request; when it is, it MUST NOT contain any value other than
+/// "trailers".
+#[test]
+fn sends_headers_frame_with_te_trailers() {
+use __group::sends_headers_frame_with_te_trailers as test;
+$body
+}
+
+/// The only exception to this is the TE header field, which MAY be present in
+/// an HTTP/2 request; when it is, it MUST NOT contain any value other than
+/// "trailers".
+#[test]
+fn sends_headers_frame_with_te_not_trailers() {
+use __group::sends_headers_frame_with_te_not_trailers as test;
+$body
+}
 }
 }
 }

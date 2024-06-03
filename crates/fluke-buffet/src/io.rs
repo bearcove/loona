@@ -16,7 +16,8 @@ pub trait WriteOwned {
     /// Might perform a partial write, see [WriteOwned::write_all]
     async fn write_owned(&mut self, buf: impl Into<Piece>) -> BufResult<usize, Piece>;
 
-    /// Write a single buffer, re-trying the write if the kernel does a partial write.
+    /// Write a single buffer, re-trying the write if the kernel does a partial
+    /// write.
     async fn write_all_owned(&mut self, buf: impl Into<Piece>) -> std::io::Result<()> {
         let mut buf = buf.into();
         let mut written = 0;
@@ -68,7 +69,8 @@ pub trait WriteOwned {
         Ok(total)
     }
 
-    /// Write a list of buffers, re-trying the write if the kernel does a partial write.
+    /// Write a list of buffers, re-trying the write if the kernel does a
+    /// partial write.
     async fn writev_all_owned(&mut self, mut list: PieceList) -> std::io::Result<()> {
         while !list.is_empty() {
             let n = self.writev_owned(&list).await?;
@@ -192,7 +194,7 @@ mod tests {
     }
 }
 
-pub trait IntoHalves {
+pub trait IntoHalves: 'static {
     type Read: ReadOwned;
     type Write: WriteOwned;
 

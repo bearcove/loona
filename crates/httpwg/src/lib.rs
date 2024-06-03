@@ -21,7 +21,7 @@ pub mod rfc9113;
 
 pub type Headers = MultiMap<Piece, Piece>;
 
-pub struct Conn<IO: IntoHalves + 'static> {
+pub struct Conn<IO: IntoHalves> {
     w: <IO as IntoHalves>::Write,
     scratch: RollMut,
     pub ev_rx: tokio::sync::mpsc::Receiver<Ev>,

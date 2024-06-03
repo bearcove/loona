@@ -10,9 +10,7 @@ use fluke_h2_parse::{
 //---- Section 4.1: Frame Format
 
 /// Implementations MUST ignore and discard frames of unknown types.
-pub async fn sends_frame_with_unknown_type<IO: IntoHalves + 'static>(
-    mut conn: Conn<IO>,
-) -> eyre::Result<()> {
+pub async fn sends_frame_with_unknown_type<IO: IntoHalves>(mut conn: Conn<IO>) -> eyre::Result<()> {
     conn.handshake().await?;
 
     conn.write_frame(
@@ -32,9 +30,7 @@ pub async fn sends_frame_with_unknown_type<IO: IntoHalves + 'static>(
 
 /// Unused flags MUST be ignored on receipt and MUST be left
 /// unset (0x00) when sending.
-pub async fn sends_frame_with_unused_flags<IO: IntoHalves + 'static>(
-    mut conn: Conn<IO>,
-) -> eyre::Result<()> {
+pub async fn sends_frame_with_unused_flags<IO: IntoHalves>(mut conn: Conn<IO>) -> eyre::Result<()> {
     conn.handshake().await?;
 
     let data = b"sfunflgs";
@@ -55,7 +51,7 @@ pub async fn sends_frame_with_unused_flags<IO: IntoHalves + 'static>(
 /// Reserved: A reserved 1-bit field. The semantics of this bit are
 /// undefined, and the bit MUST remain unset (0x00) when sending and
 /// MUST be ignored when receiving.
-pub async fn sends_frame_with_reserved_bit_set<IO: IntoHalves + 'static>(
+pub async fn sends_frame_with_reserved_bit_set<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -80,9 +76,7 @@ pub async fn sends_frame_with_reserved_bit_set<IO: IntoHalves + 'static>(
 // All implementations MUST be capable of receiving and minimally
 // processing frames up to 2^14 octets in length, plus the 9-octet
 // frame header (Section 4.1).
-pub async fn data_frame_with_max_length<IO: IntoHalves + 'static>(
-    mut conn: Conn<IO>,
-) -> eyre::Result<()> {
+pub async fn data_frame_with_max_length<IO: IntoHalves>(mut conn: Conn<IO>) -> eyre::Result<()> {
     let stream_id = StreamId(1);
     conn.handshake().await?;
 
@@ -102,9 +96,7 @@ pub async fn data_frame_with_max_length<IO: IntoHalves + 'static>(
 /// exceeds the size defined in SETTINGS_MAX_FRAME_SIZE, exceeds any
 /// limit defined for the frame type, or is too small to contain mandatory frame
 /// data
-pub async fn frame_exceeding_max_size<IO: IntoHalves + 'static>(
-    mut conn: Conn<IO>,
-) -> eyre::Result<()> {
+pub async fn frame_exceeding_max_size<IO: IntoHalves>(mut conn: Conn<IO>) -> eyre::Result<()> {
     let stream_id = StreamId(1);
     conn.handshake().await?;
 
@@ -131,7 +123,7 @@ pub async fn frame_exceeding_max_size<IO: IntoHalves + 'static>(
 /// (Section 5.4.1); this includes any frame carrying a field block
 /// (Section 4.3) (that is, HEADERS, PUSH_PROMISE, and CONTINUATION),
 /// a SETTINGS frame, and any frame with a stream identifier of 0.
-pub async fn large_headers_frame_exceeding_max_size<IO: IntoHalves + 'static>(
+pub async fn large_headers_frame_exceeding_max_size<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -160,9 +152,7 @@ pub async fn large_headers_frame_exceeding_max_size<IO: IntoHalves + 'static>(
 
 /// A decoding error in a header block MUST be treated as a connection error
 /// (Section 5.4.1) of type COMPRESSION_ERROR.
-pub async fn invalid_header_block_fragment<IO: IntoHalves + 'static>(
-    mut conn: Conn<IO>,
-) -> eyre::Result<()> {
+pub async fn invalid_header_block_fragment<IO: IntoHalves>(mut conn: Conn<IO>) -> eyre::Result<()> {
     conn.handshake().await?;
 
     // Literal Header Field with Incremental Indexing without
@@ -183,7 +173,7 @@ pub async fn invalid_header_block_fragment<IO: IntoHalves + 'static>(
 /// Each header block is processed as a discrete unit. Header blocks
 /// MUST be transmitted as a contiguous sequence of frames, with no
 /// interleaved frames of any other type or from any other stream.
-pub async fn priority_frame_while_sending_headers<IO: IntoHalves + 'static>(
+pub async fn priority_frame_while_sending_headers<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -223,7 +213,7 @@ pub async fn priority_frame_while_sending_headers<IO: IntoHalves + 'static>(
 /// Each header block is processed as a discrete unit. Header blocks
 /// MUST be transmitted as a contiguous sequence of frames, with no
 /// interleaved frames of any other type or from any other stream.
-pub async fn headers_frame_to_another_stream<IO: IntoHalves + 'static>(
+pub async fn headers_frame_to_another_stream<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);

@@ -90,7 +90,7 @@ impl fluke::ServerDriver for TestDriver {
 }
 
 pub struct TwoHalves<W, R>(W, R);
-impl<W: WriteOwned, R: ReadOwned> IntoHalves for TwoHalves<W, R> {
+impl<W: WriteOwned + 'static, R: ReadOwned + 'static> IntoHalves for TwoHalves<W, R> {
     type Read = R;
     type Write = W;
 
