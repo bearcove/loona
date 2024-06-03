@@ -727,6 +727,29 @@ use __group::sends_continuation_frame_preceded_by_data_frame as test;
 $body
 }
 }
+
+/// Section 7: Error Codes
+mod _7_error_codes {
+use super::__suite::_7_error_codes as __group;
+
+/// Unknown or unsupported error codes MUST NOT trigger any special
+/// behavior. These MAY be treated by an implementation as being
+/// equivalent to INTERNAL_ERROR.
+#[test]
+fn sends_goaway_frame_with_unknown_error_code() {
+use __group::sends_goaway_frame_with_unknown_error_code as test;
+$body
+}
+
+/// Unknown or unsupported error codes MUST NOT trigger any special
+/// behavior. These MAY be treated by an implementation as being
+/// equivalent to INTERNAL_ERROR.
+#[test]
+fn sends_rst_stream_frame_with_unknown_error_code() {
+use __group::sends_rst_stream_frame_with_unknown_error_code as test;
+$body
+}
+}
 }
 }
 }

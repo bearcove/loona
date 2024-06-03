@@ -29,3 +29,4 @@ pub mod _3_starting_http2;
 pub mod _4_http_frames;
 pub mod _5_streams_and_multiplexing;
 pub mod _6_frame_definitions;
+pub mod _7_error_codes;
