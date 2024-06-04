@@ -487,6 +487,8 @@ pub async fn sends_headers_frame_with_duplicate_pseudo_headers<IO: IntoHalves>(
     let mut headers = conn.common_headers("POST");
     headers.insert(":method".into(), "POST".into());
     headers.insert(":method".into(), "POST".into());
+    assert_eq!(headers.get_vec(&":method".into()).unwrap().len(), 3);
+
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -743,6 +745,25 @@ pub async fn sends_connect_without_authority<IO: IntoHalves>(
 
     let mut headers = Headers::new();
     headers.insert(":method".into(), "CONNECT".into());
+    conn.send_req_and_expect_status(StreamId(1), &headers, 400)
+        .await?;
+
+    Ok(())
+}
+
+/// All pseudo-header fields MUST appear in a field block before all regular
+/// field lines (RFC 9113, section 8.3)
+pub async fn sends_headers_frame_with_pseudo_headers_after_regular_headers<IO: IntoHalves>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    conn.handshake().await?;
+
+    let mut headers = Headers::new();
+    headers.insert(":method".into(), "POST".into());
+    headers.insert(":path".into(), "/".into());
+    headers.insert("content-type".into(), "application/json".into());
+    headers.insert(":authority".into(), "example.com".into());
+
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 

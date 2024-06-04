@@ -1146,6 +1146,14 @@ fn sends_connect_without_authority() {
 use __group::sends_connect_without_authority as test;
 $body
 }
+
+/// All pseudo-header fields MUST appear in a field block before all regular
+/// field lines (RFC 9113, section 8.3)
+#[test]
+fn sends_headers_frame_with_pseudo_headers_after_regular_headers() {
+use __group::sends_headers_frame_with_pseudo_headers_after_regular_headers as test;
+$body
+}
 }
 }
 }

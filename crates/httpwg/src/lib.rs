@@ -648,9 +648,11 @@ impl<IO: IntoHalves> Conn<IO> {
     pub fn encode_headers(&mut self, headers: &Headers) -> eyre::Result<Piece> {
         // wasteful, but we're doing tests so shrug.
         let mut fragment = Vec::new();
-        for (k, v) in headers.iter() {
-            self.hpack_enc
-                .encode_header_into((k.as_ref(), v.as_ref()), &mut fragment)?;
+        for (k, v) in headers.iter_all() {
+            for v in v {
+                self.hpack_enc
+                    .encode_header_into((k.as_ref(), v.as_ref()), &mut fragment)?;
+            }
         }
         Ok(fragment.into())
     }
