@@ -320,6 +320,14 @@ pub struct PieceStr {
     piece: Piece,
 }
 
+impl PartialEq for PieceStr {
+    fn eq(&self, other: &Self) -> bool {
+        self.piece == other.piece
+    }
+}
+
+impl Eq for PieceStr {}
+
 impl fmt::Debug for PieceStr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
         fmt::Debug::fmt(&self[..], f)

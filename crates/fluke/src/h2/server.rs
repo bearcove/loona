@@ -1543,6 +1543,35 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         }
                     };
 
+                    // Note: An implementation that validates fields according to the definitions in
+                    // Sections 5.1 and 5.5 of [HTTP] only needs an additional check that field
+                    // names do not include uppercase characters.
+                    if name.as_str().contains(|c: char| c.is_uppercase()) {
+                        req_error = Some(H2RequestError {
+                            status: StatusCode::BAD_REQUEST,
+                            message: "bad request: A field name MUST NOT contain characters in the ranges 0x00-0x20, 0x41-0x5a, or 0x7f-0xff (all ranges inclusive). This specifically excludes all non-visible ASCII characters, ASCII SP (0x20), and uppercase characters ('A' to 'Z', ASCII 0x41 to 0x5a). See RFC9113, section 8.2.1, 'Field Validity'".into(),
+                        });
+                        return;
+                    }
+
+                    // connection-specific headers are forbidden
+                    static KEEP_ALIVE: HeaderName = HeaderName::from_static("keep-alive");
+                    static PROXY_CONNECTION: HeaderName =
+                        HeaderName::from_static("proxy-connection");
+
+                    if name == http::header::CONNECTION
+                        || name == KEEP_ALIVE
+                        || name == PROXY_CONNECTION
+                        || name == http::header::TRANSFER_ENCODING
+                        || name == http::header::UPGRADE
+                    {
+                        req_error = Some(H2RequestError {
+                            status: StatusCode::BAD_REQUEST,
+                            message: "bad request: connection-specific headers are forbidden. see RFC 9113, section 8.1.2".into(),
+                        });
+                        return;
+                    }
+
                     // header values aren't allowed to have CR or LF
                     let first = value.first();
                     let last = value.last();
@@ -1608,7 +1637,35 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 // ":authority" pseudo-header field.
 
                 let method = match method {
-                    Some(method) => method,
+                    Some(method) => {
+                        if method == Method::Connect {
+                            // RFC 9113, section 8.5 'The CONNECT method': The ":scheme" and ":path"
+                            // pseudo-header fields MUST be omitted.
+                            if scheme.is_some() {
+                                return Err(H2RequestError {
+                                    status: StatusCode::BAD_REQUEST,
+                                    message: "bad request: CONNECT method MUST NOT include ':scheme' pseudo-header".into(),
+                                }
+                                .into());
+                            }
+                            if path.is_some() {
+                                return Err(H2RequestError {
+                                    status: StatusCode::BAD_REQUEST,
+                                    message: "bad request: CONNECT method MUST NOT include ':path' pseudo-header".into(),
+                                }
+                                .into());
+                            }
+
+                            // well, also, we just don't support the `CONNECT` method.
+                            return Err(H2RequestError {
+                                status: StatusCode::NOT_IMPLEMENTED,
+                                message: "bad request: CONNECT method is not supported".into(),
+                            }
+                            .into());
+                        }
+
+                        method
+                    }
                     None => {
                         return Err(H2RequestError {
                             status: StatusCode::BAD_REQUEST,
@@ -1617,6 +1674,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         .into())
                     }
                 };
+
                 let scheme = match scheme {
                     Some(scheme) => scheme,
                     None => {
