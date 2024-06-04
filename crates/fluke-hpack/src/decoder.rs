@@ -199,44 +199,53 @@ impl FieldRepresentation {
 
 /// Represents all errors that can be encountered while decoding an
 /// integer.
-#[derive(PartialEq, Copy, Clone, Debug)]
+#[derive(PartialEq, Copy, Clone, Debug, thiserror::Error)]
 pub enum IntegerDecodingError {
     /// 5.1. specifies that "excessively large integer decodings" MUST be
     /// considered an error (whether the size is the number of octets or
     /// value). This variant corresponds to the encoding containing too many
     /// octets.
+    #[error("Too many octets in the integer encoding")]
     TooManyOctets,
     /// The variant corresponds to the case where the value of the integer
     /// being decoded exceeds a certain threshold.
+    #[error("Integer value too large")]
     ValueTooLarge,
     /// When a buffer from which an integer was supposed to be encoded does
     /// not contain enough octets to complete the decoding.
+    #[error("Not enough octets in the buffer")]
     NotEnoughOctets,
     /// Only valid prefixes are [1, 8]
+    #[error("Invalid prefix")]
     InvalidPrefix,
 }
 
-/// Represents all errors that can be encountered while decoding an octet
-/// string.
-#[derive(PartialEq, Copy, Clone, Debug)]
+#[derive(PartialEq, Copy, Clone, Debug, thiserror::Error)]
 pub enum StringDecodingError {
+    #[error("Not enough octets in the buffer")]
     NotEnoughOctets,
+    #[error("Huffman decoder error: {0}")]
     HuffmanDecoderError(HuffmanDecoderError),
 }
 
 /// Represents all errors that can be encountered while performing the decoding
 /// of an HPACK header set.
-#[derive(PartialEq, Copy, Clone, Debug)]
+#[derive(PartialEq, Copy, Clone, Debug, thiserror::Error)]
 pub enum DecoderError {
+    #[error("Header index out of bounds")]
     HeaderIndexOutOfBounds,
+    #[error("Integer decoding error: {0}")]
     IntegerDecodingError(IntegerDecodingError),
+    #[error("String decoding error: {0}")]
     StringDecodingError(StringDecodingError),
     /// The size of the dynamic table can never be allowed to exceed the max
     /// size mandated to the decoder by the protocol. (by performing changes
     /// made by SizeUpdate blocks).
+    #[error("Dynamic table size exceeds the maximum size")]
     InvalidMaxDynamicSize,
     /// A header block cannot end with a dynamic table size update, it
     /// must be treating as a decoding error.
+    #[error("Dynamic table size update at the end of a header block")]
     SizeUpdateAtEnd,
 }
 
@@ -353,11 +362,11 @@ impl<'a> Decoder<'a> {
     /// If an error is encountered during the decoding of any header, decoding
     /// halts and the appropriate error is returned as the `Err` variant of
     /// the `Result`.
-    pub fn decode_with_cb<E>(
+    pub fn decode_with_cb(
         &mut self,
         buf: &[u8],
-        mut cb: impl FnMut(Cow<[u8]>, Cow<[u8]>) -> Result<(), E>,
-    ) -> Result<(), DecoderOrCallbackError<E>> {
+        mut cb: impl FnMut(Cow<[u8]>, Cow<[u8]>),
+    ) -> Result<(), DecoderError> {
         let mut current_octet_index = 0;
 
         let mut last_was_size_update = false;
@@ -374,8 +383,7 @@ impl<'a> Decoder<'a> {
             let consumed = match field_representation {
                 FieldRepresentation::Indexed => {
                     let ((name, value), consumed) = self.decode_indexed(buffer_leftover)?;
-                    cb(Cow::Borrowed(name), Cow::Borrowed(value))
-                        .map_err(DecoderOrCallbackError::CallbackError)?;
+                    cb(Cow::Borrowed(name), Cow::Borrowed(value));
 
                     consumed
                 }
@@ -383,8 +391,7 @@ impl<'a> Decoder<'a> {
                     let ((name, value), consumed) = {
                         let ((name, value), consumed) =
                             self.decode_literal(buffer_leftover, true)?;
-                        cb(Cow::Borrowed(&name), Cow::Borrowed(&value))
-                            .map_err(DecoderOrCallbackError::CallbackError)?;
+                        cb(Cow::Borrowed(&name), Cow::Borrowed(&value));
 
                         // Since we are to add the decoded header to the header table, we need to
                         // convert them into owned buffers that the decoder can keep internally.
@@ -404,7 +411,7 @@ impl<'a> Decoder<'a> {
                 }
                 FieldRepresentation::LiteralWithoutIndexing => {
                     let ((name, value), consumed) = self.decode_literal(buffer_leftover, false)?;
-                    cb(name, value).map_err(DecoderOrCallbackError::CallbackError)?;
+                    cb(name, value);
 
                     consumed
                 }
@@ -414,7 +421,7 @@ impl<'a> Decoder<'a> {
                     // representation received here. We don't care about this
                     // for now.
                     let ((name, value), consumed) = self.decode_literal(buffer_leftover, false)?;
-                    cb(name, value).map_err(DecoderOrCallbackError::CallbackError)?;
+                    cb(name, value);
 
                     consumed
                 }
@@ -433,7 +440,7 @@ impl<'a> Decoder<'a> {
                 return Ok(());
             }
 
-            return Err(DecoderError::SizeUpdateAtEnd.into());
+            return Err(DecoderError::SizeUpdateAtEnd);
         }
 
         Ok(())
@@ -452,12 +459,7 @@ impl<'a> Decoder<'a> {
         let mut header_list = Vec::new();
 
         self.decode_with_cb(buf, |n, v| {
-            header_list.push((n.into_owned(), v.into_owned()));
-            Ok::<(), ()>(())
-        })
-        .map_err(|e| match e {
-            DecoderOrCallbackError::DecoderError(e) => e,
-            DecoderOrCallbackError::CallbackError(_) => unreachable!(),
+            header_list.push((n.into_owned(), v.into_owned()))
         })?;
 
         Ok(header_list)

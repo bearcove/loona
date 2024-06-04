@@ -4,6 +4,7 @@ use std::{
 };
 
 use fluke_buffet::Piece;
+use fluke_hpack::decoder::DecoderError;
 use http::StatusCode;
 use tokio::sync::Notify;
 
@@ -291,14 +292,14 @@ pub(crate) enum H2RequestOrConnectionError {
 #[error("client error: {status:?}")]
 pub(crate) struct H2RequestError {
     pub(crate) status: StatusCode,
-    pub(crate) body: Piece,
+    pub(crate) message: Piece,
 }
 
 impl fmt::Debug for H2RequestError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut s = f.debug_struct("H2RequestError");
         s.field("status", &self.status);
-        match std::str::from_utf8(&self.body[..]) {
+        match std::str::from_utf8(&self.message[..]) {
             Ok(body) => s.field("body", &body),
             Err(_) => s.field("body", &"(not utf-8)"),
         };
@@ -358,9 +359,8 @@ pub(crate) enum H2ConnectionError {
     #[error("on stream {stream_id}, received unexpected continuation frame")]
     UnexpectedContinuationFrame { stream_id: StreamId },
 
-    #[error("compression error: {0:?}")]
-    // FIXME: let's not use String, let's just replicate the enum from `fluke-hpack` or fix it?
-    CompressionError(String),
+    #[error("hpack decoding error: {0:?}")]
+    HpackDecodingError(#[from] DecoderError),
 
     #[error("client sent a push promise frame, clients aren't allowed to do that, cf. RFC9113 section 8.4")]
     ClientSentPushPromise,
@@ -439,7 +439,7 @@ impl H2ConnectionError {
                 ..
             }) => KnownErrorCode::FlowControlError,
             // compression errors
-            H2ConnectionError::CompressionError(_) => KnownErrorCode::CompressionError,
+            H2ConnectionError::HpackDecodingError(_) => KnownErrorCode::CompressionError,
             // stream closed error
             H2ConnectionError::StreamClosed { .. } => KnownErrorCode::StreamClosed,
             // internal errors

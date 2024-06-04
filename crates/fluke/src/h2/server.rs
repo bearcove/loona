@@ -17,7 +17,7 @@ use fluke_h2_parse::{
 use http::{
     header,
     uri::{Authority, PathAndQuery, Scheme},
-    HeaderName, Version,
+    HeaderName, StatusCode, Version,
 };
 use parse::IntoPiece;
 use smallvec::{smallvec, SmallVec};
@@ -567,6 +567,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
     }
 
     async fn handle_event(&mut self, ev: H2Event) -> Result<(), H2ConnectionError> {
+        trace!(?ev, "handling event");
+
         match ev.payload {
             H2EventPayload::Headers(res) => {
                 let outgoing = match self
@@ -976,6 +978,18 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     match e {
                         H2RequestOrConnectionError::ConnectionError(e) => return Err(e),
                         H2RequestOrConnectionError::RequestError(e) => {
+                            let stream_id = frame.stream_id;
+                            tracing::debug!(?e, %stream_id, "Responding to stream with error");
+                            // we need to insert it, otherwise `process_event` will ignore us
+                            // sending headers, etc.
+                            self.state.streams.insert(
+                                stream_id,
+                                StreamState::HalfClosedRemote {
+                                    outgoing: self.state.mk_stream_outgoing(),
+                                },
+                            );
+                            // TODO: inserting/removing here is probably unnecessary.
+
                             // respond with status code
                             let responder =
                                 Responder::new(H2Encoder::new(frame.stream_id, self.ev_tx.clone()));
@@ -986,7 +1000,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                                         status: e.status,
                                         headers: Default::default(),
                                     },
-                                    &mut SinglePieceBody::new(e.body),
+                                    &mut SinglePieceBody::new(e.message),
                                 )
                                 .await?;
 
@@ -1375,9 +1389,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
         let mut headers = Headers::default();
 
-        // TODO: find a way to propagate errors from here - probably will have to change
-        // the function signature in fluke-hpack, or just write to some captured
-        // error
+        let mut req_error: Option<H2RequestError> = None;
+
         let on_header_pair = |key: Cow<[u8]>, value: Cow<[u8]>| {
             debug!(
                 "{headers_or_trailers:?} | {}: {}",
@@ -1387,8 +1400,11 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
             if &key[..1] == b":" {
                 if matches!(headers_or_trailers, HeadersOrTrailers::Trailers) {
-                    // TODO: proper error handling
-                    panic!("trailers cannot contain pseudo-headers");
+                    req_error = Some(H2RequestError {
+                        status: StatusCode::BAD_REQUEST,
+                        message: "trailers cannot contain pseudo-headers".into(),
+                    });
+                    return;
                 }
 
                 // it's a pseudo-header!
@@ -1437,30 +1453,13 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 let value: Piece = value.to_vec().into();
                 headers.append(name, value);
             }
-
-            Ok::<_, H2RequestError>(())
         };
-
-        fn handle_hpack_error(
-            e: fluke_hpack::decoder::DecoderOrCallbackError<H2RequestError>,
-        ) -> H2RequestOrConnectionError {
-            match e {
-                fluke_hpack::decoder::DecoderOrCallbackError::DecoderError(e) => {
-                    H2RequestOrConnectionError::ConnectionError(
-                        H2ConnectionError::CompressionError(format!("{e:?}")),
-                    )
-                }
-                fluke_hpack::decoder::DecoderOrCallbackError::CallbackError(e) => {
-                    H2RequestOrConnectionError::RequestError(e)
-                }
-            }
-        }
 
         match data {
             Data::Single(payload) => {
                 self.hpack_dec
                     .decode_with_cb(&payload[..], on_header_pair)
-                    .map_err(handle_hpack_error)?;
+                    .map_err(|e| H2RequestOrConnectionError::ConnectionError(e.into()))?;
             }
             Data::Multi(fragments) => {
                 let total_len = fragments.iter().map(|f| f.len()).sum();
@@ -1473,9 +1472,13 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 }
                 self.hpack_dec
                     .decode_with_cb(&payload[..], on_header_pair)
-                    .map_err(handle_hpack_error)?;
+                    .map_err(|e| H2RequestOrConnectionError::ConnectionError(e.into()))?;
             }
         };
+
+        if let Some(req_error) = req_error {
+            return Err(req_error.into());
+        }
 
         match headers_or_trailers {
             HeadersOrTrailers::Headers => {
@@ -1484,9 +1487,26 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 // field that identifies an entity that differs from the entity in the
                 // ":authority" pseudo-header field.
 
-                // TODO: proper error handling (return 400)
-                let method = method.unwrap();
-                let scheme = scheme.unwrap();
+                let method = match method {
+                    Some(method) => method,
+                    None => {
+                        return Err(H2RequestError {
+                            status: StatusCode::BAD_REQUEST,
+                            message: "bad request: missing :method pseudo-header".into(),
+                        }
+                        .into())
+                    }
+                };
+                let scheme = match scheme {
+                    Some(scheme) => scheme,
+                    None => {
+                        return Err(H2RequestError {
+                            status: StatusCode::BAD_REQUEST,
+                            message: "bad request: missing :scheme pseudo-header".into(),
+                        }
+                        .into())
+                    }
+                };
 
                 let path = path.unwrap();
                 let path_and_query: PathAndQuery = path.parse().unwrap();

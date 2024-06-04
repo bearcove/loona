@@ -107,6 +107,7 @@ impl Body for SinglePieceBody {
     }
 
     async fn next_chunk(&mut self) -> eyre::Result<BodyChunk> {
+        tracing::trace!( has_piece = %self.piece.is_some(), "SinglePieceBody::next_chunk");
         if let Some(piece) = self.piece.take() {
             Ok(BodyChunk::Chunk(piece))
         } else {
