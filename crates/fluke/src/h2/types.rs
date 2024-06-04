@@ -4,6 +4,7 @@ use std::{
 };
 
 use fluke_buffet::{Piece, PieceCore};
+use http::StatusCode;
 use tokio::sync::Notify;
 
 use crate::Response;
@@ -271,6 +272,37 @@ impl BodyOutgoing {
                 unreachable!("received a piece after we were done sending")
             }
         }
+    }
+}
+
+/// An error that may either indicate the peer is misbehaving
+/// or just a bad request from the client.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum H2RequestOrConnectionError {
+    #[error("connection error: {0}")]
+    ConnectionError(#[from] H2ConnectionError),
+
+    #[error("request error: {0}")]
+    RequestError(#[from] H2RequestError),
+}
+
+/// The client done goofed, we're returning 4xx most likely
+#[derive(thiserror::Error)]
+#[error("client error: {status:?}")]
+pub(crate) struct H2RequestError {
+    status: StatusCode,
+    body: Piece,
+}
+
+impl fmt::Debug for H2RequestError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut s = f.debug_struct("H2RequestError");
+        s.field("status", &self.status);
+        match std::str::from_utf8(&self.body[..]) {
+            Ok(body) => s.field("body", &body),
+            Err(_) => s.field("body", &"(not utf-8)"),
+        };
+        s.finish()
     }
 }
 

@@ -37,6 +37,8 @@ use crate::{
     ExpectResponseHeaders, Headers, Method, Request, Responder, ServerDriver,
 };
 
+use super::types::H2RequestOrConnectionError;
+
 pub const MAX_WINDOW_SIZE: i64 = u32::MAX as i64;
 
 /// HTTP/2 server configuration
@@ -1269,7 +1271,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         stream_id: StreamId,
         payload: Roll,
         rx: &mut mpsc::Receiver<(Frame, Roll)>,
-    ) -> Result<(), H2ConnectionError> {
+    ) -> Result<(), H2RequestOrConnectionError> {
         let end_stream = flags.contains(HeadersFlags::EndStream);
 
         enum Data {
@@ -1298,7 +1300,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         return Err(H2ConnectionError::ExpectedContinuationFrame {
                             stream_id,
                             frame_type: None,
-                        });
+                        }
+                        .into());
                     }
                 };
 
@@ -1306,7 +1309,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     return Err(H2ConnectionError::ExpectedContinuationForStream {
                         stream_id,
                         continuation_stream_id: continuation_frame.stream_id,
-                    });
+                    }
+                    .into());
                 }
 
                 let cont_flags = match continuation_frame.frame_type {
@@ -1315,7 +1319,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         return Err(H2ConnectionError::ExpectedContinuationFrame {
                             stream_id,
                             frame_type: Some(other),
-                        })
+                        }
+                        .into())
                     }
                 };
 
