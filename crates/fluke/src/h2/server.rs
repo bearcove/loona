@@ -1532,8 +1532,6 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 } else {
                     saw_regular_header = true;
 
-                    // TODO: what do we do in case of malformed header names?
-                    // ignore it? return a 400?
                     let name = match HeaderName::from_bytes(&key[..]) {
                         Ok(name) => name,
                         Err(_) => {
@@ -1544,7 +1542,33 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                             return;
                         }
                     };
-                    // FIXME: this should all be borrowed from the input buffer, in most cases, see https://github.com/bearcove/fluke/issues/191
+
+                    // header values aren't allowed to have CR or LF
+                    let first = value.first();
+                    let last = value.last();
+                    if first == Some(&b' ')
+                        || first == Some(&b'\x09')
+                        || last == Some(&b' ')
+                        || last == Some(&b'\x09')
+                    {
+                        req_error = Some(H2RequestError {
+                            status: StatusCode::BAD_REQUEST,
+                            message: "bad request: A field value MUST NOT start or end with an ASCII whitespace character (ASCII SP or HTAB, 0x20 or 0x09). (RFC 9113, section 8.2.1, 'Field validity')".into(),
+                        });
+                        return;
+                    }
+
+                    if value
+                        .iter()
+                        .any(|&b| b == b'\r' || b == b'\n' || b == b'\0')
+                    {
+                        req_error = Some(H2RequestError {
+                            status: StatusCode::BAD_REQUEST,
+                            message: "bad request: A field value MUST NOT contain the zero value (ASCII NUL, 0x00), line feed (ASCII LF, 0x0a), or carriage return (ASCII CR, 0x0d) at any position. See RFC 9113, section 8.2.1, 'Field validity'".into(),
+                        });
+                        return;
+                    }
+
                     let value: Piece = value.to_vec().into();
                     headers.append(name, value);
                 }
