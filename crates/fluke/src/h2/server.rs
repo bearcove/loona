@@ -1389,95 +1389,191 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
         let mut headers = Headers::default();
 
-        let mut req_error: Option<H2RequestError> = None;
+        {
+            // we assign to an outer variable because header decoding needs to finish no
+            // matter what: if we receive invalid headers for one request, we should still
+            // keep reading the next request's headers, and that requires advancing the
+            // huffman decoder's state, etc.
+            let mut req_error: Option<H2RequestError> = None;
+            let mut saw_regular_header = false;
 
-        let on_header_pair = |key: Cow<[u8]>, value: Cow<[u8]>| {
-            debug!(
-                "{headers_or_trailers:?} | {}: {}",
-                std::str::from_utf8(&key).unwrap_or("<non-utf8-key>"), /* TODO: does this hurt performance when debug logging is disabled? */
-                std::str::from_utf8(&value).unwrap_or("<non-utf8-value>"),
-            );
-
-            if &key[..1] == b":" {
-                if matches!(headers_or_trailers, HeadersOrTrailers::Trailers) {
-                    req_error = Some(H2RequestError {
-                        status: StatusCode::BAD_REQUEST,
-                        message: "trailers cannot contain pseudo-headers".into(),
-                    });
+            let on_header_pair = |key: Cow<[u8]>, value: Cow<[u8]>| {
+                if req_error.is_some() {
                     return;
                 }
 
-                // it's a pseudo-header!
-                // TODO: reject headers that occur after pseudo-headers
-                match &key[1..] {
-                    b"method" => {
-                        // TODO: error handling
-                        let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
-                        if method.replace(Method::from(value)).is_some() {
-                            unreachable!(); // No duplicate allowed.
-                        }
-                    }
-                    b"scheme" => {
-                        // TODO: error handling
-                        let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
-                        if scheme.replace(value.parse().unwrap()).is_some() {
-                            unreachable!(); // No duplicate allowed.
-                        }
-                    }
-                    b"path" => {
-                        // TODO: error handling
-                        let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
-                        if value.len() == 0 || path.replace(value).is_some() {
-                            unreachable!(); // No empty path nor duplicate
-                                            // allowed.
-                        }
-                    }
-                    b"authority" => {
-                        // TODO: error handling
-                        let value: PieceStr = Piece::from(value.to_vec()).to_str().unwrap();
-                        if authority.replace(value.parse().unwrap()).is_some() {
-                            unreachable!(); // No duplicate allowed. (h2spec
-                                            // doesn't seem to test for
-                                            // this case but rejecting
-                                            // duplicates seems reasonable.)
-                        }
-                    }
-                    _ => {
-                        debug!("ignoring pseudo-header");
-                    }
-                }
-            } else {
-                // TODO: what do we do in case of malformed header names?
-                // ignore it? return a 400?
-                let name = HeaderName::from_bytes(&key[..]).expect("malformed header name");
-                let value: Piece = value.to_vec().into();
-                headers.append(name, value);
-            }
-        };
+                debug!(
+                    "{headers_or_trailers:?} | {}: {}",
+                    std::str::from_utf8(&key).unwrap_or("<non-utf8-key>"), /* TODO: does this
+                                                                            * hurt performance
+                                                                            * when debug logging
+                                                                            * is disabled? */
+                    std::str::from_utf8(&value).unwrap_or("<non-utf8-value>"),
+                );
 
-        match data {
-            Data::Single(payload) => {
-                self.hpack_dec
-                    .decode_with_cb(&payload[..], on_header_pair)
-                    .map_err(|e| H2RequestOrConnectionError::ConnectionError(e.into()))?;
-            }
-            Data::Multi(fragments) => {
-                let total_len = fragments.iter().map(|f| f.len()).sum();
-                // this is a slow path, let's do a little heap allocation. we could
-                // be using `RollMut` for this, but it would probably need to resize
-                // a bunch
-                let mut payload = Vec::with_capacity(total_len);
-                for frag in &fragments {
-                    payload.extend_from_slice(&frag[..]);
-                }
-                self.hpack_dec
-                    .decode_with_cb(&payload[..], on_header_pair)
-                    .map_err(|e| H2RequestOrConnectionError::ConnectionError(e.into()))?;
-            }
-        };
+                if &key[..1] == b":" {
+                    if saw_regular_header {
+                        req_error = Some(H2RequestError {
+                            status: StatusCode::BAD_REQUEST,
+                            message:
+                                "bad request: All pseudo-header fields MUST appear in a field block before all regular field lines (RFC 9113, section 8.3)"
+                                    .into(),
+                        });
+                        return;
+                    }
 
-        if let Some(req_error) = req_error {
-            return Err(req_error.into());
+                    if matches!(headers_or_trailers, HeadersOrTrailers::Trailers) {
+                        req_error = Some(H2RequestError {
+                            status: StatusCode::BAD_REQUEST,
+                            message: "bad request: Pseudo-header fields MUST NOT appear in a trailer section (RFC 9113, section 8.3)".into(),
+                        });
+                        return;
+                    }
+
+                    // it's a pseudo-header!
+                    // TODO: reject headers that occur after pseudo-headers
+                    match &key[1..] {
+                        b"method" => {
+                            let value: PieceStr = match Piece::from(value.to_vec()).to_str() {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    req_error = Some(H2RequestError {
+                                        status: StatusCode::BAD_REQUEST,
+                                        message: "bad request: invalid ':method' pseudo-header: not valid utf-8, so certainly not a valid method like POST, GET, OPTIONS, CONNECT, PROPFIND, etc.".into(),
+                                    });
+                                    return;
+                                }
+                            };
+                            if method.replace(Method::from(value)).is_some() {
+                                req_error = Some(H2RequestError {
+                                    status: StatusCode::BAD_REQUEST,
+                                    message: "bad request: duplicate ':method' pseudo-header. All HTTP/2 requests MUST include _exactly one_ valid value for the ':method', ':scheme', and ':path' pseudo-header fields, unless they are CONNECT requests (RFC 9113, section 8.3.1)".into(),
+                                });
+                            }
+                        }
+                        b"scheme" => {
+                            let value: PieceStr = match Piece::from(value.to_vec()).to_str() {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    req_error = Some(H2RequestError {
+                                        status: StatusCode::BAD_REQUEST,
+                                        message: "bad request: invalid ':scheme' pseudo-header: not valid utf-8".into(),
+                                    });
+                                    return;
+                                }
+                            };
+                            if scheme.replace(value.parse().unwrap()).is_some() {
+                                req_error = Some(H2RequestError {
+                                    status: StatusCode::BAD_REQUEST,
+                                    message: "bad request: duplicate ':scheme' pseudo-header. All HTTP/2 requests MUST include _exactly one_ valid value for the ':method', ':scheme', and ':path' pseudo-header fields, unless they are CONNECT requests (RFC 9113, section 8.3.1)"
+                                        .into(),
+                                });
+                            }
+                        }
+                        b"path" => {
+                            let value: PieceStr = match Piece::from(value.to_vec()).to_str() {
+                                Ok(val) => val,
+                                Err(_) => {
+                                    req_error = Some(H2RequestError {
+                                        status: StatusCode::BAD_REQUEST,
+                                        message:
+                                            "bad request: invalid ':path' pseudo-header (not valid utf-8, which is _certainly_ not a valid URI, as defined by RFC 3986, section 2. See also RFC 9113, section 8.3.1). "
+                                                .into(),
+                                    });
+                                    return;
+                                }
+                            };
+
+                            if path.replace(value).is_some() {
+                                req_error = Some(H2RequestError {
+                                    status: StatusCode::BAD_REQUEST,
+                                    message: "bad request: duplicate ':path' pseudo-header. All HTTP/2 requests MUST include _exactly one_ valid value for the ':method', ':scheme', and ':path' pseudo-header fields, unless they are CONNECT requests (RFC 9113, section 8.3.1)".into(),
+                                });
+                            }
+                        }
+                        b"authority" => {
+                            let value: PieceStr = match Piece::from(value.to_vec()).to_str() {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    req_error = Some(H2RequestError {
+                                        status: StatusCode::BAD_REQUEST,
+                                        message: "bad request: invalid ':authority' pseudo-header: not valid utf-8".into(),
+                                    });
+                                    return;
+                                }
+                            };
+                            let value: Authority = match value.parse() {
+                                Ok(a) => a,
+                                Err(_) => {
+                                    req_error = Some(H2RequestError {
+                                        status: StatusCode::BAD_REQUEST,
+                                        message: "bad request: invalid ':authority' pseudo-header: not a valid authority (which is to say: not a valid URI, see RFC 3986, section 3.2)".into(),
+                                    });
+                                    return;
+                                }
+                            };
+                            if authority.replace(value).is_some() {
+                                req_error = Some(H2RequestError {
+                                    status: StatusCode::BAD_REQUEST,
+                                    message: "bad request: duplicate ':authority' pseudo-header. This one isn't technically forbidden by RFC 9113 section 8, but... it feels like it should be."
+                                        .into(),
+                                });
+                            }
+                        }
+                        _ => {
+                            req_error = Some(H2RequestError {
+                                status: StatusCode::BAD_REQUEST,
+                                message:
+                                    "bad request: received invalid pseudo-header. the only defined pseudo-headers are: ':method', ':scheme', ':path', ':authority', ':status' (RFC 9113, section 8.1)"
+                                        .into(),
+                            });
+                        }
+                    }
+                } else {
+                    saw_regular_header = true;
+
+                    // TODO: what do we do in case of malformed header names?
+                    // ignore it? return a 400?
+                    let name = match HeaderName::from_bytes(&key[..]) {
+                        Ok(name) => name,
+                        Err(_) => {
+                            req_error = Some(H2RequestError {
+                                status: StatusCode::BAD_REQUEST,
+                                message: "bad request: invalid header name. see RFC 9113, section 8.2.1, 'Field validity'".into(),
+                            });
+                            return;
+                        }
+                    };
+                    // FIXME: this should all be borrowed from the input buffer, in most cases, see https://github.com/bearcove/fluke/issues/191
+                    let value: Piece = value.to_vec().into();
+                    headers.append(name, value);
+                }
+            };
+
+            match data {
+                Data::Single(payload) => {
+                    self.hpack_dec
+                        .decode_with_cb(&payload[..], on_header_pair)
+                        .map_err(|e| H2RequestOrConnectionError::ConnectionError(e.into()))?;
+                }
+                Data::Multi(fragments) => {
+                    let total_len = fragments.iter().map(|f| f.len()).sum();
+                    // this is a slow path, let's do a little heap allocation. we could
+                    // be using `RollMut` for this, but it would probably need to resize
+                    // a bunch
+                    let mut payload = Vec::with_capacity(total_len);
+                    for frag in &fragments {
+                        payload.extend_from_slice(&frag[..]);
+                    }
+                    self.hpack_dec
+                        .decode_with_cb(&payload[..], on_header_pair)
+                        .map_err(|e| H2RequestOrConnectionError::ConnectionError(e.into()))?;
+                }
+            };
+
+            if let Some(req_error) = req_error {
+                return Err(req_error.into());
+            }
         }
 
         match headers_or_trailers {
@@ -1509,13 +1605,46 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 };
 
                 let path = path.unwrap();
-                let path_and_query: PathAndQuery = path.parse().unwrap();
+
+                if path.len() == 0 && (scheme == Scheme::HTTP || scheme == Scheme::HTTPS) {
+                    return Err(H2RequestError {
+                        status: StatusCode::BAD_REQUEST,
+                        message: "bad request: as per RFC9113, section 8.3.1, ':path' header value MUST NOT be empty for 'http' and 'https' URIs".into(),
+                    }
+                    .into());
+                }
+
+                let path_and_query: PathAndQuery = match path.parse() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        return Err(H2RequestError {
+                            status: StatusCode::BAD_REQUEST,
+                            message:
+                                "bad request: ':path' header value is not a valid PathAndQuery"
+                                    .into(),
+                        }
+                        .into())
+                    }
+                };
 
                 let authority = match authority {
                     Some(authority) => Some(authority),
-                    None => headers
-                        .get(header::HOST)
-                        .map(|host| std::str::from_utf8(host).unwrap().parse().unwrap()),
+                    None => match headers.get(header::HOST) {
+                        Some(host) => {
+                            let host = std::str::from_utf8(host).map_err(|_| H2RequestError {
+                                status: StatusCode::BAD_REQUEST,
+                                message: "bad request: 'host' header value is not utf-8".into(),
+                            })?;
+                            let authority: Authority =
+                                host.parse().map_err(|_| H2RequestError {
+                                    status: StatusCode::BAD_REQUEST,
+                                    message: "bad request: 'host' header value is not a valid URI"
+                                        .into(),
+                                })?;
+                            Some(authority)
+                        }
+                        None => None,
+                    },
                 };
 
                 let mut uri_parts: http::uri::Parts = Default::default();
@@ -1523,7 +1652,16 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 uri_parts.authority = authority;
                 uri_parts.path_and_query = Some(path_and_query);
 
-                let uri = http::uri::Uri::from_parts(uri_parts).unwrap();
+                let uri = match http::uri::Uri::from_parts(uri_parts) {
+                    Ok(uri) => uri,
+                    Err(_) => {
+                        return Err(H2RequestError {
+                            status: StatusCode::BAD_REQUEST,
+                            message: "bad request: invalid URI parts".into(),
+                        }
+                        .into())
+                    }
+                };
 
                 let req = Request {
                     method,
