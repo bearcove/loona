@@ -6,7 +6,7 @@ use tracing::debug;
 use crate::{
     h1::body::{H1Body, H1BodyKind},
     util::{read_and_parse, SemanticError},
-    ExpectResponseHeaders, HeadersExt, Responder, ServerDriver,
+    HeadersExt, Responder, ServerDriver,
 };
 use fluke_buffet::{ReadOwned, RollMut, WriteOwned};
 
@@ -93,10 +93,7 @@ pub async fn serve(
             },
         );
 
-        let responder = Responder {
-            encoder: H1Encoder { transport_w },
-            state: ExpectResponseHeaders,
-        };
+        let responder = Responder::new(H1Encoder { transport_w });
 
         let resp = driver
             .handle(req, &mut req_body, responder)

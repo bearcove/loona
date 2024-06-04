@@ -912,9 +912,9 @@ impl Body for SampleBody {
     async fn next_chunk(&mut self) -> eyre::Result<BodyChunk> {
         let c = match self.chunks_remain {
             0 => BodyChunk::Done { trailers: None },
-            _ => BodyChunk::Chunk(PieceCore::Vec(Rc::new(
-                b"this is a big chunk".to_vec().repeat(256),
-            ))),
+            _ => BodyChunk::Chunk(
+                PieceCore::Vec(Rc::new(b"this is a big chunk".to_vec().repeat(256))).into(),
+            ),
         };
 
         if let Some(remain) = self.chunks_remain.checked_sub(1) {

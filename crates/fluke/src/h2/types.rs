@@ -3,7 +3,7 @@ use std::{
     fmt,
 };
 
-use fluke_buffet::{Piece, PieceCore};
+use fluke_buffet::Piece;
 use http::StatusCode;
 use tokio::sync::Notify;
 
@@ -290,8 +290,8 @@ pub(crate) enum H2RequestOrConnectionError {
 #[derive(thiserror::Error)]
 #[error("client error: {status:?}")]
 pub(crate) struct H2RequestError {
-    status: StatusCode,
-    body: Piece,
+    pub(crate) status: StatusCode,
+    pub(crate) body: Piece,
 }
 
 impl fmt::Debug for H2RequestError {
@@ -519,7 +519,7 @@ pub(crate) struct H2Event {
 
 pub(crate) enum H2EventPayload {
     Headers(Response),
-    BodyChunk(PieceCore),
+    BodyChunk(Piece),
     BodyEnd,
 }
 

@@ -3,7 +3,7 @@ use std::fmt::{self, Debug};
 use http::{StatusCode, Uri, Version};
 use tracing::debug;
 
-use fluke_buffet::PieceCore;
+use fluke_buffet::Piece;
 
 mod headers;
 pub use headers::*;
@@ -97,7 +97,7 @@ impl Response {
 
 /// A body chunk
 pub enum BodyChunk {
-    Chunk(PieceCore),
+    Chunk(Piece),
 
     /// The body finished, and it matched the announced content-length,
     /// or we were using a framed protocol

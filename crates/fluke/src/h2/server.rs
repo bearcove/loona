@@ -27,17 +27,17 @@ use tracing::{debug, trace};
 use crate::{
     h2::{
         body::{H2Body, PieceOrTrailers, StreamIncoming, StreamIncomingItem},
-        encode::{EncoderState, H2Encoder},
+        encode::H2Encoder,
         types::{
-            BodyOutgoing, ConnState, H2ConnectionError, H2Event, H2EventPayload, H2StreamError,
-            HeadersOrTrailers, HeadersOutgoing, StreamOutgoing, StreamState,
+            BodyOutgoing, ConnState, H2ConnectionError, H2Event, H2EventPayload, H2RequestError,
+            H2StreamError, HeadersOrTrailers, HeadersOutgoing, StreamOutgoing, StreamState,
         },
     },
     util::read_and_parse,
-    ExpectResponseHeaders, Headers, Method, Request, Responder, ServerDriver,
+    Headers, Method, Request, Responder, ServerDriver,
 };
 
-use super::types::H2RequestOrConnectionError;
+use super::{body::SinglePieceBody, types::H2RequestOrConnectionError};
 
 pub const MAX_WINDOW_SIZE: i64 = u32::MAX as i64;
 
@@ -639,7 +639,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 // FIXME: this isn't great, because, due to biased polling, body pieces can pile
                 // up. when we've collected enough pieces for max frame size, we
                 // should really send them.
-                outgoing.body.push_back(Piece::Full { core: chunk });
+                outgoing.body.push_back(chunk);
 
                 self.state.streams_with_pending_data.insert(ev.stream_id);
                 if self.state.outgoing_capacity > 0 && outgoing.capacity > 0 {
@@ -962,15 +962,41 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     Some(StreamState::Transition) => unreachable!(),
                 }
 
-                self.read_headers(
-                    headers_or_trailers,
-                    mode,
-                    flags,
-                    frame.stream_id,
-                    payload,
-                    rx,
-                )
-                .await?;
+                if let Err(e) = self
+                    .read_headers(
+                        headers_or_trailers,
+                        mode,
+                        flags,
+                        frame.stream_id,
+                        payload,
+                        rx,
+                    )
+                    .await
+                {
+                    match e {
+                        H2RequestOrConnectionError::ConnectionError(e) => return Err(e),
+                        H2RequestOrConnectionError::RequestError(e) => {
+                            // respond with status code
+                            let responder =
+                                Responder::new(H2Encoder::new(frame.stream_id, self.ev_tx.clone()));
+                            responder
+                                .write_final_response_with_body(
+                                    crate::Response {
+                                        version: Version::HTTP_2,
+                                        status: e.status,
+                                        headers: Default::default(),
+                                    },
+                                    &mut SinglePieceBody::new(e.body),
+                                )
+                                .await?;
+
+                            // don't even store the stream state anywhere, just record the last
+                            // stream id since we technically processed the request? maybe?
+                            // is returning a 4xx "processing" the request?
+                            self.state.last_stream_id = frame.stream_id;
+                        }
+                    }
+                }
             }
             FrameType::Priority => {
                 let pri_spec = match PrioritySpec::parse(payload) {
@@ -1411,13 +1437,30 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 let value: Piece = value.to_vec().into();
                 headers.append(name, value);
             }
+
+            Ok::<_, H2RequestError>(())
         };
+
+        fn handle_hpack_error(
+            e: fluke_hpack::decoder::DecoderOrCallbackError<H2RequestError>,
+        ) -> H2RequestOrConnectionError {
+            match e {
+                fluke_hpack::decoder::DecoderOrCallbackError::DecoderError(e) => {
+                    H2RequestOrConnectionError::ConnectionError(
+                        H2ConnectionError::CompressionError(format!("{e:?}")),
+                    )
+                }
+                fluke_hpack::decoder::DecoderOrCallbackError::CallbackError(e) => {
+                    H2RequestOrConnectionError::RequestError(e)
+                }
+            }
+        }
 
         match data {
             Data::Single(payload) => {
                 self.hpack_dec
                     .decode_with_cb(&payload[..], on_header_pair)
-                    .map_err(|e| H2ConnectionError::CompressionError(format!("{e:?}")))?;
+                    .map_err(handle_hpack_error)?;
             }
             Data::Multi(fragments) => {
                 let total_len = fragments.iter().map(|f| f.len()).sum();
@@ -1430,7 +1473,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 }
                 self.hpack_dec
                     .decode_with_cb(&payload[..], on_header_pair)
-                    .map_err(|e| H2ConnectionError::CompressionError(format!("{e:?}")))?;
+                    .map_err(handle_hpack_error)?;
             }
         };
 
@@ -1469,17 +1512,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     headers,
                 };
 
-                let responder = Responder {
-                    encoder: H2Encoder {
-                        stream_id,
-                        tx: self.ev_tx.clone(),
-                        state: EncoderState::ExpectResponseHeaders,
-                    },
-                    // TODO: why tf is this state encoded twice? is that really
-                    // necessary? I know it's for typestates and H2Encoder needs
-                    // to look up its state at runtime I guess, but.. that's not great?
-                    state: ExpectResponseHeaders,
-                };
+                let responder = Responder::new(H2Encoder::new(stream_id, self.ev_tx.clone()));
 
                 let (piece_tx, piece_rx) = mpsc::channel::<StreamIncomingItem>(1); // TODO: is 1 a sensible value here?
 

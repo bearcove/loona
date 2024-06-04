@@ -240,6 +240,19 @@ pub enum DecoderError {
     SizeUpdateAtEnd,
 }
 
+/// Represents all errors that can be encountered while performing the decoding
+/// of an HPACK header set, or while invoking the callback.
+pub enum DecoderOrCallbackError<E> {
+    DecoderError(DecoderError),
+    CallbackError(E),
+}
+
+impl<E> From<DecoderError> for DecoderOrCallbackError<E> {
+    fn from(err: DecoderError) -> Self {
+        Self::DecoderError(err)
+    }
+}
+
 /// The result returned by the `decode` method of the `Decoder`.
 pub type DecoderResult = Result<Vec<(Vec<u8>, Vec<u8>)>, DecoderError>;
 
@@ -340,10 +353,11 @@ impl<'a> Decoder<'a> {
     /// If an error is encountered during the decoding of any header, decoding
     /// halts and the appropriate error is returned as the `Err` variant of
     /// the `Result`.
-    pub fn decode_with_cb<F>(&mut self, buf: &[u8], mut cb: F) -> Result<(), DecoderError>
-    where
-        F: FnMut(Cow<[u8]>, Cow<[u8]>),
-    {
+    pub fn decode_with_cb<E>(
+        &mut self,
+        buf: &[u8],
+        mut cb: impl FnMut(Cow<[u8]>, Cow<[u8]>) -> Result<(), E>,
+    ) -> Result<(), DecoderOrCallbackError<E>> {
         let mut current_octet_index = 0;
 
         let mut last_was_size_update = false;
@@ -360,7 +374,8 @@ impl<'a> Decoder<'a> {
             let consumed = match field_representation {
                 FieldRepresentation::Indexed => {
                     let ((name, value), consumed) = self.decode_indexed(buffer_leftover)?;
-                    cb(Cow::Borrowed(name), Cow::Borrowed(value));
+                    cb(Cow::Borrowed(name), Cow::Borrowed(value))
+                        .map_err(DecoderOrCallbackError::CallbackError)?;
 
                     consumed
                 }
@@ -368,7 +383,8 @@ impl<'a> Decoder<'a> {
                     let ((name, value), consumed) = {
                         let ((name, value), consumed) =
                             self.decode_literal(buffer_leftover, true)?;
-                        cb(Cow::Borrowed(&name), Cow::Borrowed(&value));
+                        cb(Cow::Borrowed(&name), Cow::Borrowed(&value))
+                            .map_err(DecoderOrCallbackError::CallbackError)?;
 
                         // Since we are to add the decoded header to the header table, we need to
                         // convert them into owned buffers that the decoder can keep internally.
@@ -388,7 +404,7 @@ impl<'a> Decoder<'a> {
                 }
                 FieldRepresentation::LiteralWithoutIndexing => {
                     let ((name, value), consumed) = self.decode_literal(buffer_leftover, false)?;
-                    cb(name, value);
+                    cb(name, value).map_err(DecoderOrCallbackError::CallbackError)?;
 
                     consumed
                 }
@@ -398,7 +414,7 @@ impl<'a> Decoder<'a> {
                     // representation received here. We don't care about this
                     // for now.
                     let ((name, value), consumed) = self.decode_literal(buffer_leftover, false)?;
-                    cb(name, value);
+                    cb(name, value).map_err(DecoderOrCallbackError::CallbackError)?;
 
                     consumed
                 }
@@ -417,7 +433,7 @@ impl<'a> Decoder<'a> {
                 return Ok(());
             }
 
-            return Err(DecoderError::SizeUpdateAtEnd);
+            return Err(DecoderError::SizeUpdateAtEnd.into());
         }
 
         Ok(())
@@ -436,7 +452,12 @@ impl<'a> Decoder<'a> {
         let mut header_list = Vec::new();
 
         self.decode_with_cb(buf, |n, v| {
-            header_list.push((n.into_owned(), v.into_owned()))
+            header_list.push((n.into_owned(), v.into_owned()));
+            Ok::<(), ()>(())
+        })
+        .map_err(|e| match e {
+            DecoderOrCallbackError::DecoderError(e) => e,
+            DecoderOrCallbackError::CallbackError(_) => unreachable!(),
         })?;
 
         Ok(header_list)
