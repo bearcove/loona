@@ -1447,7 +1447,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                             if method.replace(Method::from(value)).is_some() {
                                 req_error = Some(H2RequestError {
                                     status: StatusCode::BAD_REQUEST,
-                                    message: "bad request: duplicate ':method' pseudo-header. All HTTP/2 requests MUST include _exactly one_ valid value for the ':method', ':scheme', and ':path' pseudo-header fields, unless they are CONNECT requests (RFC 9113, section 8.3.1)".into(),
+                                    message: "bad request: duplicate ':method' pseudo-header. All HTTP/2 requests MUST include _exactly one_ valid value for the ':method', ':scheme', and ':path' pseudo-header fields, unless they are CONNECT requests (RFC 9114, section 8.3.1)".into(),
                                 });
                             }
                         }
@@ -1546,7 +1546,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     // Note: An implementation that validates fields according to the definitions in
                     // Sections 5.1 and 5.5 of [HTTP] only needs an additional check that field
                     // names do not include uppercase characters.
-                    if name.as_str().contains(|c: char| c.is_uppercase()) {
+                    if key.iter().any(|b: &u8| b.is_ascii_uppercase()) {
                         req_error = Some(H2RequestError {
                             status: StatusCode::BAD_REQUEST,
                             message: "bad request: A field name MUST NOT contain characters in the ranges 0x00-0x20, 0x41-0x5a, or 0x7f-0xff (all ranges inclusive). This specifically excludes all non-visible ASCII characters, ASCII SP (0x20), and uppercase characters ('A' to 'Z', ASCII 0x41 to 0x5a). See RFC9113, section 8.2.1, 'Field Validity'".into(),
@@ -1569,6 +1569,14 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                             status: StatusCode::BAD_REQUEST,
                             message: "bad request: connection-specific headers are forbidden. see RFC 9113, section 8.1.2".into(),
                         });
+                        return;
+                    }
+
+                    if name == http::header::TE && &value[..] != b"trailers" {
+                        req_error = Some(H2RequestError {
+                                status: StatusCode::BAD_REQUEST,
+                                message: "bad request: 'te' did not contain 'trailers'. cf. RFC9113, Section 8.2.2: The only exception to this is the TE header field, which MAY be present in an HTTP/2 request; when it is, it MUST NOT contain any value other than 'trailers'".into(),
+                            });
                         return;
                     }
 
@@ -1693,7 +1701,17 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     }
                 };
 
-                let path = path.unwrap();
+                let path =
+                    match path {
+                        Some(path) => path,
+                        None => return Err(H2RequestError {
+                            status: StatusCode::BAD_REQUEST,
+                            message:
+                                "bad request: missing :path pseudo-header, cf. RFC9113, section 8.3.1: This pseudo-header field MUST NOT be empty for 'http' or 'https' URIs; 'http' or 'https' URIs that do not contain a path component MUST include a value of '/'."
+                                    .into(),
+                        }
+                        .into()),
+                    };
 
                 if path.len() == 0 && (scheme == Scheme::HTTP || scheme == Scheme::HTTPS) {
                     return Err(H2RequestError {
@@ -1717,7 +1735,30 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                 };
 
                 let authority = match authority {
-                    Some(authority) => Some(authority),
+                    Some(authority) => {
+                        // if there's a `host` header, it must match the `:authority` pseudo-header
+                        if let Some(host) = headers.get(header::HOST) {
+                            let host = std::str::from_utf8(host).map_err(|_| H2RequestError {
+                                status: StatusCode::BAD_REQUEST,
+                                message: "bad request: 'host' header value is not utf-8".into(),
+                            })?;
+                            let host_authority: Authority =
+                                host.parse().map_err(|_| H2RequestError {
+                                    status: StatusCode::BAD_REQUEST,
+                                    message: "bad request: 'host' header value is not a valid URI"
+                                        .into(),
+                                })?;
+                            if host_authority != authority {
+                                return Err(H2RequestError {
+                                    status: StatusCode::BAD_REQUEST,
+                                    message: "bad request: 'host' header value does not match ':authority' pseudo-header value, cf. RFC9113, Section 8.3.1: A server SHOULD treat a request as malformed if it contains a Host header field that identifies an entity that differs from the entity in the ':authority' pseudo-header field".into(),
+                                }
+                                .into());
+                            }
+                        }
+
+                        Some(authority)
+                    }
                     None => match headers.get(header::HOST) {
                         Some(host) => {
                             let host = std::str::from_utf8(host).map_err(|_| H2RequestError {

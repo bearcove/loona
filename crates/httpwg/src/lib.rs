@@ -23,6 +23,15 @@ pub struct Headers {
     values: VecDeque<(Piece, Piece)>,
 }
 
+impl IntoIterator for Headers {
+    type Item = (Piece, Piece);
+    type IntoIter = std::collections::vec_deque::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.values.into_iter()
+    }
+}
+
 impl Headers {
     /// Appends a key-value pair to the end of the headers.
     pub fn append(&mut self, key: impl Into<Piece>, value: impl Into<Piece>) {
@@ -53,6 +62,11 @@ impl Headers {
         self.values.len()
     }
 
+    /// Checks if the headers are empty.
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
     /// Gets the first value associated with the specified key.
     /// Returns `None` if the key is not present in the headers.
     pub fn get_first(&self, key: &Piece) -> Option<&Piece> {
@@ -61,14 +75,9 @@ impl Headers {
             .find_map(|(k, v)| if k == key { Some(v) } else { None })
     }
 
-    /// Returns an iterator that takes ownership of the headers.
-    pub fn into_iter(self) -> impl Iterator<Item = (Piece, Piece)> {
-        self.values.into_iter()
-    }
-
     /// Extends the headers with another set of headers.
     pub fn extend(&mut self, other: Headers) {
-        self.values.extend(other.into_iter());
+        self.values.extend(other);
     }
 
     /// Remove and return all key-value pairs matching the specified key
