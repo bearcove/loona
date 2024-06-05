@@ -65,7 +65,7 @@ pub async fn sends_data_frame_with_invalid_pad_length<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("content-length".into(), "4".into());
+    headers.append("content-length", "4");
     let block_fragment = conn.encode_headers(&headers)?;
 
     conn.write_headers(stream_id, HeadersFlags::EndHeaders, block_fragment)
@@ -619,7 +619,7 @@ pub async fn sends_window_update_frame_with_zero_increment_on_stream<IO: IntoHal
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert(":method".into(), "POST".into());
+    headers.append(":method", "POST");
 
     let block_fragment = conn.encode_headers(&headers)?;
 

@@ -526,7 +526,6 @@ dependencies = [
  "fluke-h2-parse",
  "fluke-hpack",
  "futures-util",
- "multimap",
  "pretty-hex",
  "tokio",
  "tracing",
@@ -733,12 +732,6 @@ dependencies = [
  "wasi",
  "windows-sys 0.48.0",
 ]
-
-[[package]]
-name = "multimap"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "defc4c55412d89136f966bbb339008b474350e5e6e78d2714439c386b3137a03"
 
 [[package]]
 name = "nix"

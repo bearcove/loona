@@ -1655,6 +1655,13 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                                 }
                                 .into());
                             }
+                            if authority.is_none() {
+                                return Err(H2RequestError {
+                                    status: StatusCode::BAD_REQUEST,
+                                    message: "bad request: CONNECT method MUST include ':authority' pseudo-header".into(),
+                                }
+                                .into());
+                            }
 
                             // well, also, we just don't support the `CONNECT` method.
                             return Err(H2RequestError {

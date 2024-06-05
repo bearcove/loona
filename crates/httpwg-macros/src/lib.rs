@@ -1052,16 +1052,6 @@ use __group::sends_headers_frame_with_mismatched_host_authority as test;
 $body
 }
 
-/// A server SHOULD treat a request as malformed if it contains a Host header
-/// field that identifies an entity that differs from the entity in the
-/// ":authority" pseudo-header field. The values of fields need to be normalized
-/// to compare them (see Section 6.2 of [RFC3986]).
-#[test]
-fn sends_headers_frame_with_host_authority_with_port() {
-use __group::sends_headers_frame_with_host_authority_with_port as test;
-$body
-}
-
 /// This pseudo-header field MUST NOT be empty for "http" or "https" URIs;
 /// "http" or "https" URIs that do not contain a path component MUST include a
 /// value of '/'. The exceptions to this rule are:

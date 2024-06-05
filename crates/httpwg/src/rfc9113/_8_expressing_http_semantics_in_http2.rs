@@ -24,8 +24,8 @@ pub async fn sends_second_headers_frame_without_end_stream<IO: IntoHalves>(
         .await?;
     conn.write_data(stream_id, false, b"test").await?;
 
-    let mut trailers = Headers::new();
-    trailers.insert("x-test".into(), "ok".into());
+    let mut trailers = Headers::default();
+    trailers.append("x-test", "ok");
     let trailers_fragment = conn.encode_headers(&trailers)?;
     conn.write_headers(stream_id, HeadersFlags::EndHeaders, trailers_fragment)
         .await?;
@@ -52,7 +52,7 @@ pub async fn sends_headers_frame_with_uppercase_field_name<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("UPPERCASE".into(), "oh no".into());
+    headers.append("UPPERCASE", "oh no");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -74,7 +74,7 @@ pub async fn sends_headers_frame_with_space_in_field_name<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("space force".into(), "oh no".into());
+    headers.append("space force", "oh no");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -96,7 +96,7 @@ pub async fn sends_headers_frame_with_non_visible_ascii<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("\x01invalid".into(), "oh no".into());
+    headers.append("\x01invalid", "oh no");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -118,7 +118,7 @@ pub async fn sends_headers_frame_with_del_character<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("\x7Finvalid".into(), "oh no".into());
+    headers.append("\x7Finvalid", "oh no");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -140,7 +140,7 @@ pub async fn sends_headers_frame_with_non_ascii_character<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("inválid".into(), "oh no".into());
+    headers.append("inválid", "oh no");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -161,7 +161,7 @@ pub async fn sends_headers_frame_with_colon_in_field_name<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("invalid:field".into(), "oh no".into());
+    headers.append("invalid:field", "oh no");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -181,7 +181,7 @@ pub async fn sends_headers_frame_with_lf_in_field_value<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("invalid-value".into(), "oh\nno".into());
+    headers.append("invalid-value", "oh\nno");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -201,7 +201,7 @@ pub async fn sends_headers_frame_with_cr_in_field_value<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("invalid-value".into(), "oh\rno".into());
+    headers.append("invalid-value", "oh\rno");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -221,7 +221,7 @@ pub async fn sends_headers_frame_with_nul_in_field_value<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("invalid-value".into(), "oh\0no".into());
+    headers.append("invalid-value", "oh\0no");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -241,7 +241,7 @@ pub async fn sends_headers_frame_with_leading_space_in_field_value<IO: IntoHalve
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("invalid-value".into(), " oh no".into());
+    headers.append("invalid-value", " oh no");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -261,7 +261,7 @@ pub async fn sends_headers_frame_with_trailing_tab_in_field_value<IO: IntoHalves
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("invalid-value".into(), "oh no\t".into());
+    headers.append("invalid-value", "oh no\t");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -285,7 +285,7 @@ pub async fn sends_headers_frame_with_connection_header<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("connection".into(), "keep-alive".into());
+    headers.append("connection", "keep-alive");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -308,7 +308,7 @@ pub async fn sends_headers_frame_with_proxy_connection_header<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("proxy-connection".into(), "keep-alive".into());
+    headers.append("proxy-connection", "keep-alive");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -331,7 +331,7 @@ pub async fn sends_headers_frame_with_keep_alive_header<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("keep-alive".into(), "timeout=5".into());
+    headers.append("keep-alive", "timeout=5");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -354,7 +354,7 @@ pub async fn sends_headers_frame_with_transfer_encoding_header<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("transfer-encoding".into(), "chunked".into());
+    headers.append("transfer-encoding", "chunked");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -377,7 +377,7 @@ pub async fn sends_headers_frame_with_upgrade_header<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("upgrade".into(), "h2c".into());
+    headers.append("upgrade", "h2c");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -393,7 +393,7 @@ pub async fn sends_headers_frame_with_te_trailers<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("te".into(), "trailers".into());
+    headers.append("te", "trailers");
     conn.send_req_and_expect_status(StreamId(1), &headers, 200)
         .await?;
 
@@ -409,7 +409,7 @@ pub async fn sends_headers_frame_with_te_not_trailers<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert("te".into(), "not-trailers".into());
+    headers.append("te", "not-trailers");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -432,7 +432,7 @@ pub async fn sends_headers_frame_with_response_pseudo_header<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert(":status".into(), "200".into());
+    headers.append(":status", "200");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -453,8 +453,8 @@ pub async fn sends_headers_frame_with_pseudo_header_in_trailer<IO: IntoHalves>(
         .await?;
     conn.write_data(stream_id, false, b"test").await?;
 
-    let mut trailers = Headers::new();
-    trailers.insert(":method".into(), "POST".into());
+    let mut trailers = Headers::default();
+    trailers.append(":method", "POST");
     let trailers_fragment = conn.encode_headers(&trailers)?;
     conn.write_headers(
         stream_id,
@@ -467,7 +467,7 @@ pub async fn sends_headers_frame_with_pseudo_header_in_trailer<IO: IntoHalves>(
     let (frame, payload) = conn.wait_for_frame(FrameT::Headers).await.unwrap();
     assert!(frame.is_end_headers(), "this test makes that assumption");
     let headers = conn.decode_headers(payload.into())?;
-    let status = headers.get(&":status".into()).unwrap();
+    let status = headers.get_first(&":status".into()).unwrap();
     let status = std::str::from_utf8(status)?;
     let status = status.parse::<u16>().unwrap();
     assert_eq!(status, 400);
@@ -485,9 +485,8 @@ pub async fn sends_headers_frame_with_duplicate_pseudo_headers<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert(":method".into(), "POST".into());
-    headers.insert(":method".into(), "POST".into());
-    assert_eq!(headers.get_vec(&":method".into()).unwrap().len(), 3);
+    headers.prepend(":method", "POST");
+    headers.prepend(":method", "POST");
 
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
@@ -509,15 +508,10 @@ pub async fn sends_headers_frame_with_mismatched_host_authority<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert(
-        ":authority".into(),
-        conn.config.host.clone().into_bytes().into(),
-    );
-    headers.insert(
-        "host".into(),
-        format!("{}.different", conn.config.host)
-            .into_bytes()
-            .into(),
+    headers.replace(":authority", conn.config.host.clone().into_bytes());
+    headers.append(
+        "host",
+        format!("{}.different", conn.config.host).into_bytes(),
     );
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
@@ -525,31 +519,11 @@ pub async fn sends_headers_frame_with_mismatched_host_authority<IO: IntoHalves>(
     Ok(())
 }
 
-/// A server SHOULD treat a request as malformed if it contains a Host header
-/// field that identifies an entity that differs from the entity in the
-/// ":authority" pseudo-header field. The values of fields need to be normalized
-/// to compare them (see Section 6.2 of [RFC3986]).
-pub async fn sends_headers_frame_with_host_authority_with_port<IO: IntoHalves>(
-    mut conn: Conn<IO>,
-) -> eyre::Result<()> {
-    conn.handshake().await?;
-
-    let mut headers = conn.common_headers("POST");
-    headers.insert(
-        ":authority".into(),
-        conn.config.host.clone().into_bytes().into(),
-    );
-    headers.insert(
-        "host".into(),
-        format!("{}:{}", conn.config.host, conn.config.port)
-            .into_bytes()
-            .into(),
-    );
-    conn.send_req_and_expect_status(StreamId(1), &headers, 200)
-        .await?;
-
-    Ok(())
-}
+//---
+// Note: URI normalization is a can of worms, see <https://www.rfc-editor.org/rfc/rfc3986.html#section-6.2>
+// It seems hard to test it in a way that most HTTP/2 implementations would
+// pass.
+//---
 
 /// This pseudo-header field MUST NOT be empty for "http" or "https" URIs;
 /// "http" or "https" URIs that do not contain a path component MUST include a
@@ -565,7 +539,7 @@ pub async fn sends_headers_frame_with_empty_path_component<IO: IntoHalves>(
     conn.handshake().await?;
 
     let mut headers = conn.common_headers("POST");
-    headers.insert(":path".into(), "".into());
+    headers.replace(":path", "");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -677,7 +651,7 @@ pub async fn client_sends_push_promise_frame<IO: IntoHalves>(
     let promised_stream_id = StreamId(2);
 
     let mut headers = Headers::default();
-    headers.insert(":status".into(), "200".into());
+    headers.append(":status", "200");
     let block_fragment = conn.encode_headers(&headers)?;
     let payload = conn
         .scratch
@@ -715,10 +689,10 @@ pub async fn client_sends_push_promise_frame<IO: IntoHalves>(
 pub async fn sends_connect_with_scheme<IO: IntoHalves>(mut conn: Conn<IO>) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    let mut headers = Headers::new();
-    headers.insert(":method".into(), "CONNECT".into());
-    headers.insert(":scheme".into(), "https".into());
-    headers.insert(":authority".into(), "example.com:443".into());
+    let mut headers = Headers::default();
+    headers.append(":method", "CONNECT");
+    headers.append(":scheme", "https");
+    headers.append(":authority", "example.com:443");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -728,10 +702,10 @@ pub async fn sends_connect_with_scheme<IO: IntoHalves>(mut conn: Conn<IO>) -> ey
 pub async fn sends_connect_with_path<IO: IntoHalves>(mut conn: Conn<IO>) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    let mut headers = Headers::new();
-    headers.insert(":method".into(), "CONNECT".into());
-    headers.insert(":path".into(), "/".into());
-    headers.insert(":authority".into(), "example.com:443".into());
+    let mut headers = Headers::default();
+    headers.append(":method", "CONNECT");
+    headers.append(":path", "/");
+    headers.append(":authority", "example.com:443");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -743,8 +717,8 @@ pub async fn sends_connect_without_authority<IO: IntoHalves>(
 ) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    let mut headers = Headers::new();
-    headers.insert(":method".into(), "CONNECT".into());
+    let mut headers = Headers::default();
+    headers.append(":method", "CONNECT");
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
 
@@ -758,11 +732,11 @@ pub async fn sends_headers_frame_with_pseudo_headers_after_regular_headers<IO: I
 ) -> eyre::Result<()> {
     conn.handshake().await?;
 
-    let mut headers = Headers::new();
-    headers.insert(":method".into(), "POST".into());
-    headers.insert(":path".into(), "/".into());
-    headers.insert("content-type".into(), "application/json".into());
-    headers.insert(":authority".into(), "example.com".into());
+    let mut headers = Headers::default();
+    headers.append(":method", "POST");
+    headers.append(":path", "/");
+    headers.append("content-type", "application/json");
+    headers.append(":authority", "example.com");
 
     conn.send_req_and_expect_status(StreamId(1), &headers, 400)
         .await?;
