@@ -968,11 +968,10 @@ impl<IO: IntoHalves> Conn<IO> {
         Ok(())
     }
 
-    async fn send_req_and_expect_status_or_stream_error(
+    async fn send_req_and_expect_stream_rst(
         &mut self,
         stream_id: StreamId,
         headers: &Headers,
-        expected_status: u16,
     ) -> eyre::Result<()> {
         self.encode_and_write_headers(
             stream_id,
@@ -981,36 +980,7 @@ impl<IO: IntoHalves> Conn<IO> {
         )
         .await?;
 
-        let (frame, payload) = self
-            .wait_for_frame(FrameT::Headers | FrameT::RstStream)
-            .await
-            .unwrap();
-
-        match frame.frame_type {
-            FrameType::Headers(_) => {
-                assert!(
-                    frame.is_end_headers(),
-                    "the server is free to answer with headers in several frames but this breaks that test"
-                );
-
-                // let's check the status
-                let headers = self.decode_headers(payload.into())?;
-                let status = headers
-                    .get_first(&":status".into())
-                    .expect("response should contain :status");
-                let status = std::str::from_utf8(&status[..])
-                    .expect("status should be valid utf-8")
-                    .parse::<u16>()
-                    .expect("status should be a u16");
-                assert_eq!(status, expected_status);
-            }
-            FrameType::RstStream => {
-                // all good
-            }
-            _ => {
-                unreachable!()
-            }
-        }
+        self.verify_stream_error(ErrorC::ProtocolError).await?;
 
         Ok(())
     }

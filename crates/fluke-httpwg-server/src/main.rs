@@ -107,6 +107,7 @@ impl fluke::ServerDriver for TestDriver {
         }
         tracing::debug!(%req_body_len, "read request body");
 
+        tracing::trace!("writing final response");
         let mut res = res
             .write_final_response(Response {
                 status: StatusCode::OK,
@@ -114,11 +115,14 @@ impl fluke::ServerDriver for TestDriver {
             })
             .await?;
 
+        tracing::trace!("writing body chunk");
         res.write_chunk("it's less dire to lose, than to lose oneself".into())
             .await?;
 
+        tracing::trace!("finishing body (with no trailers)");
         let res = res.finish_body(None).await?;
 
+        tracing::trace!("we're done");
         Ok(res)
     }
 }

@@ -279,12 +279,15 @@ impl BodyOutgoing {
 /// An error that may either indicate the peer is misbehaving
 /// or just a bad request from the client.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum H2RequestOrConnectionError {
+pub(crate) enum H2ErrorLevel {
     #[error("connection error: {0}")]
-    ConnectionError(#[from] H2ConnectionError),
+    Connection(#[from] H2ConnectionError),
+
+    #[error("stream error: {0}")]
+    Stream(#[from] H2StreamError),
 
     #[error("request error: {0}")]
-    RequestError(#[from] H2RequestError),
+    Request(#[from] H2RequestError),
 }
 
 /// The client done goofed, we're returning 4xx most likely
@@ -483,6 +486,9 @@ pub(crate) enum H2StreamError {
 
     #[error("received WINDOW_UPDATE that made the window size overflow")]
     WindowUpdateOverflow,
+
+    #[error("bad request: {0}")]
+    BadRequest(&'static str),
 }
 
 impl H2StreamError {
