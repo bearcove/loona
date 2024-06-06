@@ -1,17 +1,49 @@
-// TODO: remove me, this was only used for a video
-
 use std::rc::Rc;
 
-use fluke::{Body, BodyChunk, Encoder, ExpectResponseHeaders, Responder, Response, ResponseDone};
-use fluke_buffet::{IntoHalves, PipeRead, PipeWrite, ReadOwned, RollMut, WriteOwned};
-use http::StatusCode;
+use color_eyre::eyre;
+use fluke::{
+    http::{self, StatusCode},
+    Body, BodyChunk, Encoder, ExpectResponseHeaders, Responder, Response, ResponseDone,
+};
+use fluke_buffet::{IntoHalves, RollMut};
 use tracing::Level;
 use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::SubscriberInitExt};
 
-/// Note: this will not work with `cargo test`, since it sets up process-level
-/// globals. But it will work with `cargo nextest`, and that's what fluke is
-/// standardizing on.
-pub(crate) fn setup_tracing_and_error_reporting() {
+fn main() {
+    setup_tracing_and_error_reporting();
+
+    fluke_buffet::start(async move {
+        let ln = fluke_buffet::net::TcpListener::bind("127.0.0.1:8000".parse().unwrap())
+            .await
+            .unwrap();
+
+        println!(
+            "Listening on {:?} for 'http2 prior knowledge' connections (no TLS)",
+            ln.local_addr().unwrap()
+        );
+
+        loop {
+            let (stream, addr) = ln.accept().await.unwrap();
+            tracing::info!(?addr, "Accepted connection");
+
+            fluke_buffet::spawn(async move {
+                let server_conf = Rc::new(fluke::h2::ServerConf {
+                    ..Default::default()
+                });
+
+                let client_buf = RollMut::alloc().unwrap();
+                let driver = Rc::new(TestDriver);
+                let io = stream.into_halves();
+                fluke::h2::serve(io, server_conf, client_buf, driver)
+                    .await
+                    .unwrap();
+                tracing::debug!("http/2 server done");
+            });
+        }
+    });
+}
+
+fn setup_tracing_and_error_reporting() {
     color_eyre::install().unwrap();
 
     let targets = if let Ok(rust_log) = std::env::var("RUST_LOG") {
@@ -89,55 +121,4 @@ impl fluke::ServerDriver for TestDriver {
 
         Ok(res)
     }
-}
-
-pub struct TwoHalves<W, R>(W, R);
-impl<W: WriteOwned + 'static, R: ReadOwned + 'static> IntoHalves for TwoHalves<W, R> {
-    type Read = R;
-    type Write = W;
-
-    fn into_halves(self) -> (Self::Read, Self::Write) {
-        (self.1, self.0)
-    }
-}
-
-pub fn start_server() -> httpwg::Conn<TwoHalves<PipeWrite, PipeRead>> {
-    let (server_write, client_read) = fluke::buffet::pipe();
-    let (client_write, server_read) = fluke::buffet::pipe();
-
-    let serve_fut = async move {
-        let server_conf = Rc::new(fluke::h2::ServerConf {
-            ..Default::default()
-        });
-
-        let client_buf = RollMut::alloc()?;
-        let driver = Rc::new(TestDriver);
-        let io = (server_read, server_write);
-        fluke::h2::serve(io, server_conf, client_buf, driver).await?;
-        tracing::debug!("http/2 server done");
-        Ok::<_, eyre::Report>(())
-    };
-
-    fluke_buffet::spawn(async move {
-        serve_fut.await.unwrap();
-    });
-
-    let config = Rc::new(httpwg::Config::default());
-    httpwg::Conn::new(config, TwoHalves(client_write, client_read))
-}
-
-#[test]
-fn rfc9113_3_starting_http2_sends_client_connection_preface() {
-    crate::setup_tracing_and_error_reporting();
-
-    fluke_buffet::start(async move {
-        let conn = crate::start_server();
-
-        #[rustfmt::skip]
-        httpwg
-            ::rfc9113
-            ::_8_expressing_http_semantics_in_http2
-            ::sends_headers_frame_without_path(conn)
-            .await.unwrap();
-    });
 }

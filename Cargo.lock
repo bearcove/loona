@@ -301,6 +301,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluke-httpwg-server"
+version = "0.1.0"
+dependencies = [
+ "color-eyre",
+ "fluke",
+ "fluke-buffet",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "fluke-hyper-testbed"
 version = "0.1.0"
 dependencies = [

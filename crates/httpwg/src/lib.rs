@@ -294,7 +294,10 @@ impl<IO: IntoHalves> Conn<IO> {
                             assert_eq!(payload.len(), frame_len);
 
                             trace!(%frame_len, "got frame payload");
-                            ev_tx.send(Ev::Frame { frame, payload }).await.unwrap();
+                            if ev_tx.send(Ev::Frame { frame, payload }).await.is_err() {
+                                // I guess we stopped consuming frames, sure.
+                                break 'read;
+                            }
                         }
                         Err(nom::Err::Incomplete(_)) => {
                             if eof {
