@@ -38,8 +38,9 @@ fn main() {
                             .unwrap()
                             .unwrap();
                     let conn = Conn::new(conf.clone(), stream);
-                    let test_name = format!("{rfc}/{section}/{test}");
+                    let test_name = format!("{rfc} :: {section} :: {test}");
                     let test = async move {
+                        println!();
                         println!("🔷 Running test: {}", test_name);
                         boxed_test(conn).await.unwrap();
                         println!("✅ Test passed: {}", test_name);

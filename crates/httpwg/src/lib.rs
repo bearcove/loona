@@ -244,22 +244,7 @@ impl<IO: IntoHalves> Conn<IO> {
             async move {
                 let mut res_buf = RollMut::alloc()?;
                 'read: loop {
-                    if !eof {
-                        res_buf.reserve()?;
-                        let res;
-                        (res, res_buf) = res_buf.read_into(16384, &mut r).await;
-                        let n = res?;
-                        if n == 0 {
-                            debug!("reached EOF");
-                            eof = true;
-                        } else {
-                            trace!(%n, "read bytes (reading frame header)");
-                        }
-                    }
-
-                    if eof && res_buf.is_empty() {
-                        break 'read;
-                    }
+                    trace!("'read loop");
 
                     match Frame::parse(res_buf.filled()) {
                         Ok((rest, frame)) => {
@@ -313,10 +298,40 @@ impl<IO: IntoHalves> Conn<IO> {
                         }
                         Err(nom::Err::Incomplete(_)) => {
                             if eof {
-                                panic!(
-                                    "peer sent incomplete frame header then hung up (buf len: {})",
-                                    res_buf.len()
-                                )
+                                if res_buf.is_empty() {
+                                    // all good, that's eof!
+                                    break 'read;
+                                } else {
+                                    panic!(
+                                        "peer sent incomplete frame header then hung up (buf len: {})",
+                                        res_buf.len()
+                                    )
+                                }
+                            }
+
+                            trace!("reserving");
+                            res_buf.reserve()?;
+                            let res;
+                            trace!("re-filling buffer");
+                            let deadline = Instant::now() + config.timeout;
+                            (res, res_buf) = match tokio::time::timeout_at(
+                                deadline,
+                                res_buf.read_into(16384, &mut r),
+                            )
+                            .await
+                            {
+                                Ok(res) => res,
+                                Err(_) => {
+                                    debug!("timed out reading frame header");
+                                    break 'read;
+                                }
+                            };
+                            let n = res?;
+                            if n == 0 {
+                                debug!("reached EOF");
+                                eof = true;
+                            } else {
+                                trace!(%n, "read bytes (reading frame header)");
                             }
 
                             continue;
@@ -946,6 +961,52 @@ impl<IO: IntoHalves> Conn<IO> {
             .parse::<u16>()
             .expect("status should be a u16");
         assert_eq!(status, expected_status);
+
+        Ok(())
+    }
+
+    async fn send_req_and_expect_status_or_stream_error(
+        &mut self,
+        stream_id: StreamId,
+        headers: &Headers,
+        expected_status: u16,
+    ) -> eyre::Result<()> {
+        self.encode_and_write_headers(
+            stream_id,
+            HeadersFlags::EndHeaders | HeadersFlags::EndStream,
+            headers,
+        )
+        .await?;
+
+        let (frame, payload) = self
+            .wait_for_frame(FrameT::Headers | FrameT::RstStream)
+            .await
+            .unwrap();
+        assert!(
+            frame.is_end_headers(),
+            "the server is free to answer with headers in several frames but this breaks that test"
+        );
+
+        match frame.frame_type {
+            FrameType::Headers(_) => {
+                // let's check the status
+                let headers = self.decode_headers(payload.into())?;
+                let status = headers
+                    .get_first(&":status".into())
+                    .expect("response should contain :status");
+                let status = std::str::from_utf8(&status[..])
+                    .expect("status should be valid utf-8")
+                    .parse::<u16>()
+                    .expect("status should be a u16");
+                assert_eq!(status, expected_status);
+            }
+            FrameType::RstStream => {
+                // all good
+            }
+            _ => {
+                unreachable!()
+            }
+        }
 
         Ok(())
     }

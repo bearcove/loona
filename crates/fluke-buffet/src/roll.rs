@@ -203,6 +203,7 @@ impl RollMut {
     /// to `realloc`.
     pub fn reserve(&mut self) -> Result<()> {
         if self.len() < self.cap() {
+            tracing::trace!("reserve: len < cap, no need to reserve anything");
             return Ok(());
         }
 
@@ -220,6 +221,11 @@ impl RollMut {
 
     /// Make sure we can hold "request_len"
     pub fn reserve_at_least(&mut self, requested_len: usize) -> Result<()> {
+        if requested_len <= self.cap() {
+            tracing::trace!(%requested_len, cap = %self.cap(), "reserve_at_least: requested_len <= cap, no need to compact");
+            return Ok(());
+        }
+
         if self.storage.off() > 0 && requested_len <= (BUF_SIZE as usize - self.len()) {
             // we can compact the filled portion!
             self.compact()?;
