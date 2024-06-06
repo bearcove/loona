@@ -273,7 +273,7 @@ impl fmt::Debug for Frame {
             FrameType::WindowUpdate => "WindowUpdate",
             FrameType::Continuation(_) => "Continuation",
             FrameType::Unknown(EncodedFrameType { ty, flags }) => {
-                return write!(f, "UnknownFrame({:#x}, {:#x})", ty, flags)
+                return write!(f, "UnknownFrame({:#x}, {:#x}, len={})", ty, flags, self.len)
             }
         };
         let mut s = f.debug_struct(name);
