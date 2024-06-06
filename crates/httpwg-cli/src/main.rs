@@ -10,16 +10,8 @@ fn main() {
 
     let cat = catalog::<fluke_buffet::net::TcpStream>();
 
-    // print out the catalog:
-    for (rfc, sections) in &cat {
-        println!("📕 {}", rfc);
-        for (section, tests) in sections {
-            println!("  🔷 {}", section);
-            for test in tests.keys() {
-                println!("    📄 {}", test);
-            }
-        }
-    }
+    // filter is set to the first argument, if there is a first argument
+    let filter = std::env::args().nth(1);
 
     fluke_buffet::start(async move {
         // now run it! establish a new TCP connection for every case, and run the test.
@@ -29,27 +21,53 @@ fn main() {
             ..Default::default()
         });
 
-        for (rfc, sections) in &cat {
+        let local_set = tokio::task::LocalSet::new();
+
+        for (rfc, sections) in cat {
             for (section, tests) in sections {
                 for (test, boxed_test) in tests {
+                    let test_name = format!("{rfc} :: {section} :: {test}");
+                    if let Some(filter) = &filter {
+                        if !test_name.contains(filter) {
+                            println!("Skipping test: {}", test_name);
+                            continue;
+                        }
+                    }
+
                     let stream =
                         tokio::time::timeout(Duration::from_millis(250), TcpStream::connect(addr))
                             .await
                             .unwrap()
                             .unwrap();
                     let conn = Conn::new(conf.clone(), stream);
-                    let test_name = format!("{rfc} :: {section} :: {test}");
                     let test = async move {
-                        println!();
                         println!("🔷 Running test: {}", test_name);
                         boxed_test(conn).await.unwrap();
                         println!("✅ Test passed: {}", test_name);
                     };
-                    test.await;
+                    local_set.spawn_local(test);
                 }
             }
         }
+
+        local_set.await;
     });
+}
+
+type Catalog<IO> =
+    HashMap<&'static str, HashMap<&'static str, HashMap<&'static str, BoxedTest<IO>>>>;
+
+#[allow(unused)]
+fn print_catalog<IO: IntoHalves>(cat: &Catalog<IO>) {
+    for (rfc, sections) in cat {
+        println!("📕 {}", rfc);
+        for (section, tests) in sections {
+            println!("  🔷 {}", section);
+            for test in tests.keys() {
+                println!("    📄 {}", test);
+            }
+        }
+    }
 }
 
 fn setup_tracing_and_error_reporting() {
