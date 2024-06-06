@@ -982,13 +982,14 @@ impl<IO: IntoHalves> Conn<IO> {
             .wait_for_frame(FrameT::Headers | FrameT::RstStream)
             .await
             .unwrap();
-        assert!(
-            frame.is_end_headers(),
-            "the server is free to answer with headers in several frames but this breaks that test"
-        );
 
         match frame.frame_type {
             FrameType::Headers(_) => {
+                assert!(
+                    frame.is_end_headers(),
+                    "the server is free to answer with headers in several frames but this breaks that test"
+                );
+
                 // let's check the status
                 let headers = self.decode_headers(payload.into())?;
                 let status = headers
