@@ -35,6 +35,63 @@ pub async fn sends_second_headers_frame_without_end_stream<IO: IntoHalves>(
     Ok(())
 }
 
+//--- Section 8.1.1: Malformed Messages
+
+// A request or response that includes message content can include a
+// content-length header field. A request or response is also malformed if the
+// value of a content-length header field does not equal the sum of the DATA
+// frame payload lengths that form the content, unless the message is defined as
+// having no content. For example, 204 or 304 responses contain no content, as
+// does the response to a HEAD request. A response that is defined to have no
+// content, as described in Section 6.4.1 of [HTTP], MAY have a non-zero
+// content-length header field, even though no content is included in DATA
+// frames.
+//
+// Intermediaries that process HTTP requests or responses (i.e., any
+// intermediary not acting as a tunnel) MUST NOT forward a malformed request or
+// response. Malformed requests or responses that are detected MUST be treated
+// as a stream error (Section 5.4.2) of type PROTOCOL_ERROR.
+
+pub async fn sends_headers_frame_with_incorrect_content_length_single_data_frame<IO: IntoHalves>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+    conn.handshake().await?;
+
+    let mut headers = conn.common_headers("POST");
+    headers.append("content-length", "10");
+    let block_fragment = conn.encode_headers(&headers);
+    conn.write_headers(stream_id, HeadersFlags::EndHeaders, block_fragment?)
+        .await?;
+    conn.write_data(stream_id, true, b"test").await?;
+
+    conn.verify_stream_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
+pub async fn sends_headers_frame_with_incorrect_content_length_multiple_data_frames<
+    IO: IntoHalves,
+>(
+    mut conn: Conn<IO>,
+) -> eyre::Result<()> {
+    let stream_id = StreamId(1);
+    conn.handshake().await?;
+
+    let mut headers = conn.common_headers("POST");
+    headers.append("content-length", "10");
+    let block_fragment = conn.encode_headers(&headers);
+    conn.write_headers(stream_id, HeadersFlags::EndHeaders, block_fragment?)
+        .await?;
+    conn.write_data(stream_id, false, b"te").await?;
+    conn.write_data(stream_id, false, b"st").await?;
+    conn.write_data(stream_id, true, b"ing").await?;
+
+    conn.verify_stream_error(ErrorC::ProtocolError).await?;
+
+    Ok(())
+}
+
 //--- Section 8.2.1: Field Validity
 
 /// A field name MUST NOT contain characters in the ranges 0x00-0x20, 0x41-0x5a,

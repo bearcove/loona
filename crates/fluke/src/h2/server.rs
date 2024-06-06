@@ -26,7 +26,7 @@ use tracing::{debug, trace};
 
 use crate::{
     h2::{
-        body::{H2Body, PieceOrTrailers, StreamIncoming, StreamIncomingItem},
+        body::{H2Body, IncomingMessagesResult, StreamIncoming},
         encode::H2Encoder,
         types::{
             BodyOutgoing, ConnState, H2ConnectionError, H2Event, H2EventPayload, H2RequestError,
@@ -37,7 +37,10 @@ use crate::{
     Headers, Method, Request, Responder, ServerDriver,
 };
 
-use super::{body::SinglePieceBody, types::H2ErrorLevel};
+use super::{
+    body::{ChunkPosition, SinglePieceBody},
+    types::H2ErrorLevel,
+};
 
 pub const MAX_WINDOW_SIZE: i64 = u32::MAX as i64;
 
@@ -829,18 +832,17 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                             });
                         }
                         incoming.capacity = next_cap;
+
+                        let which = if frame.is_end_stream() {
+                            ChunkPosition::Last
+                        } else {
+                            ChunkPosition::NotLast
+                        };
+
                         // TODO: give back capacity to peer at some point
-
-                        if incoming
-                            .tx
-                            .send(Ok(PieceOrTrailers::Piece(payload.into())))
-                            .await
-                            .is_err()
-                        {
-                            debug!("TODO: The body is being ignored, we should reset the stream");
-                        }
-
-                        if flags.contains(DataFlags::EndStream) {
+                        if let Err(e) = incoming.write_chunk(payload.into(), which).await {
+                            self.rst(frame.stream_id, e).await?;
+                        } else if flags.contains(DataFlags::EndStream) {
                             if let StreamState::Open { .. } = ss {
                                 let outgoing = match std::mem::take(ss) {
                                     StreamState::Open { outgoing, .. } => outgoing,
@@ -1068,11 +1070,10 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                             self.state.streams.len()
                         );
                         match ss {
-                            StreamState::Open { incoming, .. }
-                            | StreamState::HalfClosedLocal { incoming, .. } => {
-                                _ = incoming
-                                    .tx
-                                    .send(Err(H2StreamError::ReceivedRstStream.into()))
+                            StreamState::Open { mut incoming, .. }
+                            | StreamState::HalfClosedLocal { mut incoming, .. } => {
+                                incoming
+                                    .send_error(eyre::eyre!("Received RST_STREAM from peer"))
                                     .await;
                             }
                             StreamState::HalfClosedRemote { .. } => {
@@ -1741,23 +1742,45 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     version: Version::HTTP_2,
                     headers,
                 };
+                let content_length: Option<u64> = match req
+                    .headers
+                    .get(http::header::CONTENT_LENGTH)
+                {
+                    Some(len) => {
+                        let len = std::str::from_utf8(len).map_err(|_| {
+                            H2StreamError::BadRequest("content-length header value is not utf-8")
+                        })?;
+                        let len = len.parse().map_err(|_| {
+                            H2StreamError::BadRequest(
+                                "content-length header value is not a valid integer",
+                            )
+                        })?;
+                        Some(len)
+                    }
+                    None => {
+                        if end_stream {
+                            Some(0)
+                        } else {
+                            None
+                        }
+                    }
+                };
 
                 let responder = Responder::new(H2Encoder::new(stream_id, self.ev_tx.clone()));
 
-                let (piece_tx, piece_rx) = mpsc::channel::<StreamIncomingItem>(1); // TODO: is 1 a sensible value here?
+                let (piece_tx, piece_rx) = mpsc::channel::<IncomingMessagesResult>(1); // TODO: is 1 a sensible value here?
 
                 let req_body = H2Body {
-                    // FIXME: that's not right. h2 requests can still specify
-                    // a content-length
-                    content_length: if end_stream { Some(0) } else { None },
+                    content_length,
                     eof: end_stream,
                     rx: piece_rx,
                 };
 
-                let incoming = StreamIncoming {
-                    capacity: self.state.self_settings.initial_window_size as _,
-                    tx: piece_tx,
-                };
+                let incoming = StreamIncoming::new(
+                    self.state.self_settings.initial_window_size as _,
+                    content_length,
+                    piece_tx,
+                );
                 let outgoing: StreamOutgoing = self.state.mk_stream_outgoing();
                 self.state.streams.insert(
                     stream_id,
@@ -1798,18 +1821,9 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
             }
             HeadersOrTrailers::Trailers => {
                 match self.state.streams.entry(stream_id) {
-                    Entry::Occupied(mut slot) => match slot.get() {
+                    Entry::Occupied(mut slot) => match slot.get_mut() {
                         StreamState::Open { incoming, .. } => {
-                            if incoming
-                                .tx
-                                .send(Ok(PieceOrTrailers::Trailers(Box::new(headers))))
-                                .await
-                                .is_err()
-                            {
-                                // the body is being ignored, but there's no
-                                // point in resetting the stream since we just
-                                // got the end of it
-                            }
+                            incoming.write_trailers(headers).await?;
 
                             // set stream state to half closed remote. we do a little
                             // dance to avoid re-inserting.

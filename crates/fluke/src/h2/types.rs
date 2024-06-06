@@ -459,21 +459,20 @@ impl H2ConnectionError {
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum H2StreamError {
-    #[allow(dead_code)]
     #[error("received {data_length} bytes in data frames but content-length announced {content_length} bytes")]
     DataLengthDoesNotMatchContentLength {
         data_length: u64,
         content_length: u64,
     },
 
+    #[error("overflow while calculating content length")]
+    OverflowWhileCalculatingContentLength,
+
     #[error("refused stream (would exceed max concurrent streams)")]
     RefusedStream,
 
     #[error("trailers must have EndStream flag set")]
     TrailersNotEndStream,
-
-    #[error("received RST_STREAM frame")]
-    ReceivedRstStream,
 
     #[error("received PRIORITY frame with invalid size")]
     InvalidPriorityFrameSize { frame_size: u32 },
@@ -489,6 +488,9 @@ pub(crate) enum H2StreamError {
 
     #[error("bad request: {0}")]
     BadRequest(&'static str),
+
+    #[error("stream reset")]
+    Cancel,
 }
 
 impl H2StreamError {
@@ -497,6 +499,7 @@ impl H2StreamError {
         use KnownErrorCode as Code;
 
         match self {
+            Cancel => Code::Cancel,
             // stream closed error
             StreamClosed => Code::StreamClosed,
             // stream refused error
