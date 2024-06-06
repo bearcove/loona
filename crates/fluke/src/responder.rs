@@ -1,7 +1,7 @@
+use fluke_buffet::Piece;
 use http::header;
 
 use crate::{h1::body::BodyWriteMode, Body, BodyChunk, Headers, HeadersExt, Response};
-use fluke_buffet::PieceCore;
 
 pub trait ResponseState {}
 
@@ -21,14 +21,21 @@ where
     E: Encoder,
     S: ResponseState,
 {
-    pub(crate) encoder: E,
-    pub(crate) state: S,
+    encoder: E,
+    state: S,
 }
 
 impl<E> Responder<E, ExpectResponseHeaders>
 where
     E: Encoder,
 {
+    pub fn new(encoder: E) -> Self {
+        Self {
+            encoder,
+            state: ExpectResponseHeaders,
+        }
+    }
+
     /// Send an informational status code, cf. <https://httpwg.org/specs/rfc9110.html#status.1xx>
     /// Errors out if the response status is not 1xx
     pub async fn write_interim_response(&mut self, res: Response) -> eyre::Result<()> {
@@ -118,15 +125,16 @@ where
 {
     /// Send a response body chunk. Errors out if sending more than the
     /// announced content-length.
-    pub async fn write_chunk(&mut self, chunk: PieceCore) -> eyre::Result<()> {
+    pub async fn write_chunk(&mut self, chunk: Piece) -> eyre::Result<()> {
         self.encoder.write_body_chunk(chunk, self.state.mode).await
     }
 
     /// Finish the body, with optional trailers, cf. <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/TE>
     /// Errors out if the sent body doesn't match the announced content-length.
-    /// Errors out if trailers that weren't announced are being sent, or if the client
-    /// didn't explicitly announce it accepted trailers, or if the response is a 204,
-    /// 205 or 304, or if the body wasn't sent with chunked transfer encoding.
+    /// Errors out if trailers that weren't announced are being sent, or if the
+    /// client didn't explicitly announce it accepted trailers, or if the
+    /// response is a 204, 205 or 304, or if the body wasn't sent with
+    /// chunked transfer encoding.
     pub async fn finish_body(
         mut self,
         trailers: Option<Box<Headers>>,
@@ -158,8 +166,7 @@ where
 #[allow(async_fn_in_trait)] // we never require Send
 pub trait Encoder {
     async fn write_response(&mut self, res: Response) -> eyre::Result<()>;
-    async fn write_body_chunk(&mut self, chunk: PieceCore, mode: BodyWriteMode)
-        -> eyre::Result<()>;
+    async fn write_body_chunk(&mut self, chunk: Piece, mode: BodyWriteMode) -> eyre::Result<()>;
     async fn write_body_end(&mut self, mode: BodyWriteMode) -> eyre::Result<()>;
     async fn write_trailers(&mut self, trailers: Box<Headers>) -> eyre::Result<()>;
 }

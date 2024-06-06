@@ -1,7 +1,6 @@
 use eyre::eyre;
-use multimap::MultiMap;
 use rfc9113::DEFAULT_FRAME_SIZE;
-use std::{rc::Rc, time::Duration};
+use std::{collections::VecDeque, rc::Rc, time::Duration};
 
 use enumflags2::{bitflags, BitFlags};
 use fluke_buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
@@ -19,9 +18,75 @@ use crate::rfc9113::default_settings;
 
 pub mod rfc9113;
 
-pub type Headers = MultiMap<Piece, Piece>;
+#[derive(Default)]
+pub struct Headers {
+    values: VecDeque<(Piece, Piece)>,
+}
 
-pub struct Conn<IO: IntoHalves + 'static> {
+impl IntoIterator for Headers {
+    type Item = (Piece, Piece);
+    type IntoIter = std::collections::vec_deque::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.values.into_iter()
+    }
+}
+
+impl Headers {
+    /// Appends a key-value pair to the end of the headers.
+    pub fn append(&mut self, key: impl Into<Piece>, value: impl Into<Piece>) {
+        self.values.push_back((key.into(), value.into()));
+    }
+
+    /// Prepends a key-value pair to the beginning of the headers.
+    /// (Useful when inserting pseudo-headers for example)
+    pub fn prepend(&mut self, key: impl Into<Piece>, value: impl Into<Piece>) {
+        self.values.push_front((key.into(), value.into()));
+    }
+
+    /// Replaces all values of the specified key with the provided value.
+    pub fn replace(&mut self, key: impl Into<Piece>, value: impl Into<Piece>) {
+        let key = key.into();
+        let value = value.into();
+        self.values.retain(|(k, _)| k != &key);
+        self.values.push_back((key, value));
+    }
+
+    /// Returns an iterator over the key-value pairs in the headers.
+    pub fn iter(&self) -> impl Iterator<Item = &(Piece, Piece)> {
+        self.values.iter()
+    }
+
+    /// Returns the number of key-value pairs in the headers.
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    /// Checks if the headers are empty.
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    /// Gets the first value associated with the specified key.
+    /// Returns `None` if the key is not present in the headers.
+    pub fn get_first(&self, key: &Piece) -> Option<&Piece> {
+        self.values
+            .iter()
+            .find_map(|(k, v)| if k == key { Some(v) } else { None })
+    }
+
+    /// Extends the headers with another set of headers.
+    pub fn extend(&mut self, other: Headers) {
+        self.values.extend(other);
+    }
+
+    /// Remove and return all key-value pairs matching the specified key
+    pub fn remove(&mut self, key: &Piece) {
+        self.values.retain(|(k, _)| k != key);
+    }
+}
+
+pub struct Conn<IO: IntoHalves> {
     w: <IO as IntoHalves>::Write,
     scratch: RollMut,
     pub ev_rx: tokio::sync::mpsc::Receiver<Ev>,
@@ -638,10 +703,10 @@ impl<IO: IntoHalves> Conn<IO> {
         };
 
         let mut headers = Headers::default();
-        headers.insert(":method".into(), method.into());
-        headers.insert(":scheme".into(), scheme.into());
-        headers.insert(":path".into(), self.config.path.clone().into_bytes().into());
-        headers.insert(":authority".into(), authority.into_bytes().into());
+        headers.append(":method", method);
+        headers.append(":scheme", scheme);
+        headers.append(":path", self.config.path.clone().into_bytes());
+        headers.append(":authority", authority.into_bytes());
         headers
     }
 
@@ -666,8 +731,18 @@ impl<IO: IntoHalves> Conn<IO> {
             .decode(&fragment[..])
             .map_err(|e| eyre::eyre!("hpack decoder error: {e:?}"))?;
         for (k, v) in res {
-            headers.insert(k.into(), v.into());
+            headers.append(k, v);
         }
+
+        tracing::trace!("decoded {} headers:", headers.len());
+        for (k, v) in headers.iter() {
+            tracing::trace!(
+                "    {:?} => {:?}",
+                String::from_utf8_lossy(&k[..]),
+                String::from_utf8_lossy(&v[..])
+            );
+        }
+
         Ok(headers)
     }
 
@@ -782,7 +857,7 @@ impl<IO: IntoHalves> Conn<IO> {
 
         for i in 0..len {
             let name = format!("x-dummy{}", i);
-            headers.insert(name.into_bytes().into(), dummy.clone().into());
+            headers.append(name.into_bytes(), dummy.clone());
         }
 
         headers
@@ -823,6 +898,38 @@ impl<IO: IntoHalves> Conn<IO> {
         assert!(frame.is_ack());
         Ok(())
     }
+
+    async fn send_req_and_expect_status(
+        &mut self,
+        stream_id: StreamId,
+        headers: &Headers,
+        expected_status: u16,
+    ) -> eyre::Result<()> {
+        self.encode_and_write_headers(
+            stream_id,
+            HeadersFlags::EndHeaders | HeadersFlags::EndStream,
+            headers,
+        )
+        .await?;
+
+        let (frame, payload) = self.wait_for_frame(FrameT::Headers).await.unwrap();
+        assert!(
+            frame.is_end_headers(),
+            "the server is free to answer with headers in several frames but this breaks that test"
+        );
+
+        let headers = self.decode_headers(payload.into())?;
+        let status = headers
+            .get_first(&":status".into())
+            .expect("response should contain :status");
+        let status = std::str::from_utf8(&status[..])
+            .expect("status should be valid utf-8")
+            .parse::<u16>()
+            .expect("status should be a u16");
+        assert_eq!(status, expected_status);
+
+        Ok(())
+    }
 }
 
 /// Parameters for tests
@@ -856,7 +963,7 @@ impl Default for Config {
 
             max_header_len: 4000,
 
-            timeout: Duration::from_secs(1),
+            timeout: Duration::from_millis(100),
         }
     }
 }

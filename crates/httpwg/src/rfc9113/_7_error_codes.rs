@@ -8,7 +8,7 @@ use crate::Conn;
 /// Unknown or unsupported error codes MUST NOT trigger any special
 /// behavior. These MAY be treated by an implementation as being
 /// equivalent to INTERNAL_ERROR.
-pub async fn sends_goaway_frame_with_unknown_error_code<IO: IntoHalves + 'static>(
+pub async fn sends_goaway_frame_with_unknown_error_code<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -31,7 +31,7 @@ pub async fn sends_goaway_frame_with_unknown_error_code<IO: IntoHalves + 'static
 /// Unknown or unsupported error codes MUST NOT trigger any special
 /// behavior. These MAY be treated by an implementation as being
 /// equivalent to INTERNAL_ERROR.
-pub async fn sends_rst_stream_frame_with_unknown_error_code<IO: IntoHalves + 'static>(
+pub async fn sends_rst_stream_frame_with_unknown_error_code<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);

@@ -14,9 +14,7 @@ use crate::{dummy_bytes, Conn, ErrorC};
 /// Receiving any frame other than HEADERS or PRIORITY on a stream
 /// in this state MUST be treated as a connection error
 /// (Section 5.4.1) of type PROTOCOL_ERROR.
-pub async fn idle_sends_data_frame<IO: IntoHalves + 'static>(
-    mut conn: Conn<IO>,
-) -> eyre::Result<()> {
+pub async fn idle_sends_data_frame<IO: IntoHalves>(mut conn: Conn<IO>) -> eyre::Result<()> {
     conn.handshake().await?;
     conn.write_data(StreamId(1), true, b"test").await?;
 
@@ -34,9 +32,7 @@ pub async fn idle_sends_data_frame<IO: IntoHalves + 'static>(
 /// Receiving any frame other than HEADERS or PRIORITY on a stream
 /// in this state MUST be treated as a connection error
 /// (Section 5.4.1) of type PROTOCOL_ERROR.
-pub async fn idle_sends_rst_stream_frame<IO: IntoHalves + 'static>(
-    mut conn: Conn<IO>,
-) -> eyre::Result<()> {
+pub async fn idle_sends_rst_stream_frame<IO: IntoHalves>(mut conn: Conn<IO>) -> eyre::Result<()> {
     conn.handshake().await?;
     conn.write_rst_stream(StreamId(1), ErrorC::Cancel).await?;
     conn.verify_connection_error(ErrorC::ProtocolError).await?;
@@ -47,7 +43,7 @@ pub async fn idle_sends_rst_stream_frame<IO: IntoHalves + 'static>(
 /// Receiving any frame other than HEADERS or PRIORITY on a stream
 /// in this state MUST be treated as a connection error
 /// (Section 5.4.1) of type PROTOCOL_ERROR.
-pub async fn idle_sends_window_update_frame<IO: IntoHalves + 'static>(
+pub async fn idle_sends_window_update_frame<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -60,9 +56,7 @@ pub async fn idle_sends_window_update_frame<IO: IntoHalves + 'static>(
 /// Receiving any frame other than HEADERS or PRIORITY on a stream
 /// in this state MUST be treated as a connection error
 /// (Section 5.4.1) of type PROTOCOL_ERROR.
-pub async fn idle_sends_continuation_frame<IO: IntoHalves + 'static>(
-    mut conn: Conn<IO>,
-) -> eyre::Result<()> {
+pub async fn idle_sends_continuation_frame<IO: IntoHalves>(mut conn: Conn<IO>) -> eyre::Result<()> {
     conn.handshake().await?;
     let block_fragment = conn.encode_headers(&conn.common_headers("POST"))?;
     conn.write_continuation(StreamId(1), ContinuationFlags::EndHeaders, block_fragment)
@@ -76,7 +70,7 @@ pub async fn idle_sends_continuation_frame<IO: IntoHalves + 'static>(
 /// WINDOW_UPDATE, PRIORITY, or RST_STREAM, for a stream that is in
 /// this state, it MUST respond with a stream error (Section 5.4.2)
 /// of type STREAM_CLOSED.
-pub async fn half_closed_remote_sends_data_frame<IO: IntoHalves + 'static>(
+pub async fn half_closed_remote_sends_data_frame<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -92,7 +86,7 @@ pub async fn half_closed_remote_sends_data_frame<IO: IntoHalves + 'static>(
 /// WINDOW_UPDATE, PRIORITY, or RST_STREAM, for a stream that is in
 /// this state, it MUST respond with a stream error (Section 5.4.2)
 /// of type STREAM_CLOSED.
-pub async fn half_closed_remote_sends_headers_frame<IO: IntoHalves + 'static>(
+pub async fn half_closed_remote_sends_headers_frame<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -108,7 +102,7 @@ pub async fn half_closed_remote_sends_headers_frame<IO: IntoHalves + 'static>(
 /// WINDOW_UPDATE, PRIORITY, or RST_STREAM, for a stream that is in
 /// this state, it MUST respond with a stream error (Section 5.4.2)
 /// of type STREAM_CLOSED.
-pub async fn half_closed_remote_sends_continuation_frame<IO: IntoHalves + 'static>(
+pub async fn half_closed_remote_sends_continuation_frame<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -135,7 +129,7 @@ pub async fn half_closed_remote_sends_continuation_frame<IO: IntoHalves + 'stati
 /// An endpoint that receives any frame other than PRIORITY after
 /// receiving a RST_STREAM MUST treat that as a stream error
 /// (Section 5.4.2) of type STREAM_CLOSED.
-pub async fn closed_sends_data_frame_after_rst_stream<IO: IntoHalves + 'static>(
+pub async fn closed_sends_data_frame_after_rst_stream<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -156,7 +150,7 @@ pub async fn closed_sends_data_frame_after_rst_stream<IO: IntoHalves + 'static>(
 /// An endpoint that receives any frame other than PRIORITY after
 /// receiving a RST_STREAM MUST treat that as a stream error
 /// (Section 5.4.2) of type STREAM_CLOSED.
-pub async fn closed_sends_headers_frame_after_rst_stream<IO: IntoHalves + 'static>(
+pub async fn closed_sends_headers_frame_after_rst_stream<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -177,7 +171,7 @@ pub async fn closed_sends_headers_frame_after_rst_stream<IO: IntoHalves + 'stati
 /// An endpoint that receives any frame other than PRIORITY after
 /// receiving a RST_STREAM MUST treat that as a stream error
 /// (Section 5.4.2) of type STREAM_CLOSED.
-pub async fn closed_sends_continuation_frame_after_rst_stream<IO: IntoHalves + 'static>(
+pub async fn closed_sends_continuation_frame_after_rst_stream<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -213,9 +207,7 @@ pub async fn closed_sends_continuation_frame_after_rst_stream<IO: IntoHalves + '
 /// An endpoint that receives any frames after receiving a frame
 /// with the END_STREAM flag set MUST treat that as a connection
 /// error (Section 6.4.1) of type STREAM_CLOSED.
-pub async fn closed_sends_data_frame<IO: IntoHalves + 'static>(
-    mut conn: Conn<IO>,
-) -> eyre::Result<()> {
+pub async fn closed_sends_data_frame<IO: IntoHalves>(mut conn: Conn<IO>) -> eyre::Result<()> {
     let stream_id = StreamId(1);
     conn.handshake().await?;
 
@@ -231,9 +223,7 @@ pub async fn closed_sends_data_frame<IO: IntoHalves + 'static>(
 /// An endpoint that receives any frames after receiving a frame
 /// with the END_STREAM flag set MUST treat that as a connection
 /// error (Section 6.4.1) of type STREAM_CLOSED.
-pub async fn closed_sends_headers_frame<IO: IntoHalves + 'static>(
-    mut conn: Conn<IO>,
-) -> eyre::Result<()> {
+pub async fn closed_sends_headers_frame<IO: IntoHalves>(mut conn: Conn<IO>) -> eyre::Result<()> {
     let stream_id = StreamId(1);
     conn.handshake().await?;
 
@@ -249,7 +239,7 @@ pub async fn closed_sends_headers_frame<IO: IntoHalves + 'static>(
 /// An endpoint that receives any frames after receiving a frame
 /// with the END_STREAM flag set MUST treat that as a connection
 /// error (Section 6.4.1) of type STREAM_CLOSED.
-pub async fn closed_sends_continuation_frame<IO: IntoHalves + 'static>(
+pub async fn closed_sends_continuation_frame<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);
@@ -278,7 +268,7 @@ pub async fn closed_sends_continuation_frame<IO: IntoHalves + 'static>(
 /// An endpoint that receives an unexpected stream identifier
 /// MUST respond with a connection error (Section 5.4.1) of
 /// type PROTOCOL_ERROR.
-pub async fn sends_even_numbered_stream_identifier<IO: IntoHalves + 'static>(
+pub async fn sends_even_numbered_stream_identifier<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -292,7 +282,7 @@ pub async fn sends_even_numbered_stream_identifier<IO: IntoHalves + 'static>(
 /// An endpoint that receives an unexpected stream identifier
 /// MUST respond with a connection error (Section 5.4.1) of
 /// type PROTOCOL_ERROR.
-pub async fn sends_smaller_stream_identifier<IO: IntoHalves + 'static>(
+pub async fn sends_smaller_stream_identifier<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -306,7 +296,7 @@ pub async fn sends_smaller_stream_identifier<IO: IntoHalves + 'static>(
 
 //---- Section 5.1.2: Stream Concurrency
 
-pub async fn exceeds_concurrent_stream_limit<IO: IntoHalves + 'static>(
+pub async fn exceeds_concurrent_stream_limit<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -339,7 +329,7 @@ pub async fn exceeds_concurrent_stream_limit<IO: IntoHalves + 'static>(
 
 /// After sending the GOAWAY frame for an error condition,
 /// the endpoint MUST close the TCP connection.
-pub async fn invalid_ping_frame_for_connection_close<IO: IntoHalves + 'static>(
+pub async fn invalid_ping_frame_for_connection_close<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -359,7 +349,7 @@ pub async fn invalid_ping_frame_for_connection_close<IO: IntoHalves + 'static>(
 // An endpoint that encounters a connection error SHOULD first send
 // a GOAWAY frame (Section 6.8) with the stream identifier of the last
 // stream that it successfully received from its peer.
-pub async fn test_invalid_ping_frame_for_goaway<IO: IntoHalves + 'static>(
+pub async fn test_invalid_ping_frame_for_goaway<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.handshake().await?;
@@ -380,7 +370,7 @@ pub async fn test_invalid_ping_frame_for_goaway<IO: IntoHalves + 'static>(
 /// Extension frames that appear in the middle of a header block
 /// (Section 4.3) are not permitted; these MUST be treated as
 /// a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
-pub async fn unknown_extension_frame_in_header_block<IO: IntoHalves + 'static>(
+pub async fn unknown_extension_frame_in_header_block<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     let stream_id = StreamId(1);

@@ -375,20 +375,30 @@ impl Frame {
         Ok(())
     }
 
-    /// Returns true if this  frame is an ack
+    /// Returns true if this frame is an ack
     pub fn is_ack(self) -> bool {
         match self.frame_type {
-            FrameType::Data(_) => false,
-            FrameType::Headers(_) => false,
-            FrameType::Priority => false,
-            FrameType::RstStream => false,
             FrameType::Settings(flags) => flags.contains(SettingsFlags::Ack),
-            FrameType::PushPromise => false,
             FrameType::Ping(flags) => flags.contains(PingFlags::Ack),
-            FrameType::GoAway => false,
-            FrameType::WindowUpdate => false,
-            FrameType::Continuation(_) => false,
-            FrameType::Unknown(_) => false,
+            _ => false,
+        }
+    }
+
+    /// Returns true if this frame has `EndHeaders` set
+    pub fn is_end_headers(self) -> bool {
+        match self.frame_type {
+            FrameType::Headers(flags) => flags.contains(HeadersFlags::EndHeaders),
+            FrameType::Continuation(flags) => flags.contains(ContinuationFlags::EndHeaders),
+            _ => false,
+        }
+    }
+
+    /// Returns true if this frame has `EndStream` set
+    pub fn is_end_stream(self) -> bool {
+        match self.frame_type {
+            FrameType::Data(flags) => flags.contains(DataFlags::EndStream),
+            FrameType::Headers(flags) => flags.contains(HeadersFlags::EndStream),
+            _ => false,
         }
     }
 }

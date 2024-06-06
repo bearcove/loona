@@ -25,15 +25,17 @@ impl HuffmanCodeSymbol {
     }
 }
 
-/// Represents the error variants that the `HuffmanDecoder` can return.
-#[derive(PartialEq, Copy, Clone, Debug)]
+#[derive(thiserror::Error, PartialEq, Copy, Clone, Debug)]
 pub enum HuffmanDecoderError {
     /// Any padding strictly larger than 7 bits MUST be interpreted as an error
+    #[error("Padding too large")]
     PaddingTooLarge,
     /// Any padding that does not correspond to the most significant bits of
     /// EOS MUST be interpreted as an error.
+    #[error("Invalid padding")]
     InvalidPadding,
     /// If EOS is ever found in the string, it causes an error.
+    #[error("EOS in string")]
     EOSInString,
 }
 

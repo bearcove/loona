@@ -27,4 +27,5 @@ hex = "0.4.3"
 thiserror = "1.0.58"
 
 [dependencies]
+thiserror = "1.0.58"
 tracing = "0.1"

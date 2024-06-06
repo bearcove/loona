@@ -750,6 +750,401 @@ use __group::sends_rst_stream_frame_with_unknown_error_code as test;
 $body
 }
 }
+
+/// Section 8: Expressing HTTP Semantics in HTTP/2
+mod _8_expressing_http_semantics_in_http2 {
+use super::__suite::_8_expressing_http_semantics_in_http2 as __group;
+
+#[test]
+fn sends_second_headers_frame_without_end_stream() {
+use __group::sends_second_headers_frame_without_end_stream as test;
+$body
+}
+
+/// A field name MUST NOT contain characters in the ranges 0x00-0x20, 0x41-0x5a,
+/// or 0x7f-0xff (all ranges inclusive). This specifically excludes all
+/// non-visible ASCII characters, ASCII SP (0x20), and uppercase characters ('A'
+/// to 'Z', ASCII 0x41 to 0x5a).
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_uppercase_field_name() {
+use __group::sends_headers_frame_with_uppercase_field_name as test;
+$body
+}
+
+/// A field name MUST NOT contain characters in the ranges 0x00-0x20, 0x41-0x5a,
+/// or 0x7f-0xff (all ranges inclusive). This specifically excludes all
+/// non-visible ASCII characters, ASCII SP (0x20), and uppercase characters ('A'
+/// to 'Z', ASCII 0x41 to 0x5a).
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_space_in_field_name() {
+use __group::sends_headers_frame_with_space_in_field_name as test;
+$body
+}
+
+/// A field name MUST NOT contain characters in the ranges 0x00-0x20, 0x41-0x5a,
+/// or 0x7f-0xff (all ranges inclusive). This specifically excludes all
+/// non-visible ASCII characters, ASCII SP (0x20), and uppercase characters ('A'
+/// to 'Z', ASCII 0x41 to 0x5a).
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_non_visible_ascii() {
+use __group::sends_headers_frame_with_non_visible_ascii as test;
+$body
+}
+
+/// A field name MUST NOT contain characters in the ranges 0x00-0x20, 0x41-0x5a,
+/// or 0x7f-0xff (all ranges inclusive). This specifically excludes all
+/// non-visible ASCII characters, ASCII SP (0x20), and uppercase characters ('A'
+/// to 'Z', ASCII 0x41 to 0x5a).
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_del_character() {
+use __group::sends_headers_frame_with_del_character as test;
+$body
+}
+
+/// A field name MUST NOT contain characters in the ranges 0x00-0x20, 0x41-0x5a,
+/// or 0x7f-0xff (all ranges inclusive). This specifically excludes all
+/// non-visible ASCII characters, ASCII SP (0x20), and uppercase characters ('A'
+/// to 'Z', ASCII 0x41 to 0x5a).
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_non_ascii_character() {
+use __group::sends_headers_frame_with_non_ascii_character as test;
+$body
+}
+
+/// With the exception of pseudo-header fields (Section 8.3), which have a name
+/// that starts with a single colon, field names MUST NOT include a colon (ASCII
+/// COLON, 0x3a).
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_colon_in_field_name() {
+use __group::sends_headers_frame_with_colon_in_field_name as test;
+$body
+}
+
+/// A field value MUST NOT contain the zero value (ASCII NUL, 0x00), line feed
+/// (ASCII LF, 0x0a), or carriage return (ASCII CR, 0x0d) at any position.
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_lf_in_field_value() {
+use __group::sends_headers_frame_with_lf_in_field_value as test;
+$body
+}
+
+/// A field value MUST NOT contain the zero value (ASCII NUL, 0x00), line feed
+/// (ASCII LF, 0x0a), or carriage return (ASCII CR, 0x0d) at any position.
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_cr_in_field_value() {
+use __group::sends_headers_frame_with_cr_in_field_value as test;
+$body
+}
+
+/// A field value MUST NOT contain the zero value (ASCII NUL, 0x00), line feed
+/// (ASCII LF, 0x0a), or carriage return (ASCII CR, 0x0d) at any position.
+///
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_nul_in_field_value() {
+use __group::sends_headers_frame_with_nul_in_field_value as test;
+$body
+}
+
+/// A field value MUST NOT start or end with an ASCII whitespace character
+/// (ASCII SP or HTAB, 0x20 or 0x09).
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_leading_space_in_field_value() {
+use __group::sends_headers_frame_with_leading_space_in_field_value as test;
+$body
+}
+
+/// A field value MUST NOT start or end with an ASCII whitespace character
+/// (ASCII SP or HTAB, 0x20 or 0x09).
+/// When a request message violates one of these requirements, an implementation
+/// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
+/// [HTTP]), unless a more suitable status code is defined or the status code
+/// cannot be sent (e.g., because the error occurs in a trailer field).
+#[test]
+fn sends_headers_frame_with_trailing_tab_in_field_value() {
+use __group::sends_headers_frame_with_trailing_tab_in_field_value as test;
+$body
+}
+
+/// HTTP/2 does not use the Connection header field (Section 7.6.1 of [HTTP]) to
+/// indicate connection-specific header fields; in this protocol,
+/// connection-specific metadata is conveyed by other means. An endpoint MUST
+/// NOT generate an HTTP/2 message containing connection-specific header fields.
+/// This includes the Connection header field and those listed as having
+/// connection-specific semantics in Section 7.6.1 of [HTTP] (that is,
+/// Proxy-Connection, Keep-Alive, Transfer-Encoding, and Upgrade). Any message
+/// containing connection-specific header fields MUST be treated as malformed
+/// (Section 8.1.1).
+#[test]
+fn sends_headers_frame_with_connection_header() {
+use __group::sends_headers_frame_with_connection_header as test;
+$body
+}
+
+/// HTTP/2 does not use the Connection header field (Section 7.6.1 of [HTTP]) to
+/// indicate connection-specific header fields; in this protocol,
+/// connection-specific metadata is conveyed by other means. An endpoint MUST
+/// NOT generate an HTTP/2 message containing connection-specific header fields.
+///
+/// This includes the Connection header field and those listed as having
+/// connection-specific semantics in Section 7.6.1 of [HTTP] (that is,
+/// Proxy-Connection, Keep-Alive, Transfer-Encoding, and Upgrade). Any message
+/// containing connection-specific header fields MUST be treated as malformed
+/// (Section 8.1.1).
+#[test]
+fn sends_headers_frame_with_proxy_connection_header() {
+use __group::sends_headers_frame_with_proxy_connection_header as test;
+$body
+}
+
+/// HTTP/2 does not use the Connection header field (Section 7.6.1 of [HTTP]) to
+/// indicate connection-specific header fields; in this protocol,
+/// connection-specific metadata is conveyed by other means. An endpoint MUST
+/// NOT generate an HTTP/2 message containing connection-specific header fields.
+///
+/// This includes the Connection header field and those listed as having
+/// connection-specific semantics in Section 7.6.1 of [HTTP] (that is,
+/// Proxy-Connection, Keep-Alive, Transfer-Encoding, and Upgrade). Any message
+/// containing connection-specific header fields MUST be treated as malformed
+/// (Section 8.1.1).
+#[test]
+fn sends_headers_frame_with_keep_alive_header() {
+use __group::sends_headers_frame_with_keep_alive_header as test;
+$body
+}
+
+/// HTTP/2 does not use the Connection header field (Section 7.6.1 of [HTTP]) to
+/// indicate connection-specific header fields; in this protocol,
+/// connection-specific metadata is conveyed by other means. An endpoint MUST
+/// NOT generate an HTTP/2 message containing connection-specific header fields.
+///
+/// This includes the Connection header field and those listed as having
+/// connection-specific semantics in Section 7.6.1 of [HTTP] (that is,
+/// Proxy-Connection, Keep-Alive, Transfer-Encoding, and Upgrade). Any message
+/// containing connection-specific header fields MUST be treated as malformed
+/// (Section 8.1.1).
+#[test]
+fn sends_headers_frame_with_transfer_encoding_header() {
+use __group::sends_headers_frame_with_transfer_encoding_header as test;
+$body
+}
+
+/// HTTP/2 does not use the Connection header field (Section 7.6.1 of [HTTP]) to
+/// indicate connection-specific header fields; in this protocol,
+/// connection-specific metadata is conveyed by other means. An endpoint MUST
+/// NOT generate an HTTP/2 message containing connection-specific header fields.
+///
+/// This includes the Connection header field and those listed as having
+/// connection-specific semantics in Section 7.6.1 of [HTTP] (that is,
+/// Proxy-Connection, Keep-Alive, Transfer-Encoding, and Upgrade). Any message
+/// containing connection-specific header fields MUST be treated as malformed
+/// (Section 8.1.1).
+#[test]
+fn sends_headers_frame_with_upgrade_header() {
+use __group::sends_headers_frame_with_upgrade_header as test;
+$body
+}
+
+/// The only exception to this is the TE header field, which MAY be present in
+/// an HTTP/2 request; when it is, it MUST NOT contain any value other than
+/// "trailers".
+#[test]
+fn sends_headers_frame_with_te_trailers() {
+use __group::sends_headers_frame_with_te_trailers as test;
+$body
+}
+
+/// The only exception to this is the TE header field, which MAY be present in
+/// an HTTP/2 request; when it is, it MUST NOT contain any value other than
+/// "trailers".
+#[test]
+fn sends_headers_frame_with_te_not_trailers() {
+use __group::sends_headers_frame_with_te_not_trailers as test;
+$body
+}
+
+/// [...] pseudo-header fields defined for responses MUST NOT appear in requests
+/// [...] Endpoints MUST treat a request or response that contains undefined or
+/// invalid pseudo-header fields as malformed (Section 8.1.1).
+#[test]
+fn sends_headers_frame_with_response_pseudo_header() {
+use __group::sends_headers_frame_with_response_pseudo_header as test;
+$body
+}
+
+/// [...] Pseudo-header fields MUST NOT appear in a trailer section. Endpoints
+/// MUST treat a request or response that contains undefined or invalid
+/// pseudo-header fields as malformed (Section 8.1.1).
+#[test]
+fn sends_headers_frame_with_pseudo_header_in_trailer() {
+use __group::sends_headers_frame_with_pseudo_header_in_trailer as test;
+$body
+}
+
+/// The same pseudo-header field name MUST NOT appear more than once in a field
+/// block. A field block for an HTTP request or response that contains a
+/// repeated pseudo-header field name MUST be treated as malformed (Section
+/// 8.1.1).
+#[test]
+fn sends_headers_frame_with_duplicate_pseudo_headers() {
+use __group::sends_headers_frame_with_duplicate_pseudo_headers as test;
+$body
+}
+
+/// A server SHOULD treat a request as malformed if it contains a Host header
+/// field that identifies an entity that differs from the entity in the
+/// ":authority" pseudo-header field. The values of fields need to be normalized
+/// to compare them (see Section 6.2 of [RFC3986]). An origin server can apply
+/// any normalization method, whereas other servers MUST perform scheme-based
+/// normalization (see Section 6.2.3 of [RFC3986]) of the two fields.
+///
+/// cf. <https://www.rfc-editor.org/rfc/rfc3986.html#section-6.2.3>
+#[test]
+fn sends_headers_frame_with_mismatched_host_authority() {
+use __group::sends_headers_frame_with_mismatched_host_authority as test;
+$body
+}
+
+/// This pseudo-header field MUST NOT be empty for "http" or "https" URIs;
+/// "http" or "https" URIs that do not contain a path component MUST include a
+/// value of '/'. The exceptions to this rule are:
+///
+/// an OPTIONS request for an "http" or "https" URI that does not include a path
+/// component; these MUST include a ":path" pseudo-header field with a value of
+/// '*' (see Section 7.1 of [HTTP]). CONNECT requests (Section 8.5), where the
+/// ":path" pseudo-header field is omitted.
+#[test]
+fn sends_headers_frame_with_empty_path_component() {
+use __group::sends_headers_frame_with_empty_path_component as test;
+$body
+}
+
+/// All HTTP/2 requests MUST include exactly one valid value for the ":method",
+/// ":scheme", and ":path" pseudo-header fields, unless they are CONNECT
+/// requests (Section 8.5). An HTTP request that omits mandatory pseudo-header
+/// fields is malformed (Section 8.1.1).
+#[test]
+fn sends_headers_frame_without_method() {
+use __group::sends_headers_frame_without_method as test;
+$body
+}
+
+#[test]
+fn sends_headers_frame_without_scheme() {
+use __group::sends_headers_frame_without_scheme as test;
+$body
+}
+
+#[test]
+fn sends_headers_frame_without_path() {
+use __group::sends_headers_frame_without_path as test;
+$body
+}
+
+#[test]
+fn sends_headers_frame_without_status() {
+use __group::sends_headers_frame_without_status as test;
+$body
+}
+
+/// A client cannot push. Thus, servers MUST treat the receipt of a PUSH_PROMISE
+/// frame as a connection error (Section 5.4.1) of type PROTOCOL_ERROR. A server
+/// cannot set the SETTINGS_ENABLE_PUSH setting to a value other than 0 (see
+/// Section 6.5.2).
+#[test]
+fn client_sends_push_promise_frame() {
+use __group::client_sends_push_promise_frame as test;
+$body
+}
+
+/// The CONNECT method (Section 9.3.6 of [HTTP]) is used to convert an HTTP
+/// connection into a tunnel to a remote host. CONNECT is primarily used with
+/// HTTP proxies to establish a TLS session with an origin server for the
+/// purposes of interacting with "https" resources.
+///
+/// In HTTP/2, the CONNECT method establishes a tunnel over a single HTTP/2
+/// stream to a remote host, rather than converting the entire connection to a
+/// tunnel. A CONNECT header section is constructed as defined in Section 8.3.1
+/// ("Request Pseudo-Header Fields"), with a few differences. Specifically:
+///
+/// The ":method" pseudo-header field is set to CONNECT.
+/// The ":scheme" and ":path" pseudo-header fields MUST be omitted.
+/// The ":authority" pseudo-header field contains the host and port to connect
+/// to (equivalent to the authority-form of the request-target of CONNECT
+/// requests; see Section 3.2.3 of [HTTP/1.1]).
+#[test]
+fn sends_connect_with_scheme() {
+use __group::sends_connect_with_scheme as test;
+$body
+}
+
+#[test]
+fn sends_connect_with_path() {
+use __group::sends_connect_with_path as test;
+$body
+}
+
+#[test]
+fn sends_connect_without_authority() {
+use __group::sends_connect_without_authority as test;
+$body
+}
+
+/// All pseudo-header fields MUST appear in a field block before all regular
+/// field lines (RFC 9113, section 8.3)
+#[test]
+fn sends_headers_frame_with_pseudo_headers_after_regular_headers() {
+use __group::sends_headers_frame_with_pseudo_headers_after_regular_headers as test;
+$body
+}
+}
 }
 }
 }

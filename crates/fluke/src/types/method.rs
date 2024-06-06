@@ -3,7 +3,7 @@ use std::fmt;
 use fluke_buffet::{Piece, PieceStr};
 
 /// An HTTP method, see <https://httpwg.org/specs/rfc9110.html#methods>
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Method {
     Get,
     Head,

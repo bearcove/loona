@@ -1,3 +1,4 @@
+use fluke_buffet::Piece;
 use http::{StatusCode, Version};
 use tokio::sync::mpsc;
 use tracing::debug;
@@ -13,13 +14,22 @@ pub(crate) enum EncoderState {
     ResponseDone,
 }
 
-pub struct H2Encoder {
-    pub(crate) stream_id: StreamId,
-    pub(crate) tx: mpsc::Sender<H2Event>,
-    pub(crate) state: EncoderState,
+/// Encodes HTTP/2 responses and bodies
+pub(crate) struct H2Encoder {
+    stream_id: StreamId,
+    tx: mpsc::Sender<H2Event>,
+    state: EncoderState,
 }
 
 impl H2Encoder {
+    pub(crate) fn new(stream_id: StreamId, tx: mpsc::Sender<H2Event>) -> Self {
+        Self {
+            stream_id,
+            tx,
+            state: EncoderState::ExpectResponseHeaders,
+        }
+    }
+
     fn event(&self, payload: H2EventPayload) -> H2Event {
         H2Event {
             payload,
@@ -54,11 +64,7 @@ impl Encoder for H2Encoder {
     }
 
     // TODO: BodyWriteMode is not relevant for h2
-    async fn write_body_chunk(
-        &mut self,
-        chunk: fluke_buffet::PieceCore,
-        _mode: BodyWriteMode,
-    ) -> eyre::Result<()> {
+    async fn write_body_chunk(&mut self, chunk: Piece, _mode: BodyWriteMode) -> eyre::Result<()> {
         assert!(matches!(self.state, EncoderState::ExpectResponseBody));
 
         self.send(H2EventPayload::BodyChunk(chunk)).await?;

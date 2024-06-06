@@ -10,7 +10,7 @@ use crate::{rfc9113::default_settings, Conn, ErrorC, FrameT};
 /// The server connection preface consists of a potentially empty
 /// SETTINGS frame (Section 6.5) that MUST be the first frame
 /// the server sends in the HTTP/2 connection.
-pub async fn sends_client_connection_preface<IO: IntoHalves + 'static>(
+pub async fn sends_client_connection_preface<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.send(PREFACE).await?;
@@ -26,7 +26,7 @@ pub async fn sends_client_connection_preface<IO: IntoHalves + 'static>(
 
 /// Clients and servers MUST treat an invalid connection preface as
 /// a connection error (Section 5.4.1) of type PROTOCOL_ERROR.
-pub async fn sends_invalid_connection_preface<IO: IntoHalves + 'static>(
+pub async fn sends_invalid_connection_preface<IO: IntoHalves>(
     mut conn: Conn<IO>,
 ) -> eyre::Result<()> {
     conn.send("INVALID CONNECTION PREFACE\r\n\r\n").await?;
