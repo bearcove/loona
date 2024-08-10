@@ -1,4 +1,6 @@
-use std::{collections::HashMap, future::Future, pin::Pin, rc::Rc, time::Duration};
+use std::{
+    collections::HashMap, future::Future, net::SocketAddr, pin::Pin, rc::Rc, time::Duration,
+};
 
 use fluke_buffet::{net::TcpStream, IntoHalves};
 use httpwg::{rfc9113, Config, Conn};
@@ -34,6 +36,7 @@ fn main() {
                         }
                     }
 
+                    let addr: SocketAddr = addr.parse().unwrap();
                     let stream =
                         tokio::time::timeout(Duration::from_millis(250), TcpStream::connect(addr))
                             .await

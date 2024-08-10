@@ -21,6 +21,9 @@ cov:
 build-testbed:
 	cargo build --release -p fluke-hyper-testbed
 
+t *args:
+    just test {{args}}
+
 # Run all tests with cargo nextest
 test *args:
 	#!/bin/bash
