@@ -4,8 +4,7 @@ _default:
 	just --list
 
 # Run all tests with nextest and cargo-llvm-cov
-ci-test:
-    #!/bin/bash -eux
+ci-test: #!/bin/bash -eux
     just build-testbed
     just cov
     just httpwg-over-tcp
@@ -47,10 +46,11 @@ tls-sample:
 httpwg-gen:
     cargo run --release --package httpwg-gen
 
-httpwg-over-tcp:
+httpwg-over-tcp *args:
     cargo build --release \
         --package fluke-httpwg-server \
         --package httpwg-cli
     ./target/release/httpwg \
         --address localhost:8000 \
+        {{args}} \
         -- ./target/release/fluke-httpwg-server

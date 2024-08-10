@@ -270,6 +270,8 @@ impl<IO: IntoHalves> Conn<IO> {
                                     Ok(res) => res,
                                     Err(_) => {
                                         debug!(?frame_len, "timed out reading frame payload");
+                                        // FIXME: that breaks with "Op dropped before completion" —
+                                        // we should gracefully cancel, wait for cancellation, etc.
                                         break 'read;
                                     }
                                 };
@@ -666,10 +668,13 @@ impl<IO: IntoHalves> Conn<IO> {
     ) -> eyre::Result<()> {
         let codes = codes.into();
 
-        match self
+        tracing::debug!("waiting for frame GoAaway | RstStream");
+        let frame_wait_outcome = self
             .wait_for_frame(FrameT::GoAway | FrameT::RstStream)
-            .await
-        {
+            .await;
+        tracing::debug!("waiting for frame GoAaway | RstStream.. got an outcome");
+
+        match frame_wait_outcome {
             FrameWaitOutcome::Success(frame, payload) => {
                 match frame.frame_type {
                     FrameType::GoAway => {
@@ -691,6 +696,8 @@ impl<IO: IntoHalves> Conn<IO> {
                         }
                     }
                     FrameType::RstStream => {
+                        tracing::debug!("waiting for frame GoAaway | RstStream.. got RstStream");
+
                         let (_, rststream) = RstStream::parse(payload).finish().unwrap();
                         let error_code = KnownErrorCode::try_from(rststream.error_code)
                             .map_err(|_| eyre::eyre!(
@@ -980,7 +987,9 @@ impl<IO: IntoHalves> Conn<IO> {
         )
         .await?;
 
+        tracing::debug!("verifying stream error...");
         self.verify_stream_error(ErrorC::ProtocolError).await?;
+        tracing::debug!("verifying stream error... done!");
 
         Ok(())
     }
