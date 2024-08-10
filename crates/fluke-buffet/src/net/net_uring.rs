@@ -151,6 +151,7 @@ impl WriteOwned for TcpWriteHalf {
     // TODO: implement writev
 
     async fn shutdown(&mut self) -> std::io::Result<()> {
+        tracing::debug!("requesting shutdown");
         let sqe =
             io_uring::opcode::Shutdown::new(io_uring::types::Fd(self.0.fd), libc::SHUT_WR).build();
         let cqe = get_ring().push(sqe).await;
