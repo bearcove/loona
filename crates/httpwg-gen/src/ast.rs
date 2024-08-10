@@ -20,6 +20,7 @@ pub struct Document {
 
 #[derive(Deserialize)]
 pub struct Item {
+    #[allow(dead_code)]
     pub id: ItemId,
     pub name: Option<String>,
     pub docs: Option<String>,
