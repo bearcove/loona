@@ -8,6 +8,7 @@ ci-test:
     #!/bin/bash -eux
     just build-testbed
     just cov
+    just httpwg-over-tcp
 
 cov:
     #!/bin/bash -eux
@@ -45,3 +46,11 @@ tls-sample:
 
 httpwg-gen:
     cargo run --release --package httpwg-gen
+
+httpwg-over-tcp:
+    cargo build --release \
+        --package fluke-httpwg-server \
+        --package httpwg-cli
+    ./target/release/httpwg \
+        --address localhost:8000 \
+        -- ./target/release/fluke-httpwg-server
