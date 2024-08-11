@@ -90,6 +90,23 @@ impl<C: cqueue::Entry> Drop for Op<C> {
                 std::mem::forget(cancel_op);
                 tracing::debug!("doing async cancel for op {index} (cancel_fut forgotten)");
 
+                struct NoisyDrop;
+
+                impl Drop for NoisyDrop {
+                    fn drop(&mut self) {
+                        tracing::debug!("dropping noisy drop");
+                    }
+                }
+
+                let noisy_drop = NoisyDrop;
+                tracing::debug!("spawning noisy drop task");
+                tokio::task::spawn_local(async move {
+                    tracing::debug!("inside noisy drop spawned task");
+                    drop(noisy_drop);
+                    tracing::debug!("inside noisy drop spawned task.. dropped!");
+                });
+                tracing::debug!("spawned noisy drop task");
+
                 tokio::task::spawn_local(async move {
                     tracing::debug!("cancelling op {index}");
                     cancel_op_inner.await;
