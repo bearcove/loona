@@ -14,10 +14,7 @@ use fluke::{
 };
 use http::Version;
 use ktls::CorkStream;
-use rustls::{
-    pki_types::{CertificateDer, PrivatePkcs8KeyDer},
-    ServerConfig,
-};
+use rustls::{pki_types::PrivatePkcs8KeyDer, ServerConfig};
 use tokio::net::TcpListener;
 use tracing::{debug, info};
 use tracing_subscriber::EnvFilter;
@@ -39,15 +36,15 @@ async fn async_main() -> eyre::Result<()> {
         return Ok(());
     }
 
-    let pair = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
-    let crt = pair.serialize_der()?;
-    let key = pair.serialize_private_key_der();
+    let certified_key = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
+    let crt = certified_key.cert.der();
+    let key = certified_key.key_pair.serialize_der();
 
     let mut server_config = ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(
-            vec![CertificateDer::from(crt)],
-            PrivatePkcs8KeyDer::from(key).into(),
+            vec![crt.clone()],
+            PrivatePkcs8KeyDer::from(key.clone()).into(),
         )
         .unwrap();
 
