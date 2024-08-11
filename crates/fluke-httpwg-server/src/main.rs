@@ -13,7 +13,7 @@ fn main() {
     setup_tracing_and_error_reporting();
 
     fluke_buffet::start(async move {
-        let ln = fluke_buffet::net::TcpListener::bind("127.0.0.1:8000".parse().unwrap())
+        let ln = fluke_buffet::net::TcpListener::bind("127.0.0.1:8001".parse().unwrap())
             .await
             .unwrap();
 

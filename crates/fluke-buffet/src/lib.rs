@@ -20,7 +20,8 @@ mod uring;
 #[cfg(all(target_os = "linux", feature = "uring"))]
 pub use uring::get_ring;
 
-/// Spawns a new asynchronous task, returning a [tokio::task::JoinHandle] for it.
+/// Spawns a new asynchronous task, returning a [tokio::task::JoinHandle] for
+/// it.
 ///
 /// Spawning a task enables the task to execute concurrently to other tasks.
 /// There is no guarantee that a spawned task will execute to completion. When a
@@ -48,12 +49,17 @@ pub fn start<F: Future>(task: F) -> F::Output {
         .build()
         .unwrap();
     let res = rt.block_on(async move {
-        let local = LocalSet::new();
-        local.spawn_local(IoUringAsync::listen(get_ring()));
+        let lset = LocalSet::new();
+        lset.spawn_local(IoUringAsync::listen(get_ring()));
 
-        let res = local.run_until(task).await;
-        if (tokio::time::timeout(std::time::Duration::from_millis(250), local).await).is_err() {
-            eprintln!("timed out waiting for local set");
+        let res = lset.run_until(task).await;
+        tracing::debug!("waiting for local set (cancellations, cleanups etc.)");
+        // let cleanup_timeout = std::time::Duration::from_millis(250);
+        let cleanup_timeout = std::time::Duration::from_secs(1);
+        if (tokio::time::timeout(cleanup_timeout, lset).await).is_err() {
+            tracing::debug!(
+                "🥲 timed out waiting for local set (async cancellations, cleanups etc.)"
+            );
         }
         res
     });

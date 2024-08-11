@@ -592,6 +592,7 @@ pub async fn sends_headers_frame_with_empty_path_component<IO: IntoHalves>(
     headers.replace(":path", "");
     conn.send_req_and_expect_stream_rst(StreamId(1), &headers)
         .await?;
+    tracing::debug!("empty path component test passed!");
 
     Ok(())
 }

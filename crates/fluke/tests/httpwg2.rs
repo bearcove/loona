@@ -27,8 +27,7 @@ pub(crate) fn setup_tracing_and_error_reporting() {
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_ansi(true)
         .with_file(false)
-        .with_line_number(false)
-        .without_time();
+        .with_line_number(false);
 
     tracing_subscriber::registry()
         .with(targets)

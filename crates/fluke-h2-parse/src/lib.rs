@@ -404,9 +404,9 @@ impl Frame {
 }
 
 impl IntoPiece for Frame {
-    fn into_piece(self, mut scratch: &mut RollMut) -> std::io::Result<Piece> {
+    fn into_piece(self, scratch: &mut RollMut) -> std::io::Result<Piece> {
         debug_assert_eq!(scratch.len(), 0);
-        self.write_into(&mut scratch)?;
+        self.write_into(&mut *scratch)?;
         Ok(scratch.take_all().into())
     }
 }

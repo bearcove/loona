@@ -10,18 +10,18 @@ publish = false
 
 [dev-dependencies]
 fluke = { version = "0.1.1", path = "../../crates/fluke" }
-bytes = { version = "1.5.0", default-features = false }
+bytes = { version = "1.7.1", default-features = false }
 pretty_assertions = { version = "1.4.0", default-features = false, features = [
     "std",
 ] }
-tokio-stream = { version = "0.1.14", default-features = false }
+tokio-stream = { version = "0.1.15", default-features = false }
 tracing-subscriber = { version = "0.3.18", default-features = false, features = [
     "std",
     "fmt",
     "ansi",
 ] }
-httparse = { version = "1.8.0", default-features = false, features = ["std"] }
-tokio = { version = "1.36.0", default-features = false, features = [
+httparse = { version = "1.9.4", default-features = false, features = ["std"] }
+tokio = { version = "1.39.2", default-features = false, features = [
     "io-util",
     "process",
     "time",
@@ -29,7 +29,7 @@ tokio = { version = "1.36.0", default-features = false, features = [
 futures-util = { version = "0.3.30", default-features = false, features = [
     "std",
 ] }
-libc = "0.2.153"
+libc = "0.2.155"
 eyre = { version = "0.6.12", default-features = false }
 tracing = "0.1.40"
 http = "1.1.0"
