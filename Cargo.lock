@@ -331,6 +331,7 @@ dependencies = [
  "send_wrapper",
  "slab",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

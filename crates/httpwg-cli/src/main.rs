@@ -174,7 +174,7 @@ async fn async_main(args: Args) -> eyre::Result<()> {
 
     eprintln!("Waiting until server is listening on {addr}");
     let start = std::time::Instant::now();
-    let duration = Duration::from_secs(3);
+    let duration = Duration::from_secs(1);
     while start.elapsed() < duration {
         match tokio::time::timeout(Duration::from_millis(100), TcpStream::connect(addr)).await {
             Ok(Ok(_)) => break,

@@ -53,10 +53,13 @@ pub fn start<F: Future>(task: F) -> F::Output {
         lset.spawn_local(IoUringAsync::listen(get_ring()));
 
         let res = lset.run_until(task).await;
+        tracing::debug!("waiting for local set (cancellations, cleanups etc.)");
         // let cleanup_timeout = std::time::Duration::from_millis(250);
-        let cleanup_timeout = std::time::Duration::from_secs(3);
+        let cleanup_timeout = std::time::Duration::from_secs(1);
         if (tokio::time::timeout(cleanup_timeout, lset).await).is_err() {
-            eprintln!("🥲 timed out waiting for local set (async cancellations, cleanups etc.)");
+            tracing::debug!(
+                "🥲 timed out waiting for local set (async cancellations, cleanups etc.)"
+            );
         }
         res
     });

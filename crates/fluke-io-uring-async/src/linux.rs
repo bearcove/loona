@@ -62,21 +62,43 @@ impl<C: cqueue::Entry> Drop for Op<C> {
     fn drop(&mut self) {
         let inner = self.inner.take().unwrap();
         let guard = inner.slab.borrow();
+        let index = inner.index;
         match &guard[inner.index] {
             Lifecycle::Completed(_) => {}
             _ => {
+                let state_name = match &guard[inner.index] {
+                    Lifecycle::Submitted => "Submitted",
+                    Lifecycle::Waiting(_) => "Waiting",
+                    Lifecycle::Completed(_) => "Completed",
+                };
+                tracing::debug!("dropping op {index} ({})", state_name);
+
                 drop(guard);
 
                 // submit cancel op
-                let op = AsyncCancel::new(inner.index.try_into().unwrap()).build();
-                let mut cancel_fut = get_ring().push(op);
-                let cancel_fut_inner = cancel_fut.inner.take().unwrap();
-                std::mem::forget(cancel_fut);
+                tracing::debug!("doing async cancel for op {index}");
+                let cancel = AsyncCancel::new(inner.index.try_into().unwrap()).build();
+                tracing::debug!("doing async cancel for op {index} (.build called)");
+                let mut cancel_op = get_ring().push(cancel);
+                tracing::debug!("doing async cancel for op {index} (.push called)");
+                let cancel_op_inner = cancel_op.inner.take().unwrap();
+                tracing::debug!(
+                    "doing async cancel for op {index} (cancel op has index {})",
+                    cancel_op_inner.index
+                );
+                tracing::debug!("doing async cancel for op {index} (.take called)");
+                std::mem::forget(cancel_op);
+                tracing::debug!("doing async cancel for op {index} (cancel_fut forgotten)");
 
                 tokio::task::spawn_local(async move {
-                    cancel_fut_inner.await;
+                    tracing::debug!("cancelling op {index}");
+                    cancel_op_inner.await;
+                    tracing::debug!("cancelling op {index}.. cancel_fut returned!");
                     inner.await;
+                    tracing::debug!("cancelling op {index}.. inner returned!");
                 });
+
+                tracing::debug!("doing async cancel for op {index} (task spawned)");
             }
         }
     }
@@ -120,6 +142,14 @@ impl<C: cqueue::Entry> Drop for OpInner<C> {
                 if std::thread::panicking() {
                     // thread is panicking, eschewing drop cleanliness check
                 } else {
+                    let lifecycle_name = match lifecycle {
+                        Lifecycle::Submitted => "Submitted",
+                        Lifecycle::Waiting(_) => "Waiting",
+                        Lifecycle::Completed(_) => "Completed",
+                    };
+                    let index = self.index;
+                    tracing::debug!("dropping op inner {index} ({})", lifecycle_name);
+
                     panic!("Op drop occured before completion (index {})", self.index)
                 }
             }
@@ -255,8 +285,8 @@ mod tests {
         let uring = IoUringAsync::new(8).unwrap();
         let uring = Rc::new(uring);
 
-        // Create a new current_thread runtime that submits all outstanding submission queue
-        // entries as soon as the executor goes idle.
+        // Create a new current_thread runtime that submits all outstanding submission
+        // queue entries as soon as the executor goes idle.
         let uring_clone = SendWrapper::new(uring.clone());
         let runtime = tokio::runtime::Builder::new_current_thread()
             .on_thread_park(move || {
