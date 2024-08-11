@@ -2,7 +2,7 @@
 
 use std::io::Write;
 
-use fluke_buffet::{IntoHalves, WriteOwned};
+use fluke_buffet::IntoHalves;
 use fluke_h2_parse::{pack_bit_and_u31, FrameType, HeadersFlags, StreamId};
 
 use crate::{Conn, ErrorC, FrameT, Headers};
@@ -593,10 +593,6 @@ pub async fn sends_headers_frame_with_empty_path_component<IO: IntoHalves>(
     conn.send_req_and_expect_stream_rst(StreamId(1), &headers)
         .await?;
     tracing::debug!("empty path component test passed!");
-
-    tracing::debug!("requesting shutdown...");
-    conn.w.shutdown().await?;
-    tracing::debug!("requesting shutdown... done!");
 
     Ok(())
 }

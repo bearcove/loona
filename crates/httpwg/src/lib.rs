@@ -991,9 +991,7 @@ impl<IO: IntoHalves> Conn<IO> {
         self.verify_stream_error(ErrorC::ProtocolError).await?;
         tracing::debug!("verifying stream error... done!");
 
-        tracing::debug!("requesting shutdown");
-        self.w.shutdown().await?;
-        tracing::debug!("requesting shutdown... done!");
+        // self.w.shutdown().await?;
 
         Ok(())
     }

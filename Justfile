@@ -51,6 +51,6 @@ httpwg-over-tcp *args:
         --package fluke-httpwg-server \
         --package httpwg-cli
     ./target/release/httpwg \
-        --address localhost:8000 \
+        --address localhost:8001 \
         {{args}} \
         -- ./target/release/fluke-httpwg-server
