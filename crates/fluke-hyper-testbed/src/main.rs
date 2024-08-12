@@ -100,7 +100,7 @@ async fn main() {
     while let Ok((stream, _)) = ln.accept().await {
         tokio::spawn(async move {
             let mut builder = auto::Builder::new(TokioExecutor::new());
-            builder = builder.http2_only();
+            builder = builder.http1_only();
             builder
                 .serve_connection(TokioIo::new(stream), TestService)
                 .await
