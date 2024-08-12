@@ -95,6 +95,10 @@ pub struct Conn<IO: IntoHalves> {
     hpack_dec: fluke_hpack::Decoder<'static>,
     /// the peer's settings
     pub settings: Settings,
+
+    // this field exists for the `Drop` impl
+    #[allow(dead_code)]
+    cancel_tx: tokio::sync::oneshot::Sender<()>,
 }
 
 pub enum Ev {
@@ -351,7 +355,23 @@ impl<IO: IntoHalves> Conn<IO> {
                 Ok::<_, eyre::Report>(())
             }
         };
-        fluke_buffet::spawn(async move { recv_fut.await.unwrap() });
+
+        // cancel_tx is slapped as a field of `Conn`, which means when `Conn` is
+        // dropped, the receive loop will be cancelled — before the LocalSet is shut
+        // down.
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+
+        tokio::task::spawn_local(async move {
+            tokio::select! {
+                _ = cancel_rx => {
+                    // Task cancelled
+                    tracing::trace!("httpwg receive loop cancelled!");
+                },
+                result = recv_fut => {
+                    result.unwrap();
+                }
+            }
+        });
 
         let mut settings: Settings = Default::default();
         for (code, value) in default_settings().0 {
@@ -370,6 +390,7 @@ impl<IO: IntoHalves> Conn<IO> {
                 max_frame_size: DEFAULT_FRAME_SIZE,
                 ..Default::default()
             },
+            cancel_tx,
         }
     }
 

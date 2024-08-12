@@ -54,8 +54,7 @@ pub fn start<F: Future>(task: F) -> F::Output {
 
         let res = lset.run_until(task).await;
         tracing::debug!("waiting for local set (cancellations, cleanups etc.)");
-        // let cleanup_timeout = std::time::Duration::from_millis(250);
-        let cleanup_timeout = std::time::Duration::from_secs(1);
+        let cleanup_timeout = std::time::Duration::from_millis(250);
         if (tokio::time::timeout(cleanup_timeout, lset).await).is_err() {
             tracing::debug!(
                 "🥲 timed out waiting for local set (async cancellations, cleanups etc.)"
