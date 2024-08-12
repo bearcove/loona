@@ -149,7 +149,7 @@ async fn async_main(args: Args) -> eyre::Result<()> {
         for arg in iter {
             cmd.arg(arg);
         }
-        #[cfg(unix)]
+        #[cfg(target_os = "linux")]
         unsafe {
             // avoid zombie children on unix: no matter how the test runner dies,
             // the server will die with it.
