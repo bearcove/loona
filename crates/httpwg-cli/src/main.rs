@@ -209,7 +209,11 @@ async fn async_main(args: Args) -> eyre::Result<()> {
                     boxed_test(conn).await.unwrap();
                     println!("✅ Test passed: {}", test_name);
                 };
-                local_set.spawn_local(test);
+                local_set.spawn_local(async move {
+                    {
+                        test.await;
+                    }
+                });
             }
         }
     }
