@@ -49,20 +49,41 @@ pub fn start<F: Future>(task: F) -> F::Output {
         .build()
         .unwrap();
     let res = rt.block_on(async move {
-        let lset = LocalSet::new();
-        lset.spawn_local(IoUringAsync::listen(get_ring()));
+        let mut lset = LocalSet::new();
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        let listen_task = IoUringAsync::listen(get_ring());
+        lset.spawn_local(async move {
+            tokio::select! {
+                _ = listen_task => {
+                    tracing::trace!("IoUringAsync listen task finished");
+                },
+                _ = cancel_rx => {
+                    tracing::trace!("IoUringAsync listen task cancelled");
+                }
+            }
+        });
 
         let res = lset.run_until(task).await;
+
         tracing::debug!("waiting for local set (cancellations, cleanups etc.)");
-        let cleanup_timeout = std::time::Duration::from_millis(250);
-        if (tokio::time::timeout(cleanup_timeout, lset).await).is_err() {
-            tracing::debug!(
-                "🥲 timed out waiting for local set (async cancellations, cleanups etc.)"
-            );
+
+        // during this poll, the async cancellations get submitted
+        let cancel_submit_timeout = std::time::Duration::from_millis(0);
+        if (tokio::time::timeout(cancel_submit_timeout, &mut lset).await).is_err() {
+            drop(cancel_tx);
+
+            // during this second poll, the async cancellations hopefuly finish
+            let cleanup_timeout = std::time::Duration::from_millis(500);
+            if (tokio::time::timeout(cleanup_timeout, lset).await).is_err() {
+                tracing::warn!(
+                    "🥲 timed out waiting for local set (async cancellations, cleanups etc.)"
+                );
+            }
         }
+
         res
     });
-    rt.shutdown_timeout(std::time::Duration::from_millis(250));
+    rt.shutdown_timeout(std::time::Duration::from_millis(20));
     res
 }
 
