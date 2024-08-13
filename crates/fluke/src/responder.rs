@@ -1,17 +1,17 @@
 use fluke_buffet::Piece;
 use http::header;
 
-use crate::{Body, BodyChunk, Headers, Response};
+use crate::{Body, BodyChunk, Headers, HeadersExt, Response};
 
 pub trait ResponseState {}
 
 pub struct ExpectResponseHeaders;
 impl ResponseState for ExpectResponseHeaders {}
 
-// TODO: at this stage, keep track of how much body we've
-// written, and error out if it's less or more than the
-// announced content-length
-pub struct ExpectResponseBody;
+pub struct ExpectResponseBody {
+    pub announced_content_length: Option<u64>,
+    pub bytes_written: u64,
+}
 impl ResponseState for ExpectResponseBody {}
 
 pub struct ResponseDone;
@@ -48,21 +48,34 @@ where
         Ok(())
     }
 
-    /// Send the final response headers
-    /// Errors out if the response status is < 200.
-    /// Errors out if the client sent `expect: 100-continue`
-    pub async fn write_final_response(
+    async fn write_final_response_internal(
         mut self,
         res: Response,
+        announced_content_length: Option<u64>,
     ) -> eyre::Result<Responder<E, ExpectResponseBody>> {
         if res.status.is_informational() {
             return Err(eyre::eyre!("final response must have status code >= 200"));
         }
         self.encoder.write_response(res).await?;
         Ok(Responder {
-            state: ExpectResponseBody,
+            state: ExpectResponseBody {
+                announced_content_length,
+                bytes_written: 0,
+            },
             encoder: self.encoder,
         })
+    }
+
+    /// Send the final response headers
+    /// Errors out if the response status is < 200.
+    /// Errors out if the client sent `expect: 100-continue`
+    pub async fn write_final_response(
+        self,
+        res: Response,
+    ) -> eyre::Result<Responder<E, ExpectResponseBody>> {
+        let announced_content_length = res.headers.content_length();
+        self.write_final_response_internal(res, announced_content_length)
+            .await
     }
 
     /// Writes a response with the given body. Sets `content-length` or
@@ -96,8 +109,6 @@ where
                     this.write_chunk(chunk).await?;
                 }
                 BodyChunk::Done { trailers } => {
-                    // TODO: should we do something here in case of
-                    // content-length mismatches?
                     return this.finish_body(trailers).await;
                 }
             }
@@ -113,6 +124,7 @@ where
     /// announced content-length.
     #[inline]
     pub async fn write_chunk(&mut self, chunk: Piece) -> eyre::Result<()> {
+        self.state.bytes_written += chunk.len() as u64;
         self.encoder.write_body_chunk(chunk).await
     }
 
@@ -126,12 +138,19 @@ where
         mut self,
         trailers: Option<Box<Headers>>,
     ) -> eyre::Result<Responder<E, ResponseDone>> {
+        if let Some(announced_content_length) = self.state.announced_content_length {
+            if self.state.bytes_written != announced_content_length {
+                eyre::bail!(
+                    "content-length mismatch: announced {announced_content_length}, wrote {}",
+                    self.state.bytes_written
+                );
+            }
+        }
         self.encoder.write_body_end().await?;
+
         if let Some(trailers) = trailers {
             self.encoder.write_trailers(trailers).await?;
         }
-
-        // TODO: check announced content-length size vs actual, etc.
 
         Ok(Responder {
             state: ResponseDone,
@@ -155,4 +174,60 @@ pub trait Encoder {
     async fn write_body_chunk(&mut self, chunk: Piece) -> eyre::Result<()>;
     async fn write_body_end(&mut self) -> eyre::Result<()>;
     async fn write_trailers(&mut self, trailers: Box<Headers>) -> eyre::Result<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fluke_buffet::Piece;
+    use http::{StatusCode, Version};
+
+    struct MockEncoder;
+
+    impl Encoder for MockEncoder {
+        async fn write_response(&mut self, _: Response) -> eyre::Result<()> {
+            Ok(())
+        }
+        async fn write_body_chunk(&mut self, _: Piece) -> eyre::Result<()> {
+            Ok(())
+        }
+        async fn write_body_end(&mut self) -> eyre::Result<()> {
+            Ok(())
+        }
+        async fn write_trailers(&mut self, _: Box<Headers>) -> eyre::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_content_length_mismatch() {
+        let encoder = MockEncoder;
+        let mut res = Response {
+            status: StatusCode::OK,
+            version: Version::HTTP_11,
+            headers: Default::default(),
+        };
+        res.headers.insert(header::CONTENT_LENGTH, "10".into());
+
+        // Test writing fewer bytes than announced
+        let mut responder = Responder::new(encoder)
+            .write_final_response(res.clone())
+            .await
+            .unwrap();
+        responder.write_chunk(b"12345".into()).await.unwrap();
+        let result = responder.finish_body(None).await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(e) if e.to_string().contains("content-length mismatch")));
+
+        // Test writing more bytes than announced
+        let encoder = MockEncoder;
+        let mut responder = Responder::new(encoder)
+            .write_final_response(res)
+            .await
+            .unwrap();
+        responder.write_chunk(b"12345678901".into()).await.unwrap();
+        let result = responder.finish_body(None).await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(e) if e.to_string().contains("content-length mismatch")));
+    }
 }
