@@ -54,3 +54,16 @@ httpwg-over-tcp *args:
         --address localhost:8001 \
         {{args}} \
         -- ./target/release/fluke-httpwg-server
+
+profile:
+    #!/usr/bin/env -S bash -eux
+    export RUSTUP_TOOLCHAIN=nightly
+    export CARGO_BUILD_TARGET="aarch64-apple-darwin"
+    export CARGO_TARGET_DIR=target-profiling
+    cargo +nightly -Z build-std -v instruments \
+        --bench "encoding" \
+        --template time \
+        --profile profiling \
+        -- \
+        --bench 'format_content_length/format_content_length/itoa/buffet' \
+        --profile-time 10
