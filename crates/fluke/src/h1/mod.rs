@@ -8,5 +8,6 @@ mod server;
 pub use server::*;
 
 pub(crate) mod body;
-pub(crate) mod encode;
 pub(crate) mod parse;
+
+pub mod encode;
