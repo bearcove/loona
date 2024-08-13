@@ -84,13 +84,10 @@ pub fn format_content_length(c: &mut Criterion) {
                     use itoa::Buffer;
                     let mut buffer = Buffer::new();
                     let s = buffer.format(*length);
-                    let content_len = roll
-                        .put_to_roll(s.len(), |slice| {
-                            slice.copy_from_slice(s.as_bytes());
-                            Ok(())
-                        })
-                        .unwrap();
-                    black_box(content_len);
+                    // that's the max length of an u64 formatted as decimal
+                    roll.reserve_at_least(20).unwrap();
+                    roll.put(s.as_bytes()).unwrap();
+                    black_box(roll.take_all());
                 }
             },
             codspeed_criterion_compat::BatchSize::SmallInput,

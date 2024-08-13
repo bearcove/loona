@@ -287,6 +287,7 @@ impl RollMut {
     /// gain ownership of `self` again is to complete the read operation.
     ///
     /// Panics if `cap` is zero
+    #[inline]
     pub async fn read_into(
         self,
         limit: usize,
@@ -314,6 +315,7 @@ impl RollMut {
 
     /// Put a slice into this buffer, fails if the slice doesn't fit in the
     /// buffer's capacity
+    #[inline]
     pub fn put(&mut self, s: impl AsRef<[u8]>) -> Result<()> {
         let s = s.as_ref();
 
@@ -331,6 +333,7 @@ impl RollMut {
     }
 
     /// Put data into this RollMut with a closure. Panics if `len > self.cap()`
+    #[inline]
     pub fn put_with<T>(&mut self, len: usize, f: impl FnOnce(&mut [u8]) -> Result<T>) -> Result<T> {
         assert!(len <= self.cap());
 
@@ -348,6 +351,7 @@ impl RollMut {
     /// Assert that this RollMut isn't filled at all, reserve enough size to put
     /// `len` bytes in it, then fill it with the given closure. If the closure
     /// returns `Err`, it's as if the put never happened.
+    #[inline]
     pub fn put_to_roll(
         &mut self,
         put_len: usize,
