@@ -354,13 +354,14 @@ impl RollMut {
         f: impl FnOnce(&mut [u8]) -> Result<()>,
     ) -> Result<Roll> {
         let put_len_u32: u32 = put_len.try_into().unwrap();
-        assert_eq!(self.len, 0);
         self.reserve_at_least(put_len)?;
+        assert_eq!(self.len, 0);
         let slice = unsafe { slice::from_raw_parts_mut(self.storage.as_mut_ptr(), put_len) };
         match f(slice) {
             Ok(()) => {
                 // Safety: `reserve_at_least` ensures that `put_len` is <= self.len
                 let roll = unsafe { self.filled_unchecked_len(put_len_u32) };
+                unsafe { self.storage_skip_unchecked(put_len_u32) };
                 Ok(roll)
             }
             Err(e) => Err(e),
