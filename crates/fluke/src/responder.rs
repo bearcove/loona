@@ -182,6 +182,7 @@ mod tests {
     use fluke_buffet::Piece;
     use http::{StatusCode, Version};
 
+    #[derive(Clone, Copy)]
     struct MockEncoder;
 
     impl Encoder for MockEncoder {
@@ -202,32 +203,34 @@ mod tests {
     #[tokio::test]
     async fn test_content_length_mismatch() {
         let encoder = MockEncoder;
-        let mut res = Response {
-            status: StatusCode::OK,
-            version: Version::HTTP_11,
-            headers: Default::default(),
-        };
-        res.headers.insert(header::CONTENT_LENGTH, "10".into());
+        for version in [Version::HTTP_11, Version::HTTP_2] {
+            let mut res = Response {
+                status: StatusCode::OK,
+                version,
+                headers: Default::default(),
+            };
+            res.headers.insert(header::CONTENT_LENGTH, "10".into());
 
-        // Test writing fewer bytes than announced
-        let mut responder = Responder::new(encoder)
-            .write_final_response(res.clone())
-            .await
-            .unwrap();
-        responder.write_chunk(b"12345".into()).await.unwrap();
-        let result = responder.finish_body(None).await;
-        assert!(result.is_err());
-        assert!(matches!(result, Err(e) if e.to_string().contains("content-length mismatch")));
+            // Test writing fewer bytes than announced
+            let mut responder = Responder::new(encoder)
+                .write_final_response(res.clone())
+                .await
+                .unwrap();
+            responder.write_chunk(b"12345".into()).await.unwrap();
+            let result = responder.finish_body(None).await;
+            assert!(result.is_err());
+            assert!(matches!(result, Err(e) if e.to_string().contains("content-length mismatch")));
 
-        // Test writing more bytes than announced
-        let encoder = MockEncoder;
-        let mut responder = Responder::new(encoder)
-            .write_final_response(res)
-            .await
-            .unwrap();
-        responder.write_chunk(b"12345678901".into()).await.unwrap();
-        let result = responder.finish_body(None).await;
-        assert!(result.is_err());
-        assert!(matches!(result, Err(e) if e.to_string().contains("content-length mismatch")));
+            // Test writing more bytes than announced
+            let encoder = MockEncoder;
+            let mut responder = Responder::new(encoder)
+                .write_final_response(res)
+                .await
+                .unwrap();
+            responder.write_chunk(b"12345678901".into()).await.unwrap();
+            let result = responder.finish_body(None).await;
+            assert!(result.is_err());
+            assert!(matches!(result, Err(e) if e.to_string().contains("content-length mismatch")));
+        }
     }
 }
