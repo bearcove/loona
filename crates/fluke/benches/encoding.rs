@@ -9,7 +9,7 @@ pub fn format_status_code(c: &mut Criterion) {
 
     let mut c = c.benchmark_group("format_status_code");
 
-    c.bench_function("format_status_code/std::fmt", |b| {
+    c.bench_function("format_status_code/std_fmt", |b| {
         b.iter_batched(
             || status_codes.clone(),
             |codes| {
@@ -128,7 +128,7 @@ pub fn format_content_length(c: &mut Criterion) {
         )
     });
 
-    c.bench_function("format_content_length/std::fmt", |b| {
+    c.bench_function("format_content_length/std_fmt", |b| {
         b.iter_batched(
             || content_lengths.clone(),
             |lengths| {
