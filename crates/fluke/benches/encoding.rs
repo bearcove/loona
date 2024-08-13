@@ -9,7 +9,7 @@ pub fn format_status_code(c: &mut Criterion) {
 
     let mut c = c.benchmark_group("format_status_code");
 
-    c.bench_function("std::fmt", |b| {
+    c.bench_function("format_status_code/std::fmt", |b| {
         b.iter_batched(
             || status_codes.clone(),
             |codes| {
@@ -21,7 +21,7 @@ pub fn format_status_code(c: &mut Criterion) {
         )
     });
 
-    c.bench_function("itoa", |b| {
+    c.bench_function("format_status_code/itoa (heap)", |b| {
         b.iter_batched(
             || status_codes.clone(),
             |codes| {
@@ -35,7 +35,23 @@ pub fn format_status_code(c: &mut Criterion) {
         )
     });
 
-    c.bench_function("lookup_table", |b| {
+    c.bench_function("format_status_code/itoa (stack)", |b| {
+        b.iter_batched(
+            || status_codes.clone(),
+            |codes| {
+                for code in &codes {
+                    use itoa::Buffer;
+                    let mut buffer = Buffer::new();
+                    let s = buffer.format(code.as_u16());
+                    // The `s` is borrowed from `buffer`, which is stack-allocated.
+                    black_box(s);
+                }
+            },
+            codspeed_criterion_compat::BatchSize::SmallInput,
+        )
+    });
+
+    c.bench_function("format_status_code/lookup_table", |b| {
         b.iter_batched(
             || status_codes.clone(),
             |codes| {
@@ -52,11 +68,15 @@ pub fn format_status_code(c: &mut Criterion) {
 }
 
 pub fn format_content_length(c: &mut Criterion) {
-    let content_lengths = (0..=16384).collect::<Vec<u64>>();
+    let content_lengths = (0..=1024)
+        .chain((1024..=16384).step_by(127))
+        .chain((16384..=1024 * 1024).step_by(1023))
+        .collect::<Vec<u64>>();
+    assert_eq!(content_lengths.len(), 2155);
 
     let mut c = c.benchmark_group("format_content_length");
 
-    c.bench_function("itoa (buffet)", |b| {
+    c.bench_function("format_content_length/itoa (buffet)", |b| {
         b.iter_batched(
             || (content_lengths.clone(), RollMut::alloc().unwrap()),
             |(lengths, mut roll)| {
@@ -77,7 +97,7 @@ pub fn format_content_length(c: &mut Criterion) {
         )
     });
 
-    c.bench_function("itoa (alloc)", |b| {
+    c.bench_function("format_content_length/itoa (heap)", |b| {
         b.iter_batched(
             || content_lengths.clone(),
             |lengths| {
@@ -92,7 +112,23 @@ pub fn format_content_length(c: &mut Criterion) {
         )
     });
 
-    c.bench_function("std::fmt", |b| {
+    c.bench_function("format_content_length/itoa (stack)", |b| {
+        b.iter_batched(
+            || content_lengths.clone(),
+            |lengths| {
+                for length in &lengths {
+                    use itoa::Buffer;
+                    let mut buffer = Buffer::new();
+                    let s = buffer.format(*length);
+                    // the `s` is borrowed from `buffer`, which is stack-allocated.
+                    black_box(s);
+                }
+            },
+            codspeed_criterion_compat::BatchSize::SmallInput,
+        )
+    });
+
+    c.bench_function("format_content_length/std::fmt", |b| {
         b.iter_batched(
             || content_lengths.clone(),
             |lengths| {
