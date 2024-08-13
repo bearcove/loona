@@ -39,8 +39,6 @@ impl Default for Request {
 
 impl fmt::Debug for Request {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO: make this better
-
         f.debug_struct("Request")
             .field("method", &self.method)
             .field("uri", &self.uri)

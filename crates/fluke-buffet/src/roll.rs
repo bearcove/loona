@@ -6,6 +6,7 @@ use std::{
     iter::Enumerate,
     ops::{Bound, Deref, RangeBounds},
     rc::Rc,
+    slice,
     str::Utf8Error,
 };
 
@@ -14,7 +15,13 @@ use nom::{
     Compare, CompareResult, FindSubstring, InputIter, InputLength, InputTake, InputTakeAtPosition,
     Needed, Slice,
 };
-use tracing::trace;
+
+#[macro_export]
+macro_rules! trace {
+    ($($tt:tt)*) => {
+        // tracing::trace!($($tt)*)
+    };
+}
 
 use crate::{Buf, BufMut, BUF_SIZE};
 
@@ -76,6 +83,7 @@ impl StorageMut {
         }
     }
 
+    #[inline(always)]
     unsafe fn as_mut_ptr(&mut self) -> *mut u8 {
         match self {
             StorageMut::Buf(b) => b.as_mut_ptr(),
@@ -98,9 +106,10 @@ impl BoxStorage {
         len - self.off as usize
     }
 
+    #[inline(always)]
     unsafe fn as_mut_ptr(&self) -> *mut u8 {
         let buf = self.buf.get();
-        (*buf).as_mut_ptr().add(self.off as usize)
+        (*buf).as_mut_ptr().byte_offset(self.off as _)
     }
 
     /// Returns a slice of bytes into this buffer, of the specified length
@@ -221,18 +230,19 @@ impl RollMut {
 
     /// Make sure we can hold "request_len"
     pub fn reserve_at_least(&mut self, requested_len: usize) -> Result<()> {
-        if requested_len <= self.cap() {
-            tracing::trace!(%requested_len, cap = %self.cap(), "reserve_at_least: requested_len <= cap, no need to compact");
+        let cap = self.cap();
+        if requested_len <= cap {
+            trace!(%requested_len, %cap, "reserve_at_least: requested_len <= cap, no need to compact");
             return Ok(());
         }
 
-        if self.storage.off() > 0 && requested_len <= (BUF_SIZE as usize - self.len()) {
+        let len = self.len();
+        if self.storage.off() > 0 && requested_len <= (BUF_SIZE as usize - len) {
             // we can compact the filled portion!
             self.compact()?;
         } else {
             // we need to allocate box storage of the right size
-            let new_storage_size =
-                std::cmp::max(self.storage_size() * 2, requested_len + self.len());
+            let new_storage_size = std::cmp::max(self.storage_size() * 2, requested_len + len);
             let mut new_b = vec![0u8; new_storage_size].into_boxed_slice();
             // copy the filled portion
             new_b[..self.len()].copy_from_slice(&self[..]);
@@ -242,7 +252,7 @@ impl RollMut {
             });
         }
 
-        assert!(self.cap() >= requested_len);
+        debug_assert!(self.cap() >= requested_len);
         Ok(())
     }
 
@@ -277,6 +287,7 @@ impl RollMut {
     /// gain ownership of `self` again is to complete the read operation.
     ///
     /// Panics if `cap` is zero
+    #[inline]
     pub async fn read_into(
         self,
         limit: usize,
@@ -286,7 +297,7 @@ impl RollMut {
         assert!(read_cap > 0, "refusing to do empty read");
         let read_off = self.len;
 
-        tracing::trace!(%read_off, %read_cap, storage = ?self.storage, len = %self.len, "read_into in progress...");
+        trace!(%read_off, %read_cap, storage = ?self.storage, len = %self.len, "read_into in progress...");
         let read_into = ReadInto {
             buf: self,
             off: read_off,
@@ -294,16 +305,17 @@ impl RollMut {
         };
         let (res, mut read_into) = r.read_owned(read_into).await;
         if let Ok(n) = &res {
-            tracing::trace!("read_into got {} bytes", *n);
+            trace!("read_into got {} bytes", *n);
             read_into.buf.len += *n as u32;
         } else {
-            tracing::trace!("read_into failed: {:?}", res);
+            trace!("read_into failed: {:?}", res);
         }
         (res, read_into.buf)
     }
 
     /// Put a slice into this buffer, fails if the slice doesn't fit in the
     /// buffer's capacity
+    #[inline]
     pub fn put(&mut self, s: impl AsRef<[u8]>) -> Result<()> {
         let s = s.as_ref();
 
@@ -321,12 +333,13 @@ impl RollMut {
     }
 
     /// Put data into this RollMut with a closure. Panics if `len > self.cap()`
+    #[inline]
     pub fn put_with<T>(&mut self, len: usize, f: impl FnOnce(&mut [u8]) -> Result<T>) -> Result<T> {
         assert!(len <= self.cap());
 
         let u32_len: u32 = len.try_into().unwrap();
         let slice = unsafe {
-            std::slice::from_raw_parts_mut(self.storage.as_mut_ptr().add(self.len as usize), len)
+            slice::from_raw_parts_mut(self.storage.as_mut_ptr().add(self.len as usize), len)
         };
         let res = f(slice);
         if res.is_ok() {
@@ -338,47 +351,67 @@ impl RollMut {
     /// Assert that this RollMut isn't filled at all, reserve enough size to put
     /// `len` bytes in it, then fill it with the given closure. If the closure
     /// returns `Err`, it's as if the put never happened.
+    #[inline]
     pub fn put_to_roll(
         &mut self,
-        len: usize,
+        put_len: usize,
         f: impl FnOnce(&mut [u8]) -> Result<()>,
     ) -> Result<Roll> {
-        // TODO: this whole dance is a bit silly: the idea is to have a
-        // `RollMut` around that we use whenever we need to serialize something.
-        // it's weird that we need to do all this for it to happen but ah well.
-
-        assert_eq!(self.len(), 0);
-        self.reserve_at_least(len)?;
-        self.put_with(len, f)?;
-        let roll = self.take_all();
-        debug_assert_eq!(roll.len(), len);
-        Ok(roll)
+        let put_len_u32: u32 = put_len.try_into().unwrap();
+        self.reserve_at_least(put_len)?;
+        assert_eq!(self.len, 0);
+        let slice = unsafe { slice::from_raw_parts_mut(self.storage.as_mut_ptr(), put_len) };
+        match f(slice) {
+            Ok(()) => {
+                // Safety: `reserve_at_least` ensures that `put_len` is <= self.len
+                let roll = unsafe { self.filled_unchecked_len(put_len_u32) };
+                unsafe { self.storage_skip_unchecked(put_len_u32) };
+                Ok(roll)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Get a [Roll] corresponding to the filled portion of this buffer
+    #[inline(always)]
     pub fn filled(&self) -> Roll {
+        // Safety: the len we're passing if <= self.len because it _is_ self.len
+        unsafe { self.filled_unchecked_len(self.len) }
+    }
+
+    /// # Safety
+    /// `len` must be <= self.len
+    #[inline(always)]
+    unsafe fn filled_unchecked_len(&self, len: u32) -> Roll {
         match &self.storage {
-            StorageMut::Buf(b) => b.freeze_slice(0..self.len()).into(),
-            StorageMut::Box(b) => RollBox {
-                b: b.clone(),
-                len: self.len,
-            }
-            .into(),
+            StorageMut::Buf(b) => b.freeze_slice(0..(len as _)).into(),
+            StorageMut::Box(b) => RollBox { b: b.clone(), len }.into(),
         }
     }
 
-    /// Split this [RollMut] at the given index.
-    /// Panics if `at > len()`. If `at < len()`, the filled portion will carry
-    /// over in the new [RollMut].
+    /// Advances the buffer by `n` bytes "consuming" filled data.
+    /// Panics if `n > len()`.
     pub fn skip(&mut self, n: usize) {
         let u32_n: u32 = n.try_into().unwrap();
         assert!(u32_n <= self.len);
-
-        match &mut self.storage {
-            StorageMut::Buf(b) => b.skip(n),
-            StorageMut::Box(b) => b.off += u32_n,
+        unsafe {
+            // safety: we just checked that `n <= self.len`
+            self.storage_skip_unchecked(u32_n);
         }
         self.len -= u32_n;
+    }
+
+    /// Advances the buffer by `n` bytes "consuming" filled data.
+    /// Does not panic, hence the unsafe
+    ///
+    /// # Safety
+    /// `n` must be <= self.len
+    #[inline(always)]
+    unsafe fn storage_skip_unchecked(&mut self, n: u32) {
+        match &mut self.storage {
+            StorageMut::Buf(b) => b.skip(n as _),
+            StorageMut::Box(b) => b.off += n,
+        }
     }
 
     /// Takes the first `n` bytes (up to `len`) as a `Roll`, and advances
@@ -419,7 +452,7 @@ impl RollMut {
                 assert_eq!(ours.index, theirs.index, "roll must be from same buffer");
                 assert!(theirs.off >= ours.off, "roll must start within buffer");
                 let skipped = theirs.off - ours.off;
-                tracing::trace!(our_index = %ours.index, their_index = %theirs.index, our_off = %ours.off, their_off = %theirs.off, %skipped, "RollMut::keep");
+                trace!(our_index = %ours.index, their_index = %theirs.index, our_off = %ours.off, their_off = %theirs.off, %skipped, "RollMut::keep");
                 self.len -= skipped as u32;
                 ours.len -= skipped;
                 ours.off = theirs.off;
@@ -960,13 +993,15 @@ impl RollStr {
 
 #[cfg(test)]
 mod tests {
+    use crate::trace;
     use nom::IResult;
-    use tracing::trace;
 
     use crate::{Roll, RollMut, BUF_SIZE};
 
     #[test]
     fn test_roll_put() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         fn test_roll_put_inner(mut rm: RollMut) {
             let initial_size = rm.cap();
 
@@ -997,6 +1032,8 @@ mod tests {
 
     #[test]
     fn test_roll_put_does_not_fit() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         rm.put(" ".repeat(rm.cap())).unwrap();
 
@@ -1007,6 +1044,8 @@ mod tests {
 
     #[test]
     fn test_roll_realloc() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         fn test_roll_realloc_inner(mut rm: RollMut) {
             let init_cap = rm.cap();
             rm.put("hello").unwrap();
@@ -1027,6 +1066,8 @@ mod tests {
 
     #[test]
     fn test_roll_realloc_big() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         rm.grow();
 
@@ -1041,6 +1082,8 @@ mod tests {
 
     #[test]
     fn test_roll_reserve() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         assert_eq!(rm.cap(), BUF_SIZE as usize);
         assert_eq!(rm.len(), 0);
@@ -1074,6 +1117,8 @@ mod tests {
 
     #[test]
     fn test_roll_put_then_grow() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         assert_eq!(rm.cap(), BUF_SIZE as usize);
 
@@ -1096,6 +1141,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "miri"))]
     fn test_roll_readfrom_start() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         use crate::WriteOwned;
 
         crate::start(async move {
@@ -1123,6 +1170,8 @@ mod tests {
 
     #[test]
     fn test_roll_keep() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         fn test_roll_keep_inner(mut rm: RollMut) {
             rm.put(b"helloworld").unwrap();
             assert_eq!(&rm[..], b"helloworld");
@@ -1155,6 +1204,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "roll must be from same buffer")]
     fn test_roll_keep_different_buf() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm1 = RollMut::alloc().unwrap();
         rm1.put("hello").unwrap();
 
@@ -1168,6 +1219,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "roll must be from same buffer")]
     fn test_roll_keep_different_box() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm1 = RollMut::alloc().unwrap();
         rm1.grow();
         rm1.put("hello").unwrap();
@@ -1183,6 +1236,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "roll must be from same buffer")]
     fn test_roll_keep_different_type() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm1 = RollMut::alloc().unwrap();
         rm1.grow();
         rm1.put("hello").unwrap();
@@ -1197,6 +1252,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "roll must start within buffer")]
     fn test_roll_keep_before_buf() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm1 = RollMut::alloc().unwrap();
         rm1.put("hello").unwrap();
         let roll = rm1.filled();
@@ -1207,6 +1264,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "roll must start within buffer")]
     fn test_roll_keep_before_box() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm1 = RollMut::alloc().unwrap();
         rm1.grow();
         rm1.put("hello").unwrap();
@@ -1217,6 +1276,8 @@ mod tests {
 
     #[test]
     fn test_roll_iter() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         rm.put(b"hello").unwrap();
         let roll = rm.filled();
@@ -1229,6 +1290,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "miri"))]
     fn test_roll_iobuf() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         use crate::{
             io::{IntoHalves, ReadOwned, WriteOwned},
             net::{TcpListener, TcpStream},
@@ -1279,6 +1342,8 @@ mod tests {
 
     #[test]
     fn test_roll_take_at_most() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         rm.put(b"hello").unwrap();
         let roll = rm.take_at_most(4).unwrap();
@@ -1295,6 +1360,8 @@ mod tests {
 
     #[test]
     fn test_roll_take_all() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         rm.put(b"hello").unwrap();
         let roll = rm.take_all();
@@ -1304,6 +1371,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "take_all is pointless if the filled part is empty")]
     fn test_roll_take_all_empty() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         rm.take_all();
     }
@@ -1311,12 +1380,16 @@ mod tests {
     #[test]
     #[should_panic(expected = "refusing to do empty take_at_most")]
     fn test_roll_take_at_most_panic() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         rm.take_at_most(0);
     }
 
     #[test]
     fn test_roll_nom_sample() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         fn parse(i: Roll) -> IResult<Roll, Roll> {
             nom::bytes::streaming::tag(&b"HTTP/1.1 200 OK"[..])(i)
         }
@@ -1362,6 +1435,8 @@ mod tests {
 
     #[test]
     fn test_roll_io_write() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         std::io::Write::write_all(&mut rm, b"hello").unwrap();
 
@@ -1371,6 +1446,8 @@ mod tests {
 
     #[test]
     fn test_reallocate_big() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         rm.put(b"baba yaga").unwrap();
         let filled = rm.filled();

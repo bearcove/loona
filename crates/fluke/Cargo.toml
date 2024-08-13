@@ -17,6 +17,10 @@ rust-version = "1.75"
 default = ["uring"]
 uring = ["fluke-buffet/uring"]
 
+[[bench]]
+name = "encoding"
+harness = false
+
 [dependencies]
 byteorder = "1.5.0"
 eyre = { version = "0.6.12", default-features = false }
@@ -63,3 +67,6 @@ httpwg = { path = "../httpwg" }
 color-eyre = "0.6.3"
 httpwg-macros = { path = "../httpwg-macros" }
 cargo-husky = { version = "1", features = ["user-hooks"] }
+criterion = "0.5.1"
+codspeed-criterion-compat = "2.6.0"
+itoa = "1.0.11"

@@ -76,7 +76,8 @@ pub(crate) fn encode_headers(headers: Headers, list: &mut PieceList) -> eyre::Re
     Ok(())
 }
 
-fn encode_status_code(code: StatusCode) -> &'static str {
+/// Encode a status code into a 3-digit string
+pub fn encode_status_code(code: StatusCode) -> &'static str {
     let offset = (code.as_u16() - 100) as usize;
     let offset = offset * 3;
 
