@@ -18,7 +18,7 @@ default = ["uring"]
 uring = ["fluke-buffet/uring"]
 
 [[bench]]
-name = "format_status_code"
+name = "encoding"
 harness = false
 
 [dependencies]
