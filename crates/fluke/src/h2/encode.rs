@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 use tracing::debug;
 
 use super::types::{H2Event, H2EventPayload};
-use crate::{h1::body::BodyWriteMode, Encoder, Response};
+use crate::{Encoder, Response};
 use fluke_h2_parse::StreamId;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -64,7 +64,7 @@ impl Encoder for H2Encoder {
     }
 
     // TODO: BodyWriteMode is not relevant for h2
-    async fn write_body_chunk(&mut self, chunk: Piece, _mode: BodyWriteMode) -> eyre::Result<()> {
+    async fn write_body_chunk(&mut self, chunk: Piece) -> eyre::Result<()> {
         assert!(matches!(self.state, EncoderState::ExpectResponseBody));
 
         self.send(H2EventPayload::BodyChunk(chunk)).await?;
@@ -72,7 +72,7 @@ impl Encoder for H2Encoder {
     }
 
     // TODO: BodyWriteMode is not relevant for h2
-    async fn write_body_end(&mut self, _mode: BodyWriteMode) -> eyre::Result<()> {
+    async fn write_body_end(&mut self) -> eyre::Result<()> {
         assert!(matches!(self.state, EncoderState::ExpectResponseBody));
 
         self.send(H2EventPayload::BodyEnd).await?;
