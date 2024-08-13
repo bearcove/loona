@@ -21,7 +21,7 @@ pub fn format_status_code(c: &mut Criterion) {
         )
     });
 
-    c.bench_function("format_status_code/itoa (heap)", |b| {
+    c.bench_function("format_status_code/itoa/heap", |b| {
         b.iter_batched(
             || status_codes.clone(),
             |codes| {
@@ -35,7 +35,7 @@ pub fn format_status_code(c: &mut Criterion) {
         )
     });
 
-    c.bench_function("format_status_code/itoa (stack)", |b| {
+    c.bench_function("format_status_code/itoa/stack", |b| {
         b.iter_batched(
             || status_codes.clone(),
             |codes| {
@@ -76,7 +76,7 @@ pub fn format_content_length(c: &mut Criterion) {
 
     let mut c = c.benchmark_group("format_content_length");
 
-    c.bench_function("format_content_length/itoa (buffet)", |b| {
+    c.bench_function("format_content_length/itoa/buffet", |b| {
         b.iter_batched(
             || (content_lengths.clone(), RollMut::alloc().unwrap()),
             |(lengths, mut roll)| {
@@ -94,7 +94,7 @@ pub fn format_content_length(c: &mut Criterion) {
         )
     });
 
-    c.bench_function("format_content_length/itoa (heap)", |b| {
+    c.bench_function("format_content_length/itoa/heap", |b| {
         b.iter_batched(
             || content_lengths.clone(),
             |lengths| {
@@ -109,7 +109,7 @@ pub fn format_content_length(c: &mut Criterion) {
         )
     });
 
-    c.bench_function("format_content_length/itoa (stack)", |b| {
+    c.bench_function("format_content_length/itoa/stack", |b| {
         b.iter_batched(
             || content_lengths.clone(),
             |lengths| {
