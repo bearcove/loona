@@ -12,8 +12,7 @@ on:
 
 jobs:
   benchmarks:
-    runs-on:
-      - namespace-profile-linux-amd64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 

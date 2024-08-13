@@ -56,12 +56,21 @@ pub fn format_content_length(c: &mut Criterion) {
 
     let mut c = c.benchmark_group("format_content_length");
 
-    c.bench_function("std::fmt", |b| {
+    c.bench_function("itoa (buffet)", |b| {
         b.iter_batched(
-            || content_lengths.clone(),
-            |lengths| {
+            || (content_lengths.clone(), RollMut::alloc().unwrap()),
+            |(lengths, mut roll)| {
                 for length in &lengths {
-                    black_box(length.to_string());
+                    use itoa::Buffer;
+                    let mut buffer = Buffer::new();
+                    let s = buffer.format(*length);
+                    let content_len = roll
+                        .put_to_roll(s.len(), |slice| {
+                            slice.copy_from_slice(s.as_bytes());
+                            Ok(())
+                        })
+                        .unwrap();
+                    black_box(content_len);
                 }
             },
             codspeed_criterion_compat::BatchSize::SmallInput,
@@ -83,22 +92,12 @@ pub fn format_content_length(c: &mut Criterion) {
         )
     });
 
-    c.bench_function("itoa (buffet)", |b| {
+    c.bench_function("std::fmt", |b| {
         b.iter_batched(
             || content_lengths.clone(),
             |lengths| {
-                let mut roll = RollMut::alloc().unwrap();
                 for length in &lengths {
-                    use itoa::Buffer;
-                    let mut buffer = Buffer::new();
-                    let s = buffer.format(*length);
-                    let content_len = roll
-                        .put_to_roll(s.len(), |slice| {
-                            slice.copy_from_slice(s.as_bytes());
-                            Ok(())
-                        })
-                        .unwrap();
-                    black_box(content_len);
+                    black_box(length.to_string());
                 }
             },
             codspeed_criterion_compat::BatchSize::SmallInput,

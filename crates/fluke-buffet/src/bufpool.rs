@@ -12,7 +12,8 @@ pub type BufResult<T, B> = (std::io::Result<T>, B);
 pub const BUF_SIZE: u16 = 4096;
 
 #[cfg(not(feature = "miri"))]
-pub const NUM_BUF: u32 = 64 * 1024;
+// pub const NUM_BUF: u32 = 64 * 1024;
+pub const NUM_BUF: u32 = 512 * 1024;
 
 #[cfg(feature = "miri")]
 pub const NUM_BUF: u32 = 64;
@@ -291,9 +292,9 @@ mod iobufmut {
 ///
 /// # Safety
 ///
-/// If the address returned by `io_buf_mut_stable_mut_ptr` is not actually stable
-/// and moves while an io_uring operation is in-flight, the kernel might write
-/// to the wrong memory location.
+/// If the address returned by `io_buf_mut_stable_mut_ptr` is not actually
+/// stable and moves while an io_uring operation is in-flight, the kernel might
+/// write to the wrong memory location.
 pub unsafe trait IoBufMut: iobufmut::Sealed {
     /// Gets a pointer to the start of the buffer
     fn io_buf_mut_stable_mut_ptr(&mut self) -> *mut u8;
