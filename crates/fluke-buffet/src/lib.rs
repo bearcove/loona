@@ -1,3 +1,5 @@
+#![feature(thread_local)]
+
 use std::future::Future;
 
 mod roll;
@@ -49,6 +51,7 @@ pub fn start<F: Future>(task: F) -> F::Output {
         .build()
         .unwrap();
     let res = rt.block_on(async move {
+        crate::bufpool::initialize_allocator().unwrap();
         let mut lset = LocalSet::new();
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
         let listen_task = IoUringAsync::listen(get_ring());
@@ -97,7 +100,8 @@ pub fn start<F: Future>(task: F) -> F::Output {
         .build()
         .unwrap()
         .block_on(async move {
-            let local = LocalSet::new();
-            local.run_until(task).await
+            crate::bufpool::initialize_allocator().unwrap();
+            let lset = LocalSet::new();
+            lset.run_until(task).await
         })
 }

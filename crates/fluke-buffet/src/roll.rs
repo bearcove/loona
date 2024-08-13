@@ -1000,6 +1000,8 @@ mod tests {
 
     #[test]
     fn test_roll_put() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         fn test_roll_put_inner(mut rm: RollMut) {
             let initial_size = rm.cap();
 
@@ -1030,6 +1032,8 @@ mod tests {
 
     #[test]
     fn test_roll_put_does_not_fit() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         rm.put(" ".repeat(rm.cap())).unwrap();
 
@@ -1040,6 +1044,8 @@ mod tests {
 
     #[test]
     fn test_roll_realloc() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         fn test_roll_realloc_inner(mut rm: RollMut) {
             let init_cap = rm.cap();
             rm.put("hello").unwrap();
@@ -1060,6 +1066,8 @@ mod tests {
 
     #[test]
     fn test_roll_realloc_big() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         rm.grow();
 
@@ -1074,6 +1082,8 @@ mod tests {
 
     #[test]
     fn test_roll_reserve() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         assert_eq!(rm.cap(), BUF_SIZE as usize);
         assert_eq!(rm.len(), 0);
@@ -1107,6 +1117,8 @@ mod tests {
 
     #[test]
     fn test_roll_put_then_grow() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         assert_eq!(rm.cap(), BUF_SIZE as usize);
 
@@ -1129,6 +1141,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "miri"))]
     fn test_roll_readfrom_start() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         use crate::WriteOwned;
 
         crate::start(async move {
@@ -1156,6 +1170,8 @@ mod tests {
 
     #[test]
     fn test_roll_keep() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         fn test_roll_keep_inner(mut rm: RollMut) {
             rm.put(b"helloworld").unwrap();
             assert_eq!(&rm[..], b"helloworld");
@@ -1188,6 +1204,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "roll must be from same buffer")]
     fn test_roll_keep_different_buf() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm1 = RollMut::alloc().unwrap();
         rm1.put("hello").unwrap();
 
@@ -1201,6 +1219,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "roll must be from same buffer")]
     fn test_roll_keep_different_box() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm1 = RollMut::alloc().unwrap();
         rm1.grow();
         rm1.put("hello").unwrap();
@@ -1216,6 +1236,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "roll must be from same buffer")]
     fn test_roll_keep_different_type() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm1 = RollMut::alloc().unwrap();
         rm1.grow();
         rm1.put("hello").unwrap();
@@ -1230,6 +1252,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "roll must start within buffer")]
     fn test_roll_keep_before_buf() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm1 = RollMut::alloc().unwrap();
         rm1.put("hello").unwrap();
         let roll = rm1.filled();
@@ -1240,6 +1264,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "roll must start within buffer")]
     fn test_roll_keep_before_box() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm1 = RollMut::alloc().unwrap();
         rm1.grow();
         rm1.put("hello").unwrap();
@@ -1250,6 +1276,8 @@ mod tests {
 
     #[test]
     fn test_roll_iter() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         rm.put(b"hello").unwrap();
         let roll = rm.filled();
@@ -1262,6 +1290,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "miri"))]
     fn test_roll_iobuf() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         use crate::{
             io::{IntoHalves, ReadOwned, WriteOwned},
             net::{TcpListener, TcpStream},
@@ -1312,6 +1342,8 @@ mod tests {
 
     #[test]
     fn test_roll_take_at_most() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         rm.put(b"hello").unwrap();
         let roll = rm.take_at_most(4).unwrap();
@@ -1328,6 +1360,8 @@ mod tests {
 
     #[test]
     fn test_roll_take_all() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         rm.put(b"hello").unwrap();
         let roll = rm.take_all();
@@ -1337,6 +1371,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "take_all is pointless if the filled part is empty")]
     fn test_roll_take_all_empty() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         rm.take_all();
     }
@@ -1344,12 +1380,16 @@ mod tests {
     #[test]
     #[should_panic(expected = "refusing to do empty take_at_most")]
     fn test_roll_take_at_most_panic() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         rm.take_at_most(0);
     }
 
     #[test]
     fn test_roll_nom_sample() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         fn parse(i: Roll) -> IResult<Roll, Roll> {
             nom::bytes::streaming::tag(&b"HTTP/1.1 200 OK"[..])(i)
         }
@@ -1395,6 +1435,8 @@ mod tests {
 
     #[test]
     fn test_roll_io_write() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         std::io::Write::write_all(&mut rm, b"hello").unwrap();
 
@@ -1404,6 +1446,8 @@ mod tests {
 
     #[test]
     fn test_reallocate_big() {
+        crate::bufpool::initialize_allocator().unwrap();
+
         let mut rm = RollMut::alloc().unwrap();
         rm.put(b"baba yaga").unwrap();
         let filled = rm.filled();

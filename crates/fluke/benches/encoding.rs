@@ -78,7 +78,10 @@ pub fn format_content_length(c: &mut Criterion) {
 
     c.bench_function("format_content_length/itoa/buffet", |b| {
         b.iter_batched(
-            || (content_lengths.clone(), RollMut::alloc().unwrap()),
+            || {
+                fluke_buffet::bufpool::initialize_allocator().unwrap();
+                (content_lengths.clone(), RollMut::alloc().unwrap())
+            },
             |(lengths, mut roll)| {
                 for length in &lengths {
                     use itoa::Buffer;

@@ -450,6 +450,8 @@ pub fn pack_reserved_and_stream_id(reserved: u8, stream_id: StreamId) -> [u8; 4]
 
 #[test]
 fn test_pack_and_parse_bit_and_u31() {
+    fluke_buffet::bufpool::initialize_allocator().unwrap();
+
     // Test round-tripping through parse_bit_and_u31 and pack_bit_and_u31
     let test_cases = [
         (0, 0),
