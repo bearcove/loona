@@ -1,11 +1,11 @@
 use std::io::Write;
 
 use eyre::Context;
-use http::{StatusCode, Version};
+use http::{header, StatusCode, Version};
 
 use crate::{
     types::{Headers, Request, Response},
-    Encoder,
+    Encoder, HeadersExt,
 };
 use fluke_buffet::{Piece, PieceList, RollMut, WriteOwned};
 
@@ -148,13 +148,44 @@ where
     T: WriteOwned,
 {
     pub(crate) transport_w: T,
+    mode: BodyWriteMode,
+}
+
+impl<T> H1Encoder<T>
+where
+    T: WriteOwned,
+{
+    pub fn new(transport_w: T) -> Self {
+        Self {
+            transport_w,
+            mode: BodyWriteMode::Empty,
+        }
+    }
 }
 
 impl<T> Encoder for H1Encoder<T>
 where
     T: WriteOwned,
 {
-    async fn write_response(&mut self, res: Response) -> eyre::Result<()> {
+    async fn write_response(&mut self, mut res: Response) -> eyre::Result<()> {
+        // TODO: set BodyWriteMode here (and take it out of the Encoder trait,
+        // h2 doesn't need it)
+
+        if !res.status.is_informational() {
+            // after this, we expect a body — time to determine the body write mode
+            if !res.means_empty_body() {
+                self.mode = match res.headers.content_length() {
+                    Some(0) => BodyWriteMode::Empty,
+                    Some(_) => BodyWriteMode::ContentLength,
+                    None => {
+                        res.headers
+                            .insert(header::TRANSFER_ENCODING, "chunked".into());
+                        BodyWriteMode::Chunked
+                    }
+                };
+            };
+        }
+
         let mut list = PieceList::default();
         encode_response(res, &mut list)?;
 
@@ -167,14 +198,12 @@ where
     }
 
     // TODO: move `mode` into `H1Encoder`? we don't need it for h2
-    async fn write_body_chunk(&mut self, chunk: Piece, mode: BodyWriteMode) -> eyre::Result<()> {
-        // TODO: inline
-        write_h1_body_chunk(&mut self.transport_w, chunk, mode).await
+    async fn write_body_chunk(&mut self, chunk: Piece) -> eyre::Result<()> {
+        write_h1_body_chunk(&mut self.transport_w, chunk, self.mode).await
     }
 
-    async fn write_body_end(&mut self, mode: BodyWriteMode) -> eyre::Result<()> {
-        // TODO: inline
-        write_h1_body_end(&mut self.transport_w, mode).await
+    async fn write_body_end(&mut self) -> eyre::Result<()> {
+        write_h1_body_end(&mut self.transport_w, self.mode).await
     }
 
     async fn write_trailers(&mut self, trailers: Box<Headers>) -> eyre::Result<()> {

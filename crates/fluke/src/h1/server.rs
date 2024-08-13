@@ -93,7 +93,7 @@ pub async fn serve(
             },
         );
 
-        let responder = Responder::new(H1Encoder { transport_w });
+        let responder = Responder::new(H1Encoder::new(transport_w));
 
         let resp = driver
             .handle(req, &mut req_body, responder)

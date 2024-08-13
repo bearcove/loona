@@ -1,16 +1,17 @@
 use fluke_buffet::Piece;
 use http::header;
 
-use crate::{h1::body::BodyWriteMode, Body, BodyChunk, Headers, HeadersExt, Response};
+use crate::{Body, BodyChunk, Headers, Response};
 
 pub trait ResponseState {}
 
 pub struct ExpectResponseHeaders;
 impl ResponseState for ExpectResponseHeaders {}
 
-pub struct ExpectResponseBody {
-    mode: BodyWriteMode,
-}
+// TODO: at this stage, keep track of how much body we've
+// written, and error out if it's less or more than the
+// announced content-length
+pub struct ExpectResponseBody;
 impl ResponseState for ExpectResponseBody {}
 
 pub struct ResponseDone;
@@ -52,35 +53,14 @@ where
     /// Errors out if the client sent `expect: 100-continue`
     pub async fn write_final_response(
         mut self,
-        mut res: Response,
+        res: Response,
     ) -> eyre::Result<Responder<E, ExpectResponseBody>> {
         if res.status.is_informational() {
             return Err(eyre::eyre!("final response must have status code >= 200"));
         }
-
-        let mode = if res.means_empty_body() {
-            // do nothing
-            BodyWriteMode::Empty
-        } else {
-            match res.headers.content_length() {
-                Some(0) => BodyWriteMode::Empty,
-                Some(len) => {
-                    // TODO: can probably save that heap allocation
-                    res.headers
-                        .insert(header::CONTENT_LENGTH, format!("{len}").into_bytes().into());
-                    BodyWriteMode::ContentLength
-                }
-                None => {
-                    res.headers
-                        .insert(header::TRANSFER_ENCODING, "chunked".into());
-                    BodyWriteMode::Chunked
-                }
-            }
-        };
         self.encoder.write_response(res).await?;
-
         Ok(Responder {
-            state: ExpectResponseBody { mode },
+            state: ExpectResponseBody,
             encoder: self.encoder,
         })
     }
@@ -97,7 +77,13 @@ where
                 .entry(header::CONTENT_LENGTH)
                 .or_insert_with(|| {
                     // TODO: can probably get rid of this heap allocation, also
-                    // use `itoa`
+                    // use `itoa`, cf. https://docs.rs/itoa/latest/itoa/
+                    // TODO: also, for `write_final_response`, we could avoid
+                    // parsing the content-length header, since we have the
+                    // content-length already.
+                    // TODO: also, instead of doing a heap allocation with a `Vec<u8>`, we
+                    // could probably take a tiny bit of `RollMut` which is cheaper to
+                    // allocate (or at least was, last I measured).
                     format!("{clen}").into_bytes().into()
                 });
         }
@@ -125,8 +111,9 @@ where
 {
     /// Send a response body chunk. Errors out if sending more than the
     /// announced content-length.
+    #[inline]
     pub async fn write_chunk(&mut self, chunk: Piece) -> eyre::Result<()> {
-        self.encoder.write_body_chunk(chunk, self.state.mode).await
+        self.encoder.write_body_chunk(chunk).await
     }
 
     /// Finish the body, with optional trailers, cf. <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/TE>
@@ -139,8 +126,7 @@ where
         mut self,
         trailers: Option<Box<Headers>>,
     ) -> eyre::Result<Responder<E, ResponseDone>> {
-        self.encoder.write_body_end(self.state.mode).await?;
-
+        self.encoder.write_body_end().await?;
         if let Some(trailers) = trailers {
             self.encoder.write_trailers(trailers).await?;
         }
@@ -166,7 +152,7 @@ where
 #[allow(async_fn_in_trait)] // we never require Send
 pub trait Encoder {
     async fn write_response(&mut self, res: Response) -> eyre::Result<()>;
-    async fn write_body_chunk(&mut self, chunk: Piece, mode: BodyWriteMode) -> eyre::Result<()>;
-    async fn write_body_end(&mut self, mode: BodyWriteMode) -> eyre::Result<()>;
+    async fn write_body_chunk(&mut self, chunk: Piece) -> eyre::Result<()>;
+    async fn write_body_end(&mut self) -> eyre::Result<()>;
     async fn write_trailers(&mut self, trailers: Box<Headers>) -> eyre::Result<()>;
 }
