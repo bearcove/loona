@@ -8,9 +8,25 @@ description = """
 A reference HTTP 1+2 server for httpwg, powered by loona
 """
 
+[lib]
+name = "httpwg_loona"
+path = "src/lib.rs"
+
+[[bin]]
+name = "httpwg-loona"
+path = "src/main.rs"
+
+[[bench]]
+name = "h2load"
+harness = false
+
 [dependencies]
 color-eyre = "0.6.3"
 loona = { version = "0.2.1", path = "../loona" }
 buffet = { version = "0.2.1", path = "../buffet" }
 tracing = { version = "0.1.40", features = ["release_max_level_debug"] }
 tracing-subscriber = "0.3.18"
+tokio = { version = "1.39.2", features = ["macros", "sync"] }
+
+[dev-dependencies]
+codspeed-criterion-compat = "2.6.0"
