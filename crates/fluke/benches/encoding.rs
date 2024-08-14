@@ -1,5 +1,5 @@
 use codspeed_criterion_compat::{black_box, criterion_group, criterion_main, Criterion};
-use fluke_buffet::RollMut;
+use fluke_buffet::{Piece, RollMut};
 use http::StatusCode;
 
 pub fn format_status_code(c: &mut Criterion) {
@@ -90,7 +90,8 @@ pub fn format_content_length(c: &mut Criterion) {
                     // that's the max length of an u64 formatted as decimal
                     roll.reserve_at_least(20).unwrap();
                     roll.put(s.as_bytes()).unwrap();
-                    black_box(roll.take_all());
+                    let piece: Piece = roll.take_all().into();
+                    black_box(piece);
                 }
             },
             codspeed_criterion_compat::BatchSize::SmallInput,
@@ -104,14 +105,18 @@ pub fn format_content_length(c: &mut Criterion) {
                 for length in &lengths {
                     use itoa::Buffer;
                     let mut buffer = Buffer::new();
-                    let s = buffer.format(*length);
-                    black_box(s.to_string());
+                    let s = buffer.format(*length).to_owned();
+                    let piece: Piece = s.into_bytes().into();
+                    black_box(piece);
                 }
             },
             codspeed_criterion_compat::BatchSize::SmallInput,
         )
     });
 
+    // Note: we cannot use this variant as-is, because it's not pinned, so we can't
+    // pass it to the kernel for writes. We _could_ have a pool of those Buffers
+    // I suppose? And return them to the pool when done.
     c.bench_function("format_content_length/itoa/stack", |b| {
         b.iter_batched(
             || content_lengths.clone(),
@@ -133,7 +138,9 @@ pub fn format_content_length(c: &mut Criterion) {
             || content_lengths.clone(),
             |lengths| {
                 for length in &lengths {
-                    black_box(length.to_string());
+                    let vec = length.to_string();
+                    let piece: Piece = vec.into_bytes().into();
+                    black_box(piece);
                 }
             },
             codspeed_criterion_compat::BatchSize::SmallInput,
