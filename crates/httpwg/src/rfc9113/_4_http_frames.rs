@@ -1,9 +1,9 @@
 //! Section 4: HTTP Frames
 
 use crate::{dummy_bytes, Conn, ErrorC};
+use buffet::IntoHalves;
 use enumflags2::BitFlags;
-use fluke_buffet::IntoHalves;
-use fluke_h2_parse::{
+use loona_h2::{
     ContinuationFlags, EncodedFrameType, Frame, FrameType, HeadersFlags, PrioritySpec, StreamId,
 };
 

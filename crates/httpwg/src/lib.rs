@@ -2,9 +2,9 @@ use eyre::eyre;
 use rfc9113::DEFAULT_FRAME_SIZE;
 use std::{collections::VecDeque, rc::Rc, time::Duration};
 
+use buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
 use enumflags2::{bitflags, BitFlags};
-use fluke_buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
-use fluke_h2_parse::{
+use loona_h2::{
     enumflags2,
     nom::{self, Finish},
     ContinuationFlags, DataFlags, ErrorCode, Frame, FrameType, GoAway, HeadersFlags, IntoPiece,
@@ -91,8 +91,8 @@ pub struct Conn<IO: IntoHalves> {
     scratch: RollMut,
     pub ev_rx: tokio::sync::mpsc::Receiver<Ev>,
     config: Rc<Config>,
-    hpack_enc: fluke_hpack::Encoder<'static>,
-    hpack_dec: fluke_hpack::Decoder<'static>,
+    hpack_enc: loona_hpack::Encoder<'static>,
+    hpack_dec: loona_hpack::Decoder<'static>,
     /// the peer's settings
     pub settings: Settings,
 

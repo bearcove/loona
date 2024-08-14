@@ -1,10 +1,8 @@
 //! Section 5: Streams and Multiplexing
 
+use buffet::IntoHalves;
 use enumflags2::BitFlags;
-use fluke_buffet::IntoHalves;
-use fluke_h2_parse::{
-    ContinuationFlags, EncodedFrameType, FrameType, HeadersFlags, Setting, StreamId,
-};
+use loona_h2::{ContinuationFlags, EncodedFrameType, FrameType, HeadersFlags, Setting, StreamId};
 
 use crate::{dummy_bytes, Conn, ErrorC};
 

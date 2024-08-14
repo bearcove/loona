@@ -1,0 +1,25 @@
+[package]
+name = "luring"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bearcove/loona"
+documentation = "https://docs.rs/luring"
+readme = "README.md"
+description = """
+io-uring abstraction using tokio's AsyncFd
+"""
+rust-version = "1.75"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1.39", features = ["rt", "net"] }
+slab = { version = "0.4" }
+tracing = "0.1.40"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+io-uring = { version = "0.6.4" }
+
+[dev-dependencies]
+send_wrapper = { version = "0.6.0" }

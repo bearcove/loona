@@ -2,8 +2,8 @@
 
 use std::io::Write;
 
-use fluke_buffet::IntoHalves;
-use fluke_h2_parse::{pack_bit_and_u31, FrameType, HeadersFlags, StreamId};
+use buffet::IntoHalves;
+use loona_h2::{pack_bit_and_u31, FrameType, HeadersFlags, StreamId};
 
 use crate::{Conn, ErrorC, FrameT, Headers};
 

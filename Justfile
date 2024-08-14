@@ -5,21 +5,21 @@ _default:
 
 # Run all tests with nextest and cargo-llvm-cov
 ci-test: #!/bin/bash -eux
-    just build-testbed
+    just httpwg-hyper
     just cov
     just httpwg-over-tcp
 
 cov:
     #!/bin/bash -eux
-    just build-testbed
+    just httpwg-hyper
     export RUSTUP_TOOLCHAIN=nightly-2024-05-26
     rm -rf coverage
     mkdir -p coverage
-    cargo llvm-cov nextest --branch --ignore-filename-regex '.*crates/(httpwg|fluke-hyper-testbed|fluke-tls-sample|fluke-sample-h2-server).*' --html --output-dir=coverage
+    cargo llvm-cov nextest --branch --ignore-filename-regex '.*crates/(httpwg|hyper).*' --html --output-dir=coverage
     cargo llvm-cov report --lcov --output-path 'coverage/lcov.info'
 
-build-testbed:
-	cargo build --release -p fluke-hyper-testbed
+httpwg-hyper:
+	cargo build --release -p httpwg-hyper
 
 t *args:
     just test {{args}}
@@ -27,7 +27,7 @@ t *args:
 # Run all tests with cargo nextest
 test *args:
 	#!/bin/bash
-	just build-testbed httpwg-gen
+	just httpwg-hyper httpwg-gen
 	export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 	cargo nextest run {{args}}
 
@@ -41,7 +41,7 @@ check:
 	cargo clippy --all-targets --all-features
 
 tls-sample:
-	cargo run -p fluke-tls-sample
+	cargo run --example tls
 
 httpwg-gen:
     cargo run --release --package httpwg-gen
@@ -49,14 +49,14 @@ httpwg-gen:
 httpwg-over-tcp *args:
     #!/usr/bin/env -S bash -eux
     cargo build --release \
-        --package fluke-httpwg-server \
+        --package httpwg-loona \
         --package httpwg-cli
     export TEST_PROTO=h2
     export PORT=8001
     ./target/release/httpwg \
         --address localhost:8001 \
         {{args}} \
-        -- ./target/release/fluke-httpwg-server
+        -- ./target/release/httpwg-loona
 
 instruments:
     #!/usr/bin/env -S bash -eux

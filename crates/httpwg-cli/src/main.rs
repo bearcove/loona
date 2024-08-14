@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use fluke_buffet::{net::TcpStream, IntoHalves};
+use buffet::{net::TcpStream, IntoHalves};
 use httpwg::{rfc9113, Config, Conn};
 use tracing::Level;
 use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::SubscriberInitExt};
@@ -111,13 +111,13 @@ fn main() -> eyre::Result<()> {
         }
     };
     setup_tracing_and_error_reporting();
-    fluke_buffet::start(async move { async_main(args).await })?;
+    buffet::start(async move { async_main(args).await })?;
 
     Ok(())
 }
 
 async fn async_main(args: Args) -> eyre::Result<()> {
-    let cat = catalog::<fluke_buffet::net::TcpStream>();
+    let cat = catalog::<buffet::net::TcpStream>();
 
     let addr = match args.server_address {
         Some(addr) => addr,
@@ -247,7 +247,7 @@ fn setup_tracing_and_error_reporting() {
     } else {
         Targets::new()
             .with_default(Level::INFO)
-            .with_target("fluke", Level::DEBUG)
+            .with_target("loona", Level::DEBUG)
             .with_target("httpwg", Level::DEBUG)
             .with_target("want", Level::INFO)
     };

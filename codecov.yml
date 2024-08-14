@@ -1,7 +1,5 @@
 ignore:
-  - "crates/fluke-tls-sample/**"
-  - "crates/fluke-hyper-testbed/**"
-  - "crates/fluke-curl-tests/**"
+  - "crates/httpwg-hyper/**"
 coverage:
   status:
     project: off

@@ -1,7 +1,7 @@
 //! Section 3: Starting HTTP/2
 
-use fluke_buffet::IntoHalves;
-use fluke_h2_parse::PREFACE;
+use buffet::IntoHalves;
+use loona_h2::PREFACE;
 
 use crate::{rfc9113::default_settings, Conn, ErrorC, FrameT};
 

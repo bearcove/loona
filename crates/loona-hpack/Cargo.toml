@@ -1,0 +1,29 @@
+[package]
+name = "loona-hpack"
+version = "0.3.1"
+authors = [
+    "Amos Wenger <amos@bearcove.net>",
+    "Marko Lalic <marko.lalic@gmail.com>",
+]
+edition = "2021"
+description = "HPACK codec for the loona HTTP implementation"
+repository = "https://github.com/bearcove/loona"
+readme = "README.md"
+license = "MIT"
+keywords = ["loona", "hpack", "http2", "encoding", "decoding"]
+documentation = "https://docs.rs/loona-hpack"
+exclude = ["fixtures/*"]
+
+[features]
+# these are really slow unless `cargo test --release` is used, so they're optional
+interop-tests = []
+
+[dev-dependencies]
+serde = { version = "1.0.206", features = ["derive"] }
+serde_json = "1.0.122"
+hex = "0.4.3"
+thiserror = "1.0.63"
+
+[dependencies]
+thiserror = "1.0.63"
+tracing = "0.1"

@@ -1,7 +1,7 @@
 //! Section 7: Error Codes
 
-use fluke_buffet::{IntoHalves, Piece};
-use fluke_h2_parse::{ErrorCode, FrameType, GoAway, HeadersFlags, StreamId};
+use buffet::{IntoHalves, Piece};
+use loona_h2::{ErrorCode, FrameType, GoAway, HeadersFlags, StreamId};
 
 use crate::Conn;
 

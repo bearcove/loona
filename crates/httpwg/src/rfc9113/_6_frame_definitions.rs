@@ -1,8 +1,8 @@
 //! Section 6: Frame Definitions
 
+use buffet::{IntoHalves, Piece};
 use enumflags2::BitFlags;
-use fluke_buffet::{IntoHalves, Piece};
-use fluke_h2_parse::{
+use loona_h2::{
     ContinuationFlags, Frame, FrameType, GoAway, HeadersFlags, IntoPiece, KnownErrorCode,
     PrioritySpec, Setting, SettingPairs, SettingsFlags, StreamId,
 };

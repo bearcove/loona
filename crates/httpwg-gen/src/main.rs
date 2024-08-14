@@ -13,7 +13,7 @@ fn main() {
         eprintln!("(This tool expect to overwrite it, so the fact that it doesn't");
         eprintln!("already exist means you're probably running it from the wrong");
         eprintln!("directory.)");
-        eprintln!("👉 This tool should only be run from the top-level of the fluke workspace.");
+        eprintln!("👉 This tool should only be run from the top-level of the loona workspace.");
         panic!("Refusing to proceed, read stderr above");
     }
 
