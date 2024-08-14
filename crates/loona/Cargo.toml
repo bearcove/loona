@@ -49,11 +49,7 @@ pretty_assertions = { version = "1.4.0", default-features = false, features = [
     "std",
 ] }
 tokio-stream = { version = "0.1.15", default-features = false }
-tracing-subscriber = { version = "0.3.18", default-features = false, features = [
-    "std",
-    "fmt",
-    "ansi",
-] }
+tracing-subscriber = { version = "0.3.18", default-features = false, features = ["std", "fmt", "ansi", "env-filter"] }
 httparse = { version = "1.9.4", default-features = false, features = ["std"] }
 tokio = { version = "1.39.2", default-features = false, features = [
     "io-util",
@@ -71,3 +67,8 @@ cargo-husky = { version = "1", features = ["user-hooks"] }
 criterion = "0.5.1"
 codspeed-criterion-compat = "2.6.0"
 itoa = "1.0.11"
+ktls = "5.0.0"
+rcgen = "0.13.1"
+rustls = "0.23.12"
+socket2 = "0.5.7"
+tokio-rustls = "0.26.0"
