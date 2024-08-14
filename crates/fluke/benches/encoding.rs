@@ -169,7 +169,7 @@ pub fn format_content_length(c: &mut Criterion) {
     });
 
     c.bench_function("format_content_length/itoa/pool", |b| {
-        const NUM_BUFFERS: usize = 128 * 1024;
+        const NUM_BUFFERS: usize = 16 * 1024;
 
         std::thread_local! {
             static BUFFER_POOL: [UnsafeCell<itoa::Buffer>; NUM_BUFFERS] = const { unsafe { MaybeUninit::uninit().assume_init() } };
