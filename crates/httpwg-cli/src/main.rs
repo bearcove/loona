@@ -18,6 +18,9 @@ struct Args {
 
     /// which tests to run
     filter: Option<String>,
+
+    /// whether to print verbose output
+    verbose: bool,
 }
 
 pub trait IntoStringResult {
@@ -67,6 +70,9 @@ fn parse_args() -> eyre::Result<Args> {
             lexopt::Arg::Long("filter") | lexopt::Arg::Short('f') => {
                 args.filter = Some(parser.value()?.into_string_result()?);
             }
+            lexopt::Arg::Long("verbose") | lexopt::Arg::Short('v') => {
+                args.verbose = true;
+            }
             lexopt::Arg::Value(value) => {
                 args.server_binary.push(value.into_string_result()?);
             }
@@ -84,6 +90,7 @@ Options:
     -a, --address <ADDRESS>    The address/port the server will listen on
     -t, --connect-timeout <MS> The timeout for connections in milliseconds
     -f, --filter <FILTER>      Which tests to run
+    -v, --verbose              Print verbose output
 
 Arguments:
     SERVER                     The server to run tests against
@@ -113,7 +120,7 @@ fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-async fn async_main(args: Args) -> eyre::Result<()> {
+async fn async_main(mut args: Args) -> eyre::Result<()> {
     let cat = catalog::<buffet::net::TcpStream>();
 
     let addr = match args.server_address {
@@ -134,8 +141,16 @@ async fn async_main(args: Args) -> eyre::Result<()> {
     });
 
     eprintln!("Will run tests against {addr} with a connect timeout of {connect_timeout:?}");
+
+    // this works around an oddity of Just when forwarding positional arguments
+    args.server_binary.retain(|s| !s.is_empty());
+
+    let mut server_name = format!("a server listening on {addr}");
+
     if !args.server_binary.is_empty() {
         let binary_and_args = args.server_binary;
+        let binary_name = &binary_and_args[0];
+        server_name = format!("{binary_name} listening on {addr}");
 
         eprintln!(
             "Launching ({}) now and waiting until it listens on {addr}",
@@ -182,7 +197,14 @@ async fn async_main(args: Args) -> eyre::Result<()> {
         panic!("Server did not start listening within 3 seconds");
     }
 
-    let local_set = tokio::task::LocalSet::new();
+    let mut local_set = tokio::task::LocalSet::new();
+
+    let sequential = std::env::var("SEQUENTIAL")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+
+    let mut num_tests = 0;
+    let start_time = std::time::Instant::now();
 
     for (rfc, sections) in cat {
         for (section, tests) in sections {
@@ -190,11 +212,11 @@ async fn async_main(args: Args) -> eyre::Result<()> {
                 let test_name = format!("{rfc} :: {section} :: {test}");
                 if let Some(filter) = &args.filter {
                     if !test_name.contains(filter) {
-                        println!("Skipping test: {}", test_name);
                         continue;
                     }
                 }
 
+                num_tests += 1;
                 let stream =
                     tokio::time::timeout(Duration::from_millis(250), TcpStream::connect(addr))
                         .await
@@ -202,20 +224,32 @@ async fn async_main(args: Args) -> eyre::Result<()> {
                         .unwrap();
                 let conn = Conn::new(conf.clone(), stream);
                 let test = async move {
-                    println!("🔷 Running test: {}", test_name);
+                    if args.verbose {
+                        eprintln!("🔷 Running test: {}", test_name);
+                    }
                     boxed_test(conn).await.unwrap();
-                    println!("✅ Test passed: {}", test_name);
+                    eprintln!("✅ Test passed: {}", test_name);
                 };
                 local_set.spawn_local(async move {
                     {
                         test.await;
                     }
                 });
+                if sequential {
+                    (&mut local_set).await;
+                }
             }
         }
     }
 
     local_set.await;
+
+    eprintln!(
+        "🚄 Ran \x1b[1;32m{}\x1b[0m tests in \x1b[1;33m{:.2}\x1b[0m seconds against \x1b[1;36m{}\x1b[0m",
+        num_tests,
+        start_time.elapsed().as_secs_f32(),
+        server_name,
+    );
 
     Ok(())
 }

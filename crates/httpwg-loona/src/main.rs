@@ -37,7 +37,7 @@ fn main() {
 
         loop {
             let (stream, addr) = ln.accept().await.unwrap();
-            tracing::info!(?addr, "Accepted connection");
+            tracing::debug!(?addr, "Accepted connection");
 
             buffet::spawn(async move {
                 let client_buf = RollMut::alloc().unwrap();
@@ -50,9 +50,10 @@ fn main() {
                             ..Default::default()
                         });
 
-                        loona::h1::serve(io, server_conf, client_buf, driver)
-                            .await
-                            .unwrap();
+                        if let Err(e) = loona::h1::serve(io, server_conf, client_buf, driver).await
+                        {
+                            tracing::warn!("http/1 server error: {e:?}");
+                        }
                         tracing::debug!("http/1 server done");
                     }
                     Proto::H2 => {
@@ -61,9 +62,10 @@ fn main() {
                             ..Default::default()
                         });
 
-                        loona::h2::serve(io, server_conf, client_buf, driver)
-                            .await
-                            .unwrap();
+                        if let Err(e) = loona::h2::serve(io, server_conf, client_buf, driver).await
+                        {
+                            tracing::warn!("http/2 server error: {e:?}");
+                        }
                         tracing::debug!("http/2 server done");
                     }
                 }
