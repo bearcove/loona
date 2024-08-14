@@ -290,6 +290,59 @@ fn main() {
         }
         w!("}}");
 
+        w!("");
+        w!("/// This generates a function that returns a Catalog of type");
+        w!("#[macro_export]");
+        w!("macro_rules! gen_catalog {{");
+        w!("  ($catalog_fn_name:ident) => {{");
+        w!("    use ::httpwg::BoxedTest;");
+        w!("    pub fn $catalog_fn_name<IO: IntoHalves>() -> HashMap<&'static str, HashMap<&'static str, HashMap<&'static str, BoxedTest<IO>>>> {{");
+        w!("        let mut rfcs: HashMap<&'static str, HashMap<&'static str, HashMap<&'static str, BoxedTest<IO>>>> = Default::default();");
+        w!("");
+        for suite in &suites {
+            {
+                let suite_name = &suite.name;
+                let pretty_suite_name = suite_name.to_uppercase().replace("RFC", "RFC ");
+                w!("        {{");
+                w!("            let mut sections: HashMap<&'static str, _> = Default::default();");
+                w!("");
+                for group in &suite.groups {
+                    {
+                        let group_name = &group.name;
+                        let pretty_group_name = group_name.strip_prefix('_').unwrap_or(group_name);
+                        let pretty_group_name = pretty_group_name.replace('_', " ");
+                        let pretty_group_name = pretty_group_name.replacen(' ', ". ", 1);
+                        let pretty_group_name = pretty_group_name.trim();
+                        w!("            {{");
+                        w!("                use ::httpwg::{suite_name}::{group_name} as s;");
+                        w!("                let mut {group_name}: HashMap<&'static str, BoxedTest<IO>> = Default::default();");
+                        w!("");
+                        for test in &group.tests {
+                            {
+                                let test_name = &test.name;
+                                let pretty_test_name = test_name.replace('_', " ");
+                                w!("                {group_name}.insert(");
+                                w!("                    \"{pretty_test_name}\",");
+                                w!("                    Box::new(|conn: Conn<IO>| Box::pin(s::{test_name}(conn))),");
+                                w!("                );");
+                            }
+                        }
+                        w!("");
+                        w!("                sections.insert(\"{pretty_group_name}\", {group_name});");
+                        w!("            }}");
+                    }
+                }
+                w!("");
+                w!("            rfcs.insert(\"{pretty_suite_name}\", sections);");
+                w!("        }}");
+            }
+        }
+        w!("");
+        w!("        rfcs");
+        w!("    }}");
+        w!("  }}");
+        w!("}}");
+
         out.flush().unwrap();
     }
 

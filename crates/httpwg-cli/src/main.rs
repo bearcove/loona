@@ -1,10 +1,7 @@
-use std::{
-    collections::HashMap, ffi::OsString, future::Future, net::SocketAddr, pin::Pin, rc::Rc,
-    time::Duration,
-};
+use std::{collections::HashMap, ffi::OsString, net::SocketAddr, rc::Rc, time::Duration};
 
 use buffet::{net::TcpStream, IntoHalves};
-use httpwg::{rfc9113, Config, Conn};
+use httpwg::{Config, Conn};
 use tracing::Level;
 use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -263,39 +260,5 @@ fn setup_tracing_and_error_reporting() {
         .with(fmt_layer)
         .init();
 }
-type BoxedTest<IO> = Box<dyn Fn(Conn<IO>) -> Pin<Box<dyn Future<Output = eyre::Result<()>>>>>;
 
-pub fn catalog<IO: IntoHalves>(
-) -> HashMap<&'static str, HashMap<&'static str, HashMap<&'static str, BoxedTest<IO>>>> {
-    let mut rfcs: HashMap<
-        &'static str,
-        HashMap<&'static str, HashMap<&'static str, BoxedTest<IO>>>,
-    > = Default::default();
-
-    {
-        let mut sections: HashMap<&'static str, _> = Default::default();
-
-        {
-            use rfc9113::_8_expressing_http_semantics_in_http2 as s;
-            let mut section8: HashMap<&'static str, BoxedTest<IO>> = Default::default();
-            section8.insert(
-                "client sends push promise frame",
-                Box::new(|conn: Conn<IO>| Box::pin(s::client_sends_push_promise_frame(conn))),
-            );
-            section8.insert(
-                "sends connect with scheme",
-                Box::new(|conn: Conn<IO>| Box::pin(s::sends_connect_with_scheme(conn))),
-            );
-            section8.insert(
-                "sends connect with path",
-                Box::new(|conn: Conn<IO>| Box::pin(s::sends_connect_with_path(conn))),
-            );
-
-            sections.insert("Section 8: Expressing HTTP Semantics in HTTP/2", section8);
-        }
-
-        rfcs.insert("RFC 9113", sections);
-    }
-
-    rfcs
-}
+httpwg_macros::gen_catalog!(catalog);

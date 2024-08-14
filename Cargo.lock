@@ -756,6 +756,7 @@ dependencies = [
  "color-eyre",
  "eyre",
  "httpwg",
+ "httpwg-macros",
  "lexopt",
  "libc",
  "tokio",

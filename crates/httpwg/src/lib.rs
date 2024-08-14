@@ -1,6 +1,6 @@
 use eyre::eyre;
 use rfc9113::DEFAULT_FRAME_SIZE;
-use std::{collections::VecDeque, rc::Rc, time::Duration};
+use std::{collections::VecDeque, future::Future, pin::Pin, rc::Rc, time::Duration};
 
 use buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
 use enumflags2::{bitflags, BitFlags};
@@ -17,6 +17,8 @@ use tracing::{debug, trace};
 use crate::rfc9113::default_settings;
 
 pub mod rfc9113;
+
+pub type BoxedTest<IO> = Box<dyn Fn(Conn<IO>) -> Pin<Box<dyn Future<Output = eyre::Result<()>>>>>;
 
 #[derive(Default)]
 pub struct Headers {
