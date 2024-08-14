@@ -7,5 +7,5 @@ edition = "2021"
 color-eyre = "0.6.3"
 fluke = { version = "0.1.1", path = "../fluke" }
 fluke-buffet = { version = "0.2.0", path = "../fluke-buffet" }
-tracing = "0.1.40"
+tracing = { version = "0.1.40", features = ["release_max_level_info"] }
 tracing-subscriber = "0.3.18"

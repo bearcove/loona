@@ -47,23 +47,33 @@ httpwg-gen:
     cargo run --release --package httpwg-gen
 
 httpwg-over-tcp *args:
+    #!/usr/bin/env -S bash -eux
     cargo build --release \
         --package fluke-httpwg-server \
         --package httpwg-cli
+    export TEST_PROTO=h2
+    export PORT=8001
     ./target/release/httpwg \
         --address localhost:8001 \
         {{args}} \
         -- ./target/release/fluke-httpwg-server
 
-profile:
+instruments:
     #!/usr/bin/env -S bash -eux
-    export RUSTUP_TOOLCHAIN=nightly
-    export CARGO_BUILD_TARGET="aarch64-apple-darwin"
-    export CARGO_TARGET_DIR=target-profiling
-    cargo +nightly -Z build-std -v instruments \
+    cargo instruments \
         --bench "encoding" \
         --template time \
         --profile profiling \
         -- \
         --bench 'format_content_length/format_content_length/itoa/buffet' \
         --profile-time 10
+
+samply:
+    #!/usr/bin/env -S bash -eux
+    cargo build \
+        --package fluke-httpwg-server \
+        --profile profiling \
+        --features tracing/release_max_level_info
+    export TEST_PROTO=h2
+    export PORT=8002
+    target/profiling/fluke-httpwg-server

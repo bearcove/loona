@@ -9,3 +9,4 @@ junit.xml
 .direnv
 .DS_Store
 /vendor
+profile.json
