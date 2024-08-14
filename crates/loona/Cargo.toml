@@ -73,9 +73,9 @@ criterion = "0.5.1"
 codspeed-criterion-compat = "2.6.0"
 itoa = "1.0.11"
 rcgen = "0.13.1"
-rustls = "0.22.4"
 socket2 = "0.5.7"
-tokio-rustls = "0.25.0"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-ktls = "5.0.0"
+ktls = "6.0.0"
+tokio-rustls = "0.26.0"
+rustls = "0.23.12"
