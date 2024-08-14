@@ -196,7 +196,7 @@ impl CqueueExt for io_uring::cqueue::Entry {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "miri")))]
 mod tests {
     use crate::io::{IntoHalves, ReadOwned, WriteOwned};
 

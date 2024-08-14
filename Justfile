@@ -86,3 +86,9 @@ samply:
     export TEST_PROTO=h2
     export PORT=8002
     target/profiling/httpwg-loona
+
+miri *args='':
+    #!/usr/bin/env -S bash -eux
+    rustup toolchain install nightly
+    rustup component add --toolchain nightly-x86_64-unknown-linux-gnu miri
+    MIRIFLAGS=-Zmiri-ignore-leaks cargo +nightly miri nextest run -p buffet -F miri "$@"
