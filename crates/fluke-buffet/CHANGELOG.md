@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/bearcove/fluke/compare/fluke-buffet-v0.2.0...fluke-buffet-v0.3.0) - 2024-08-14
+
+### Added
+- Try going back to stable with LocalKey and no nightly features
+
+### Fixed
+- fix tests
+
+### Other
+- Try an itoa/pool strategy
+- add std_fmt/buffet variant
+- Fix benchmark
+- Try perf?
+- Well, benchmarks are sometimes disappointing but they tell the truth
+- mhh
+- Run on ubuntu-latest, profile format_content_length with itoa with buffet and alloc
+- More async cancellation cleanups
+- Upgrade hyper + fix cancellation in test rig
+- Upgrade nix
+- Upgrade dependencies
+- Okay the takeaway is that tasks spawned when a runtime is shutting down immediately get dropped>
+- shutting down is hard
+- Debug tests
+- grahhhh why would you answer in multiple headers grr
+- Start using httpwg-cli against real servers
+- okay, a few more adjustments
+- Make 'static part of IntoHalves
+- Some section 8 tests (acceptable headers)
+- More 4.2 tests
+- Clean up 4_1 tests
+
 ## [0.2.0](https://github.com/bearcove/fluke/compare/fluke-buffet-v0.1.0...fluke-buffet-v0.2.0) - 2024-05-27
 
 ### Added

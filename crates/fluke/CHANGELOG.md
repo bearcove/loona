@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/bearcove/fluke/compare/fluke-v0.1.1...fluke-v0.1.2) - 2024-08-14
+
+### Added
+- Error out if we write too few / too many response bytes
+- Move BodyWriteMode into H1Encoder
+
+### Other
+- 16K buffers are enough methinks
+- add lut for fun
+- Do a meaningful order since they get sorted by criterion anyway
+- Try an itoa/pool strategy
+- add std_fmt/buffet variant
+- Make benchmark more realistic: we need it as a  to issue the I/O call
+- Fix benchmark
+- Try perf?
+- rename benches
+- Well, benchmarks are sometimes disappointing but they tell the truth
+- naming
+- Hopefully that groups them on codspeed?
+- Run on ubuntu-latest, profile format_content_length with itoa with buffet and alloc
+- Add content_length formatting benches
+- Add format_status_code benchmarks
+- Try with both HTTP 1.1 and HTTP/2
+- Upgrade dependencies
+- Okay the takeaway is that tasks spawned when a runtime is shutting down immediately get dropped>
+- Well we pass h2spec strict!
+- well, h2spec and httpwg-cli agree on almost everything
+- Introduce fluke-httpwg-server so we can run httpwg over TCP
+- Start using httpwg-cli against real servers
+- All tests pass!
+- Change Headers to a VecDeque<(Piece, Piece)>, closes [#193](https://github.com/bearcove/fluke/pull/193)
+- okay, a few more adjustments
+- Pass more tests
+- welp, need more validation
+- Yay we're properly returning 400x
+- Ready to send back 400s
+- Start working on returning 400 from fluke
+- Make 'static part of IntoHalves
+- Fully read request body before sending a response
+- race condition in sends_multiple_window_update_frames_increasing_flow_control_window_above_max_on_stream, we can fix that
+- tests build again
+- refactor settings sending, add more helpers, etc.
+- Add 6.5.3 specs
+- Introduce SettingsError, fix error code when receiving invalid initial window size
+- WIP settings parsing
+- 6.5 tests
+- Make 6.1 tests pass
+- 6.1 tests
+- 5.1.2 tests
+- verify_stream_close might be wrong
+- Add rfc 9113 section 5.1 specs
+
 ## [0.1.1](https://github.com/bearcove/fluke/compare/fluke-v0.1.0...fluke-v0.1.1) - 2024-05-27
 
 ### Added
