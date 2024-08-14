@@ -37,7 +37,6 @@ where
     fn call(&self, req: Request<B>) -> Self::Future {
         Box::pin(async move {
             let (parts, body) = req.into_parts();
-            println!("Handling {parts:?}");
 
             let path = parts.uri.path();
             match path {
@@ -74,7 +73,9 @@ where
                         debug!("Replying with {:?} {:?}", res.status(), res.headers());
                         Ok(res)
                     } else {
-                        let res = Response::builder().status(404).body(body).unwrap();
+                        let body = "it's less dire to lose, than to lose oneself".to_string();
+                        let body: BoxBody<E> = Box::pin(body.map_err(|_| unreachable!()));
+                        let res = Response::builder().status(200).body(body).unwrap();
                         Ok(res)
                     }
                 }
@@ -83,16 +84,43 @@ where
     }
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let ln = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = std::env::var("PORT").unwrap_or("0".to_string());
+    let ln = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port))
+        .await
+        .unwrap();
     let upstream_addr = ln.local_addr().unwrap();
     println!("I listen on {upstream_addr}");
+
+    #[derive(Debug, Clone, Copy)]
+    enum Proto {
+        H1,
+        H2,
+    }
+
+    let proto = match std::env::var("TEST_PROTO")
+        .unwrap_or("h1".to_string())
+        .as_str()
+    {
+        "h1" => Proto::H1,
+        "h2" => Proto::H2,
+        _ => panic!("TEST_PROTO must be either 'h1' or 'h2'"),
+    };
+    println!("Using {proto:?} protocol (export TEST_PROTO=h1 or TEST_PROTO=h2 to override)");
 
     while let Ok((stream, _)) = ln.accept().await {
         tokio::spawn(async move {
             let mut builder = auto::Builder::new(TokioExecutor::new());
-            builder = builder.http1_only();
+
+            match proto {
+                Proto::H1 => {
+                    builder = builder.http1_only();
+                }
+                Proto::H2 => {
+                    builder = builder.http2_only();
+                }
+            }
             builder
                 .serve_connection(TokioIo::new(stream), TestService)
                 .await
