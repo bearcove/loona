@@ -1,3 +1,9 @@
+use std::{
+    cell::{RefCell, UnsafeCell},
+    collections::VecDeque,
+    mem::MaybeUninit,
+};
+
 use codspeed_criterion_compat::{black_box, criterion_group, criterion_main, Criterion};
 use fluke_buffet::{Piece, RollMut};
 use http::StatusCode;
@@ -76,23 +82,19 @@ pub fn format_content_length(c: &mut Criterion) {
 
     let mut c = c.benchmark_group("format_content_length");
 
-    c.bench_function("format_content_length/itoa/buffet", |b| {
+    c.bench_function("format_content_length/std_fmt/heap", |b| {
         b.iter_batched(
             || {
-                fluke_buffet::bufpool::initialize_allocator_with_num_bufs(512 * 1024).unwrap();
-                (content_lengths.clone(), RollMut::alloc().unwrap())
+                let results = Vec::with_capacity(content_lengths.len());
+                (content_lengths.clone(), results)
             },
-            |(lengths, mut roll)| {
-                for length in &lengths {
-                    use itoa::Buffer;
-                    let mut buffer = Buffer::new();
-                    let s = buffer.format(*length);
-                    // that's the max length of an u64 formatted as decimal
-                    roll.reserve_at_least(20).unwrap();
-                    roll.put(s.as_bytes()).unwrap();
-                    let piece: Piece = roll.take_all().into();
-                    black_box(piece);
+            |(lengths, mut results)| {
+                for length in lengths {
+                    let vec = length.to_string();
+                    let piece: Piece = vec.into_bytes().into();
+                    results.push(piece);
                 }
+                black_box(results);
             },
             codspeed_criterion_compat::BatchSize::SmallInput,
         )
@@ -100,48 +102,19 @@ pub fn format_content_length(c: &mut Criterion) {
 
     c.bench_function("format_content_length/itoa/heap", |b| {
         b.iter_batched(
-            || content_lengths.clone(),
-            |lengths| {
+            || {
+                let results = Vec::with_capacity(content_lengths.len());
+                (content_lengths.clone(), results)
+            },
+            |(lengths, mut results)| {
                 for length in &lengths {
                     use itoa::Buffer;
                     let mut buffer = Buffer::new();
                     let s = buffer.format(*length).to_owned();
                     let piece: Piece = s.into_bytes().into();
-                    black_box(piece);
+                    results.push(piece);
                 }
-            },
-            codspeed_criterion_compat::BatchSize::SmallInput,
-        )
-    });
-
-    // Note: we cannot use this variant as-is, because it's not pinned, so we can't
-    // pass it to the kernel for writes. We _could_ have a pool of those Buffers
-    // I suppose? And return them to the pool when done.
-    c.bench_function("format_content_length/itoa/stack", |b| {
-        b.iter_batched(
-            || content_lengths.clone(),
-            |lengths| {
-                for length in &lengths {
-                    use itoa::Buffer;
-                    let mut buffer = Buffer::new();
-                    let s = buffer.format(*length);
-                    // the `s` is borrowed from `buffer`, which is stack-allocated.
-                    black_box(s);
-                }
-            },
-            codspeed_criterion_compat::BatchSize::SmallInput,
-        )
-    });
-
-    c.bench_function("format_content_length/std_fmt/heap", |b| {
-        b.iter_batched(
-            || content_lengths.clone(),
-            |lengths| {
-                for length in &lengths {
-                    let vec = length.to_string();
-                    let piece: Piece = vec.into_bytes().into();
-                    black_box(piece);
-                }
+                black_box(results);
             },
             codspeed_criterion_compat::BatchSize::SmallInput,
         )
@@ -151,10 +124,11 @@ pub fn format_content_length(c: &mut Criterion) {
         b.iter_batched(
             || {
                 fluke_buffet::bufpool::initialize_allocator_with_num_bufs(512 * 1024).unwrap();
-                (content_lengths.clone(), RollMut::alloc().unwrap())
+                let results = Vec::with_capacity(content_lengths.len());
+                (content_lengths.clone(), RollMut::alloc().unwrap(), results)
             },
-            |(lengths, mut roll)| {
-                for length in &lengths {
+            |(lengths, mut roll, mut results)| {
+                for length in lengths {
                     // that's the max length of an u64 formatted as decimal
                     roll.reserve_at_least(20).unwrap();
 
@@ -162,8 +136,91 @@ pub fn format_content_length(c: &mut Criterion) {
                     std::write!(&mut roll, "{}", length).unwrap();
 
                     let piece: Piece = roll.take_all().into();
-                    black_box(piece);
+                    results.push(piece);
                 }
+                black_box(results);
+            },
+            codspeed_criterion_compat::BatchSize::SmallInput,
+        )
+    });
+
+    c.bench_function("format_content_length/itoa/buffet", |b| {
+        b.iter_batched(
+            || {
+                fluke_buffet::bufpool::initialize_allocator_with_num_bufs(512 * 1024).unwrap();
+                let results = Vec::with_capacity(content_lengths.len());
+                (content_lengths.clone(), RollMut::alloc().unwrap(), results)
+            },
+            |(lengths, mut roll, mut results)| {
+                for length in lengths {
+                    use itoa::Buffer;
+                    let mut buffer = Buffer::new();
+                    let s = buffer.format(length);
+                    // that's the max length of an u64 formatted as decimal
+                    roll.reserve_at_least(20).unwrap();
+                    roll.put(s.as_bytes()).unwrap();
+                    let piece: Piece = roll.take_all().into();
+                    results.push(piece);
+                }
+                black_box(results);
+            },
+            codspeed_criterion_compat::BatchSize::SmallInput,
+        )
+    });
+
+    // Note: we cannot use this variant as-is, because it's not pinned, so we can't
+    // pass it to the kernel for writes. We _could_ have a pool of those Buffers
+    // I suppose? And return them to the pool when done.
+    c.bench_function("format_content_length/itoa/pool", |b| {
+        const NUM_BUFFERS: usize = 128 * 1024;
+
+        std::thread_local! {
+            static BUFFER_POOL: [UnsafeCell<itoa::Buffer>; NUM_BUFFERS] = const { unsafe { MaybeUninit::uninit().assume_init() } };
+            static BUFFER_POOL_FREE_LIST: RefCell<VecDeque<usize>> = RefCell::new(VecDeque::from_iter(0..NUM_BUFFERS));
+        }
+
+        struct GuardedBuffer {
+            index: usize,
+            buffer: *const UnsafeCell<itoa::Buffer>,
+        }
+
+        fn pop_buffer() -> Option<GuardedBuffer> {
+            BUFFER_POOL_FREE_LIST.with(|fl| {
+                let mut fl = fl.borrow_mut();
+                fl.pop_front().map(|i| {
+                    let buffer = unsafe { BUFFER_POOL.with(|p|
+                        p.get_unchecked(i) as *const UnsafeCell<itoa::Buffer>
+                    ) };
+                    GuardedBuffer { index: i, buffer }
+                })
+            })
+        }
+
+        impl Drop for GuardedBuffer {
+            fn drop(&mut self) {
+                BUFFER_POOL_FREE_LIST.with(|fl| {
+                    let mut fl = fl.borrow_mut();
+                    fl.push_front(self.index);
+                });
+            }
+        }
+
+        b.iter_batched(
+            || {
+                let results = Vec::with_capacity(content_lengths.len());
+                (content_lengths.clone(), results)
+            },
+            |(lengths, mut results)| {
+                for length in lengths {
+                    // grab a buffer from the pool
+                    let gb = pop_buffer().unwrap();
+                    {
+                        let buf = unsafe { (*gb.buffer).get().as_mut().unwrap() };
+                        buf.format(length);
+                    }
+                    results.push(gb);
+                }
+                black_box(results);
             },
             codspeed_criterion_compat::BatchSize::SmallInput,
         )

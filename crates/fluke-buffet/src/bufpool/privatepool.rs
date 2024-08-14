@@ -79,12 +79,9 @@ pub fn initialize_allocator_with_num_bufs(num_bufs: u32) -> Result<()> {
         let mut inner = Inner {
             ptr: std::ptr::null_mut(),
             mmap: None,
-            free: VecDeque::with_capacity(num_bufs as usize),
+            free: VecDeque::from_iter(0..num_bufs),
             ref_counts: vec![0; num_bufs as usize],
         };
-        for i in 0..num_bufs {
-            inner.free.push_back(i);
-        }
 
         let alloc_len = num_bufs as usize * BUF_SIZE as usize;
 
