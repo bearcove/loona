@@ -7,7 +7,6 @@ _default:
 ci-test: #!/bin/bash -eux
     just httpwg-hyper
     just cov
-    just httpwg-over-tcp
 
 cov:
     #!/bin/bash -eux
