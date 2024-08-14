@@ -34,7 +34,7 @@ pub trait IntoPiece {
     fn into_piece(self, scratch: &mut RollMut) -> std::io::Result<Piece>;
 }
 
-/// See https://httpwg.org/specs/rfc9113.html#FrameTypes
+/// See <https://httpwg.org/specs/rfc9113.html#FrameTypes>
 #[EnumRepr(type = "u8")]
 #[derive(Debug, Clone, Copy)]
 pub enum RawFrameType {
@@ -78,7 +78,7 @@ impl FrameType {
     }
 }
 
-/// See https://httpwg.org/specs/rfc9113.html#DATA
+/// See <https://httpwg.org/specs/rfc9113.html#DATA>
 #[bitflags]
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -87,7 +87,7 @@ pub enum DataFlags {
     EndStream = 0x01,
 }
 
-/// See https://httpwg.org/specs/rfc9113.html#rfc.section.6.2
+/// See <https://httpwg.org/specs/rfc9113.html#rfc.section.6.2>
 #[bitflags]
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -98,7 +98,7 @@ pub enum HeadersFlags {
     EndStream = 0x01,
 }
 
-/// See https://httpwg.org/specs/rfc9113.html#SETTINGS
+/// See <https://httpwg.org/specs/rfc9113.html#SETTINGS>
 #[bitflags]
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -106,7 +106,7 @@ pub enum SettingsFlags {
     Ack = 0x01,
 }
 
-/// See https://httpwg.org/specs/rfc9113.html#PING
+/// See <https://httpwg.org/specs/rfc9113.html#PING>
 #[bitflags]
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -114,7 +114,7 @@ pub enum PingFlags {
     Ack = 0x01,
 }
 
-/// See https://httpwg.org/specs/rfc9113.html#CONTINUATION
+/// See <https://httpwg.org/specs/rfc9113.html#CONTINUATION>
 #[bitflags]
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -231,7 +231,7 @@ impl fmt::Display for StreamId {
     }
 }
 
-/// See https://httpwg.org/specs/rfc9113.html#FrameHeader
+/// See <https://httpwg.org/specs/rfc9113.html#FrameHeader>
 pub struct Frame {
     pub frame_type: FrameType,
     pub reserved: u8,
@@ -411,7 +411,7 @@ impl IntoPiece for Frame {
     }
 }
 
-/// See https://httpwg.org/specs/rfc9113.html#FrameHeader - the first bit
+/// See <https://httpwg.org/specs/rfc9113.html#FrameHeader> - the first bit
 /// is reserved, and the rest is a 31-bit stream id
 pub fn parse_bit_and_u31(i: Roll) -> IResult<Roll, (u8, u32)> {
     // first, parse a u32:
@@ -485,7 +485,7 @@ fn test_pack_bit_and_u31_panic_val_too_large() {
     pack_bit_and_u31(0, 1 << 31);
 }
 
-// cf. https://httpwg.org/specs/rfc9113.html#HEADERS
+// cf. <https://httpwg.org/specs/rfc9113.html#HEADERS>
 #[derive(Debug)]
 pub struct PrioritySpec {
     pub exclusive: bool,
@@ -567,7 +567,7 @@ pub enum KnownErrorCode {
 
     /// The endpoint sent a SETTINGS frame but did not receive a response in a
     /// timely manner. See Section 6.5.3 ("Settings Synchronization").
-    /// https://httpwg.org/specs/rfc9113.html#SettingsSync
+    /// <https://httpwg.org/specs/rfc9113.html#SettingsSync>
     SettingsTimeout = 0x04,
 
     /// The endpoint received a frame after a stream was half-closed.
@@ -578,7 +578,7 @@ pub enum KnownErrorCode {
 
     /// The endpoint refused the stream prior to performing any application
     /// processing (see Section 8.7 for details).
-    /// https://httpwg.org/specs/rfc9113.html#Reliability
+    /// <https://httpwg.org/specs/rfc9113.html#Reliability>
     RefusedStream = 0x07,
 
     /// The endpoint uses this error code to indicate that the stream is no
@@ -591,7 +591,7 @@ pub enum KnownErrorCode {
 
     /// The connection established in response to a CONNECT request (Section
     /// 8.5) was reset or abnormally closed.
-    /// https://httpwg.org/specs/rfc9113.html#CONNECT
+    /// <https://httpwg.org/specs/rfc9113.html#CONNECT>
     ConnectError = 0x0a,
 
     /// The endpoint detected that its peer is exhibiting a behavior that might
@@ -600,7 +600,7 @@ pub enum KnownErrorCode {
 
     /// The underlying transport has properties that do not meet minimum
     /// security requirements (see Section 9.2).
-    /// https://httpwg.org/specs/rfc9113.html#TLSUsage
+    /// <https://httpwg.org/specs/rfc9113.html#TLSUsage>
     InadequateSecurity = 0x0c,
 
     /// The endpoint requires that HTTP/1.1 be used instead of HTTP/2.
@@ -615,14 +615,14 @@ impl TryFrom<ErrorCode> for KnownErrorCode {
     }
 }
 
-/// cf. https://httpwg.org/specs/rfc9113.html#SettingValues
+/// cf. <https://httpwg.org/specs/rfc9113.html#SettingValues>
 #[derive(Clone, Copy, Debug)]
 pub struct Settings {
     /// This setting allows the sender to inform the remote endpoint of the
     /// maximum size of the compression table used to decode field blocks, in
     /// units of octets. The encoder can select any size equal to or less than
     /// this value by using signaling specific to the compression format inside
-    /// a field block (see [COMPRESSION]). The initial value is 4,096 octets.
+    /// a field block (see COMPRESSION). The initial value is 4,096 octets.
     pub header_table_size: u32,
 
     /// This setting can be used to enable or disable server push. A server MUST
@@ -693,7 +693,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        // cf. https://httpwg.org/specs/rfc9113.html#SettingValues
+        // cf. <https://httpwg.org/specs/rfc9113.html#SettingValues>
         Self {
             header_table_size: 4096,
             enable_push: false,

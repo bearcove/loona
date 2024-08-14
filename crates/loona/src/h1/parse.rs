@@ -54,19 +54,19 @@ pub fn method(i: Roll) -> IResult<Roll, Method> {
 }
 
 /// A short textual identifier that does not include whitspace or delimiters,
-/// cf. https://httpwg.org/specs/rfc9110.html#rule.token.separators
+/// cf. <https://httpwg.org/specs/rfc9110.html#rule.token.separators>
 pub fn token(i: Roll) -> IResult<Roll, RollStr> {
     let (i, token) = take_while1(is_tchar)(i)?;
     let token = unsafe { token.to_string_unchecked() };
     Ok((i, token))
 }
 
-/// cf. https://httpwg.org/specs/rfc9110.html#rule.token.separators
+/// cf. <https://httpwg.org/specs/rfc9110.html#rule.token.separators>
 fn is_tchar(c: u8) -> bool {
     c.is_ascii_graphic() && !is_delimiter(c)
 }
 
-/// cf. https://httpwg.org/specs/rfc9110.html#rule.token.separators
+/// cf. <https://httpwg.org/specs/rfc9110.html#rule.token.separators>
 fn is_delimiter(c: u8) -> bool {
     memchr::memchr(c, br#"(),/:;<=>?@[\]{}""#).is_some()
 }
@@ -78,7 +78,7 @@ fn path(i: Roll) -> IResult<Roll, RollStr> {
 }
 
 /// Returns true if `c` is a character that can be found in an URI
-/// cf. https://stackoverflow.com/a/7109208
+/// cf. <https://stackoverflow.com/a/7109208>
 fn is_uri_char(c: u8) -> bool {
     memchr::memchr(
         c,

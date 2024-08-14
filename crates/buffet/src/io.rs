@@ -13,7 +13,7 @@ pub trait ReadOwned {
 #[allow(async_fn_in_trait)] // we never require Send
 pub trait WriteOwned {
     /// Write a single buffer, taking ownership for the duration of the write.
-    /// Might perform a partial write, see [WriteOwned::write_all]
+    /// Might perform a partial write, see [WriteOwned::write_all_owned]
     async fn write_owned(&mut self, buf: impl Into<Piece>) -> BufResult<usize, Piece>;
 
     /// Write a single buffer, re-trying the write if the kernel does a partial
@@ -38,7 +38,7 @@ pub trait WriteOwned {
     }
 
     /// Write a list of buffers, taking ownership for the duration of the write.
-    /// Might perform a partial write, see [WriteOwned::writev_all]
+    /// Might perform a partial write, see [WriteOwned::writev_all_owned]
     async fn writev_owned(&mut self, list: &PieceList) -> std::io::Result<usize> {
         let mut total = 0;
 

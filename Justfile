@@ -7,7 +7,6 @@ _default:
 ci-test: #!/bin/bash -eux
     just httpwg-hyper
     just cov
-    just httpwg-over-tcp
 
 cov:
     #!/bin/bash -eux
@@ -20,6 +19,14 @@ cov:
 
 httpwg-hyper:
 	cargo build --release -p httpwg-hyper
+
+d *args:
+    just doc {{args}}
+
+doc:
+    #!/usr/bin/env -S bash -eux
+    export RUSTDOCFLAGS="-D warnings"
+    cargo doc --no-deps --document-private-items
 
 t *args:
     just test {{args}}
