@@ -62,7 +62,7 @@ futures-util = { version = "0.3.30", default-features = false, features = [
 libc = "0.2.155"
 httpwg = { path = "../httpwg" }
 color-eyre = "0.6.3"
-httpwg-macros = { path = "../httpwg-macros" }
+httpwg-macros = { version = "0.2.0", path = "../httpwg-macros" }
 cargo-husky = { version = "1", features = ["user-hooks"] }
 criterion = "0.5.1"
 codspeed-criterion-compat = "2.6.0"
