@@ -479,11 +479,7 @@ impl std::io::Write for RollMut {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let n = buf.len();
         if self.cap() < n {
-            // TODO: this is wrong, `reserve` might not reserve _enough data_.
-            // we know how much data we need here, so we should reserve exactly
-            // that amount (rounded up so it aligns nicely with the default
-            // buffer size)
-            self.reserve()
+            self.reserve_at_least(n)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         }
         self.put(buf)

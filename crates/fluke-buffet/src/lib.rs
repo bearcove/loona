@@ -1,5 +1,3 @@
-#![feature(thread_local)]
-
 use std::future::Future;
 
 mod roll;

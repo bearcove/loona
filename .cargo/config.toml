@@ -1,9 +1,2 @@
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "linker=clang", "-C", "link-arg=-fuse-ld=lld"]
-
-[target.aarch64-apple-darwin]
-rustflags = [
-    # fast thread-locals
-    "-Z",
-    "tls-model=initial-exec",
-]
