@@ -8,7 +8,12 @@
 
 An experimental, HTTP/1.1 and HTTP/2 implementation in Rust on top of io-uring.
 
-Nothing in this repo is final yet, look around, but please do not use.
+This repository serves as a hope for several important projects:
+
+  * [loona](crates/loona/README.md) itself
+  * [buffet](crates/buffet/README.md), its buffer management library
+  * [luring](crates/buffet/README.md), its io_uring abstraction on top of tokio
+  * [httpwg](crates/httpwg/README.md), an HTTP conformance suite (replacing h2spec)
 
 ### Funding
 

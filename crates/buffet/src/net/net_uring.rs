@@ -176,8 +176,8 @@ impl IntoHalves for TcpStream {
 }
 
 impl FromRawFd for TcpStream {
-    unsafe fn from_raw_fd(_fd: RawFd) -> Self {
-        todo!()
+    unsafe fn from_raw_fd(fd: RawFd) -> Self {
+        Self { fd }
     }
 }
 
