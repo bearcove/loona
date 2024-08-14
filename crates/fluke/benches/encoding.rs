@@ -100,26 +100,6 @@ pub fn format_content_length(c: &mut Criterion) {
         )
     });
 
-    c.bench_function("format_content_length/itoa/heap", |b| {
-        b.iter_batched(
-            || {
-                let results = Vec::with_capacity(content_lengths.len());
-                (content_lengths.clone(), results)
-            },
-            |(lengths, mut results)| {
-                for length in &lengths {
-                    use itoa::Buffer;
-                    let mut buffer = Buffer::new();
-                    let s = buffer.format(*length).to_owned();
-                    let piece: Piece = s.into_bytes().into();
-                    results.push(piece);
-                }
-                black_box(results);
-            },
-            codspeed_criterion_compat::BatchSize::SmallInput,
-        )
-    });
-
     c.bench_function("format_content_length/std_fmt/buffet", |b| {
         b.iter_batched(
             || {
@@ -136,6 +116,26 @@ pub fn format_content_length(c: &mut Criterion) {
                     std::write!(&mut roll, "{}", length).unwrap();
 
                     let piece: Piece = roll.take_all().into();
+                    results.push(piece);
+                }
+                black_box(results);
+            },
+            codspeed_criterion_compat::BatchSize::SmallInput,
+        )
+    });
+
+    c.bench_function("format_content_length/itoa/heap", |b| {
+        b.iter_batched(
+            || {
+                let results = Vec::with_capacity(content_lengths.len());
+                (content_lengths.clone(), results)
+            },
+            |(lengths, mut results)| {
+                for length in &lengths {
+                    use itoa::Buffer;
+                    let mut buffer = Buffer::new();
+                    let s = buffer.format(*length).to_owned();
+                    let piece: Piece = s.into_bytes().into();
                     results.push(piece);
                 }
                 black_box(results);
