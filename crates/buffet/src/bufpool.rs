@@ -13,7 +13,12 @@ pub use privatepool::{initialize_allocator_with_num_bufs, num_free, Error, Resul
 /// allocation function.
 pub fn initialize_allocator() -> Result<()> {
     // 64 * 1024 * 4096 bytes = 256 MiB
+    #[cfg(not(feature = "miri"))]
     let default_num_bufs = 64 * 1024;
+
+    #[cfg(feature = "miri")]
+    let default_num_bufs = 1024;
+
     initialize_allocator_with_num_bufs(default_num_bufs)
 }
 
