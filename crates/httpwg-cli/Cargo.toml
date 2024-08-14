@@ -2,6 +2,13 @@
 name = "httpwg-cli"
 version = "0.2.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bearcove/loona"
+documentation = "https://docs.rs/httpwg-cli"
+description = """
+A CLI able to run httpwg test cases (h2spec replacement)
+"""
+rust-version = "1.75"
 
 [[bin]]
 name = "httpwg"
