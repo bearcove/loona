@@ -1,177 +1,26 @@
 use std::{
-    cell::{RefCell, UnsafeCell},
-    collections::VecDeque,
     marker::PhantomData,
     ops::{self, Bound, RangeBounds},
 };
 
-use memmap2::MmapMut;
+mod privatepool;
 
 pub type BufResult<T, B> = (std::io::Result<T>, B);
 
-pub const BUF_SIZE: u16 = 4096;
-
-#[cfg(not(feature = "miri"))]
-// pub const NUM_BUF: u32 = 64 * 1024;
-pub const NUM_BUF: u32 = 512 * 1024; // that's a lot — 512 * 1024 * 4096 bytes = 2GiB.
-                                     // good thing operating system lazily commit.
-
-#[cfg(feature = "miri")]
-pub const NUM_BUF: u32 = 64;
-
-#[thread_local]
-static BUF_POOL: BufPool = BufPool::new_empty(BUF_SIZE, NUM_BUF);
-
-thread_local! {
-    static BUF_POOL_DESTRUCTOR: RefCell<Option<MmapMut>> = const { RefCell::new(None) };
-}
-
-type Result<T, E = Error> = std::result::Result<T, E>;
-
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error("could not mmap buffer")]
-    Mmap(#[from] std::io::Error),
-
-    #[error("out of memory")]
-    OutOfMemory,
-
-    #[error("slice does not fit into this RollMut")]
-    DoesNotFit,
-}
-
-/// A buffer pool
-pub(crate) struct BufPool {
-    buf_size: u16,
-    num_buf: u32,
-    inner: UnsafeCell<Option<BufPoolInner>>,
-}
-
-struct BufPoolInner {
-    // this is tied to an [MmapMut] that gets deallocated at thread exit
-    // thanks to [BUF_POOL_DESTRUCTOR]
-    ptr: *mut u8,
-
-    // index of free blocks
-    free: VecDeque<u32>,
-
-    // ref counts start as all zeroes, get incremented when a block is borrowed
-    ref_counts: Vec<i16>,
-}
-
-#[cfg(test)]
-pub(crate) fn num_free() -> Result<usize> {
-    let inner = BUF_POOL.inner.get();
-    let inner = unsafe { Option::as_mut(&mut *inner).unwrap() };
-    Ok(inner.free.len())
-}
-
-impl BufPool {
-    pub(crate) const fn new_empty(buf_size: u16, num_buf: u32) -> BufPool {
-        BufPool {
-            buf_size,
-            num_buf,
-            inner: UnsafeCell::new(None),
-        }
-    }
-
-    pub(crate) fn alloc(&self) -> Result<BufMut> {
-        let inner = self.inner.get();
-        let inner = unsafe { Option::as_mut(&mut *inner).unwrap() };
-
-        if let Some(index) = inner.free.pop_front() {
-            inner.ref_counts[index as usize] += 1;
-            Ok(BufMut {
-                index,
-                off: 0,
-                len: self.buf_size as _,
-                _non_send: PhantomData,
-            })
-        } else {
-            Err(Error::OutOfMemory)
-        }
-    }
-
-    fn inc(&self, index: u32) {
-        let inner = unsafe { &mut *self.inner.get() };
-        let inner = inner.as_mut().unwrap();
-
-        inner.ref_counts[index as usize] += 1;
-    }
-
-    fn dec(&self, index: u32) {
-        let inner = unsafe { &mut *self.inner.get() };
-        let inner = inner.as_mut().unwrap();
-
-        inner.ref_counts[index as usize] -= 1;
-        if inner.ref_counts[index as usize] == 0 {
-            inner.free.push_back(index);
-        }
-    }
-
-    /// Returns the base pointer for a block
-    ///
-    /// # Safety
-    ///
-    /// Borrow-checking is on you!
-    #[inline(always)]
-    unsafe fn base_ptr(&self, index: u32) -> *mut u8 {
-        let start = index as isize * self.buf_size as isize;
-        let inner = self.inner.get();
-        let inner = unsafe { Option::as_mut(&mut *inner).unwrap() };
-        inner.ptr.byte_offset(start)
-    }
-}
+pub use privatepool::{initialize_allocator_with_num_bufs, num_free, Error, Result, BUF_SIZE};
 
 /// Initialize the allocator. Must be called before any other
 /// allocation function.
 pub fn initialize_allocator() -> Result<()> {
-    let inner = BUF_POOL.inner.get();
-    let inner = unsafe { inner.as_mut() }.unwrap();
-
-    if inner.is_some() {
-        return Ok(());
-    }
-
-    let len = BUF_POOL.num_buf as usize * BUF_POOL.buf_size as usize;
-
-    let ptr: *mut u8;
-
-    #[cfg(feature = "miri")]
-    {
-        let mut map = vec![0; len];
-        ptr = map.as_mut_ptr();
-        std::mem::forget(map);
-    }
-
-    #[cfg(not(feature = "miri"))]
-    {
-        let mut map = memmap2::MmapOptions::new().len(len).map_anon()?;
-        ptr = map.as_mut_ptr();
-        BUF_POOL_DESTRUCTOR.with(|destructor| {
-            *destructor.borrow_mut() = Some(map);
-        });
-    }
-
-    let mut free = VecDeque::with_capacity(BUF_POOL.num_buf as usize);
-    for i in 0..BUF_POOL.num_buf {
-        free.push_back(i);
-    }
-    let ref_counts = vec![0; BUF_POOL.num_buf as usize];
-
-    inner.replace(BufPoolInner {
-        ptr,
-        free,
-        ref_counts,
-    });
-
-    Ok(())
+    // 64 * 1024 * 4096 bytes = 256 MiB
+    let default_num_bufs = 64 * 1024;
+    initialize_allocator_with_num_bufs(default_num_bufs)
 }
 
 impl BufMut {
     #[inline(always)]
     pub fn alloc() -> Result<BufMut, Error> {
-        BUF_POOL.alloc()
+        privatepool::alloc()
     }
 
     #[inline(always)]
@@ -195,15 +44,18 @@ impl BufMut {
 
             _non_send: PhantomData,
         };
-
         std::mem::forget(self); // don't decrease ref count
 
         b
     }
 
-    /// Dangerous: freeze a slice of this. Must only be used if you can
-    /// guarantee this portion won't be written to anymore.
-    pub(crate) fn freeze_slice(&self, range: impl RangeBounds<usize>) -> Buf {
+    /// Dangerous: freeze a slice of this.
+    ///
+    /// # Safety
+    /// Must only be used if you can guarantee this portion won't be written to
+    /// anymore.
+    #[inline]
+    pub(crate) unsafe fn freeze_slice(&self, range: impl RangeBounds<usize>) -> Buf {
         let b = Buf {
             index: self.index,
             off: self.off,
@@ -238,7 +90,7 @@ impl BufMut {
         };
 
         std::mem::forget(self); // don't decrease ref count
-        BUF_POOL.inc(left.index); // in fact, increase it by 1
+        privatepool::inc(left.index); // in fact, increase it by 1
 
         (left, right)
     }
@@ -270,7 +122,7 @@ impl ops::Deref for BufMut {
     fn deref(&self) -> &[u8] {
         unsafe {
             std::slice::from_raw_parts(
-                BUF_POOL.base_ptr(self.index).add(self.off as _),
+                privatepool::base_ptr_with_offset(self.index, self.off as _),
                 self.len as _,
             )
         }
@@ -282,7 +134,7 @@ impl ops::DerefMut for BufMut {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe {
             std::slice::from_raw_parts_mut(
-                BUF_POOL.base_ptr(self.index).add(self.off as _),
+                privatepool::base_ptr_with_offset(self.index, self.off as _),
                 self.len as _,
             )
         }
@@ -327,7 +179,7 @@ pub unsafe trait IoBufMut: iobufmut::Sealed {
 
 unsafe impl IoBufMut for BufMut {
     fn io_buf_mut_stable_mut_ptr(&mut self) -> *mut u8 {
-        unsafe { BUF_POOL.base_ptr(self.index).add(self.off as _) }
+        unsafe { privatepool::base_ptr_with_offset(self.index, self.off as _) }
     }
 
     fn io_buf_mut_capacity(&self) -> usize {
@@ -347,7 +199,7 @@ unsafe impl IoBufMut for Vec<u8> {
 
 impl Drop for BufMut {
     fn drop(&mut self) {
-        BUF_POOL.dec(self.index);
+        privatepool::dec(self.index);
     }
 }
 
@@ -420,7 +272,7 @@ impl Buf {
         };
 
         std::mem::forget(self); // don't decrease ref count
-        BUF_POOL.inc(left.index); // in fact, increase it by 1
+        privatepool::inc(left.index); // in fact, increase it by 1
 
         (left, right)
     }
@@ -433,7 +285,7 @@ impl ops::Deref for Buf {
     fn deref(&self) -> &[u8] {
         unsafe {
             std::slice::from_raw_parts(
-                BUF_POOL.base_ptr(self.index).add(self.off as _),
+                privatepool::base_ptr_with_offset(self.index, self.off as _),
                 self.len as _,
             )
         }
@@ -442,7 +294,7 @@ impl ops::Deref for Buf {
 
 impl Clone for Buf {
     fn clone(&self) -> Self {
-        BUF_POOL.inc(self.index);
+        privatepool::inc(self.index);
         Self {
             index: self.index,
             off: self.off,
@@ -454,7 +306,7 @@ impl Clone for Buf {
 
 impl Drop for Buf {
     fn drop(&mut self) {
-        BUF_POOL.dec(self.index);
+        privatepool::dec(self.index);
     }
 }
 
@@ -493,10 +345,10 @@ mod tests {
     fn freeze_test() -> eyre::Result<()> {
         crate::bufpool::initialize_allocator().unwrap();
 
-        let total_bufs = num_free()?;
+        let total_bufs = num_free();
         let mut bm = BufMut::alloc().unwrap();
 
-        assert_eq!(total_bufs - 1, num_free()?);
+        assert_eq!(total_bufs - 1, num_free());
         assert_eq!(bm.len(), 4096);
 
         bm[..11].copy_from_slice(b"hello world");
@@ -504,17 +356,17 @@ mod tests {
 
         let b = bm.freeze();
         assert_eq!(&b[..11], b"hello world");
-        assert_eq!(total_bufs - 1, num_free()?);
+        assert_eq!(total_bufs - 1, num_free());
 
         let b2 = b.clone();
         assert_eq!(&b[..11], b"hello world");
-        assert_eq!(total_bufs - 1, num_free()?);
+        assert_eq!(total_bufs - 1, num_free());
 
         drop(b);
-        assert_eq!(total_bufs - 1, num_free()?);
+        assert_eq!(total_bufs - 1, num_free());
 
         drop(b2);
-        assert_eq!(total_bufs, num_free()?);
+        assert_eq!(total_bufs, num_free());
 
         Ok(())
     }
@@ -523,13 +375,13 @@ mod tests {
     fn split_test() -> eyre::Result<()> {
         crate::bufpool::initialize_allocator().unwrap();
 
-        let total_bufs = num_free()?;
+        let total_bufs = num_free();
         let mut bm = BufMut::alloc().unwrap();
 
         bm[..12].copy_from_slice(b"yellowjacket");
         let (a, b) = bm.split_at(6);
 
-        assert_eq!(total_bufs - 1, num_free()?);
+        assert_eq!(total_bufs - 1, num_free());
         assert_eq!(&a[..], b"yellow");
         assert_eq!(&b[..6], b"jacket");
 
