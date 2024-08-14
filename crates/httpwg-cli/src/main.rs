@@ -1,4 +1,6 @@
-use std::{collections::HashMap, ffi::OsString, net::SocketAddr, rc::Rc, time::Duration};
+use std::{
+    cell::RefCell, collections::HashMap, ffi::OsString, net::SocketAddr, rc::Rc, time::Duration,
+};
 
 use buffet::{net::TcpStream, IntoHalves};
 use httpwg::{Config, Conn};
@@ -204,6 +206,8 @@ async fn async_main(mut args: Args) -> eyre::Result<()> {
         .unwrap_or(false);
 
     let mut num_tests = 0;
+    let num_passed: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
+
     let start_time = std::time::Instant::now();
 
     for (rfc, sections) in cat {
@@ -223,12 +227,22 @@ async fn async_main(mut args: Args) -> eyre::Result<()> {
                         .unwrap()
                         .unwrap();
                 let conn = Conn::new(conf.clone(), stream);
+                let num_passed = num_passed.clone();
                 let test = async move {
                     if args.verbose {
                         eprintln!("🔷 Running test: {}", test_name);
                     }
-                    boxed_test(conn).await.unwrap();
-                    eprintln!("✅ Test passed: {}", test_name);
+                    match boxed_test(conn).await {
+                        Ok(()) => {
+                            eprintln!("✅ Test passed: {}", test_name);
+                            {
+                                *num_passed.borrow_mut() += 1;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("❌ Test failed: {}\n{e:?}", test_name);
+                        }
+                    }
                 };
                 local_set.spawn_local(async move {
                     {
@@ -243,13 +257,20 @@ async fn async_main(mut args: Args) -> eyre::Result<()> {
     }
 
     local_set.await;
+    let num_passed = *num_passed.borrow();
 
     eprintln!(
-        "🚄 Ran \x1b[1;32m{}\x1b[0m tests in \x1b[1;33m{:.2}\x1b[0m seconds against \x1b[1;36m{}\x1b[0m",
+        "🚄 Passed \x1b[1;32m{}/{}\x1b[0m tests in \x1b[1;33m{:.2}\x1b[0m seconds against \x1b[1;36m{}\x1b[0m",
+        num_passed,
         num_tests,
         start_time.elapsed().as_secs_f32(),
         server_name,
     );
+
+    if num_passed != num_tests {
+        eprintln!("❌ Some tests failed");
+        std::process::exit(1);
+    }
 
     Ok(())
 }
