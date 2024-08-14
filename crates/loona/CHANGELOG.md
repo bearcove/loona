@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/bearcove/loona/compare/loona-v0.2.0...loona-v0.2.1) - 2024-08-14
+
+### Fixed
+- Fix rustdoc errors
+- Depend on ktls only on Linux
+
+### Other
+- Improve httpwg-cli, make it not so noisy
+- Merge pull request [#216](https://github.com/bearcove/loona/pull/216) from bearcove/run-doc-in-ci
+
 ## [0.1.1](https://github.com/bearcove/fluke/compare/fluke-v0.1.0...fluke-v0.1.1) - 2024-05-27
 
 ### Added

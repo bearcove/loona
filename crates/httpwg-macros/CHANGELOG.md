@@ -6,12 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.1](https://github.com/bearcove/loona/compare/loona-h2-v0.2.0...loona-h2-v0.2.1) - 2024-08-14
+## [0.2.1](https://github.com/bearcove/loona/compare/httpwg-macros-v0.2.0...httpwg-macros-v0.2.1) - 2024-08-14
+
+### Added
+- Generate catalog in httpwg-macros
 
 ### Fixed
 - Fix rustdoc errors
-
-## [0.1.1](https://github.com/bearcove/fluke/compare/fluke-h2-parse-v0.1.0...fluke-h2-parse-v0.1.1) - 2024-05-27
-
-### Other
-- updated the following local packages: fluke-buffet
