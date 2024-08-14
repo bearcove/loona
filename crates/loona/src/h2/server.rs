@@ -584,7 +584,6 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         // tell the sender to stop sending chunks, which is not
                         // possible if they all share the same ev_tx
                         // TODO: make it possible to propagate errors to the sender
-                        tracing::warn!(stream_id = %ev.stream_id, "ignoring event for stream, since we have no state for it");
 
                         return Ok(());
                     }

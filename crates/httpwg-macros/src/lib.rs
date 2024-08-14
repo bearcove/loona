@@ -1160,3 +1160,493 @@ $body
 }
 }
 }
+
+/// This generates a function that returns a Catalog of type
+#[macro_export]
+macro_rules! gen_catalog {
+  ($catalog_fn_name:ident) => {
+    use ::httpwg::BoxedTest;
+    pub fn $catalog_fn_name<IO: IntoHalves>() -> HashMap<&'static str, HashMap<&'static str, HashMap<&'static str, BoxedTest<IO>>>> {
+        let mut rfcs: HashMap<&'static str, HashMap<&'static str, HashMap<&'static str, BoxedTest<IO>>>> = Default::default();
+
+        {
+            let mut sections: HashMap<&'static str, _> = Default::default();
+
+            {
+                use ::httpwg::rfc9113::_3_starting_http2 as s;
+                let mut _3_starting_http2: HashMap<&'static str, BoxedTest<IO>> = Default::default();
+
+                _3_starting_http2.insert(
+                    "sends client connection preface",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_client_connection_preface(conn))),
+                );
+                _3_starting_http2.insert(
+                    "sends invalid connection preface",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_invalid_connection_preface(conn))),
+                );
+
+                sections.insert("3. starting http2", _3_starting_http2);
+            }
+            {
+                use ::httpwg::rfc9113::_4_http_frames as s;
+                let mut _4_http_frames: HashMap<&'static str, BoxedTest<IO>> = Default::default();
+
+                _4_http_frames.insert(
+                    "sends frame with unknown type",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_frame_with_unknown_type(conn))),
+                );
+                _4_http_frames.insert(
+                    "sends frame with unused flags",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_frame_with_unused_flags(conn))),
+                );
+                _4_http_frames.insert(
+                    "sends frame with reserved bit set",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_frame_with_reserved_bit_set(conn))),
+                );
+                _4_http_frames.insert(
+                    "data frame with max length",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::data_frame_with_max_length(conn))),
+                );
+                _4_http_frames.insert(
+                    "frame exceeding max size",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::frame_exceeding_max_size(conn))),
+                );
+                _4_http_frames.insert(
+                    "large headers frame exceeding max size",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::large_headers_frame_exceeding_max_size(conn))),
+                );
+                _4_http_frames.insert(
+                    "invalid header block fragment",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::invalid_header_block_fragment(conn))),
+                );
+                _4_http_frames.insert(
+                    "priority frame while sending headers",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::priority_frame_while_sending_headers(conn))),
+                );
+                _4_http_frames.insert(
+                    "headers frame to another stream",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::headers_frame_to_another_stream(conn))),
+                );
+
+                sections.insert("4. http frames", _4_http_frames);
+            }
+            {
+                use ::httpwg::rfc9113::_5_streams_and_multiplexing as s;
+                let mut _5_streams_and_multiplexing: HashMap<&'static str, BoxedTest<IO>> = Default::default();
+
+                _5_streams_and_multiplexing.insert(
+                    "idle sends data frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::idle_sends_data_frame(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "idle sends rst stream frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::idle_sends_rst_stream_frame(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "idle sends window update frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::idle_sends_window_update_frame(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "idle sends continuation frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::idle_sends_continuation_frame(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "half closed remote sends data frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::half_closed_remote_sends_data_frame(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "half closed remote sends headers frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::half_closed_remote_sends_headers_frame(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "half closed remote sends continuation frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::half_closed_remote_sends_continuation_frame(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "closed sends data frame after rst stream",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::closed_sends_data_frame_after_rst_stream(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "closed sends headers frame after rst stream",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::closed_sends_headers_frame_after_rst_stream(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "closed sends continuation frame after rst stream",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::closed_sends_continuation_frame_after_rst_stream(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "closed sends data frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::closed_sends_data_frame(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "closed sends headers frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::closed_sends_headers_frame(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "closed sends continuation frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::closed_sends_continuation_frame(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "sends even numbered stream identifier",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_even_numbered_stream_identifier(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "sends smaller stream identifier",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_smaller_stream_identifier(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "exceeds concurrent stream limit",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::exceeds_concurrent_stream_limit(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "invalid ping frame for connection close",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::invalid_ping_frame_for_connection_close(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "test invalid ping frame for goaway",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::test_invalid_ping_frame_for_goaway(conn))),
+                );
+                _5_streams_and_multiplexing.insert(
+                    "unknown extension frame in header block",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::unknown_extension_frame_in_header_block(conn))),
+                );
+
+                sections.insert("5. streams and multiplexing", _5_streams_and_multiplexing);
+            }
+            {
+                use ::httpwg::rfc9113::_6_frame_definitions as s;
+                let mut _6_frame_definitions: HashMap<&'static str, BoxedTest<IO>> = Default::default();
+
+                _6_frame_definitions.insert(
+                    "sends data frame with zero stream id",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_data_frame_with_zero_stream_id(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends data frame on invalid stream state",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_data_frame_on_invalid_stream_state(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends data frame with invalid pad length",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_data_frame_with_invalid_pad_length(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends headers frame with zero stream id",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_zero_stream_id(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends headers frame with invalid pad length",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_invalid_pad_length(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends priority frame with zero stream id",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_priority_frame_with_zero_stream_id(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends priority frame with invalid length",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_priority_frame_with_invalid_length(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends rst stream frame with zero stream id",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_rst_stream_frame_with_zero_stream_id(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends rst stream frame on idle stream",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_rst_stream_frame_on_idle_stream(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends rst stream frame with invalid length",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_rst_stream_frame_with_invalid_length(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends settings frame with ack and payload",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_settings_frame_with_ack_and_payload(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends settings frame with non zero stream id",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_settings_frame_with_non_zero_stream_id(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends settings frame with invalid length",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_settings_frame_with_invalid_length(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends settings enable push with invalid value",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_settings_enable_push_with_invalid_value(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends settings initial window size with invalid value",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_settings_initial_window_size_with_invalid_value(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends settings max frame size with invalid value below initial",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_settings_max_frame_size_with_invalid_value_below_initial(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends settings max frame size with invalid value above max",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_settings_max_frame_size_with_invalid_value_above_max(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends settings frame with unknown identifier",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_settings_frame_with_unknown_identifier(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends multiple values of settings initial window size",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_multiple_values_of_settings_initial_window_size(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends settings frame without ack flag",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_settings_frame_without_ack_flag(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends ping frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_ping_frame(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends ping frame with ack",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_ping_frame_with_ack(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends ping frame with non zero stream id",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_ping_frame_with_non_zero_stream_id(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends ping frame with invalid length",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_ping_frame_with_invalid_length(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends goaway frame with non zero stream id",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_goaway_frame_with_non_zero_stream_id(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends window update frame with zero increment",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_window_update_frame_with_zero_increment(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends window update frame with zero increment on stream",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_window_update_frame_with_zero_increment_on_stream(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends window update frame with invalid length",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_window_update_frame_with_invalid_length(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends settings frame to set initial window size to 1 and sends headers frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_settings_frame_to_set_initial_window_size_to_1_and_sends_headers_frame(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends multiple window update frames increasing flow control window above max",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_multiple_window_update_frames_increasing_flow_control_window_above_max(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends multiple window update frames increasing flow control window above max on stream",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_multiple_window_update_frames_increasing_flow_control_window_above_max_on_stream(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "changes settings initial window size after sending headers frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::changes_settings_initial_window_size_after_sending_headers_frame(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends settings frame for window size to be negative",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_settings_frame_for_window_size_to_be_negative(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends settings initial window size with exceeded max window size value",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_settings_initial_window_size_with_exceeded_max_window_size_value(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends multiple continuation frames preceded by headers frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_multiple_continuation_frames_preceded_by_headers_frame(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends continuation frame followed by non continuation frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_continuation_frame_followed_by_non_continuation_frame(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends continuation frame with zero stream id",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_continuation_frame_with_zero_stream_id(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends continuation frame preceded by headers frame with end headers flag",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_continuation_frame_preceded_by_headers_frame_with_end_headers_flag(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends continuation frame preceded by continuation frame with end headers flag",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_continuation_frame_preceded_by_continuation_frame_with_end_headers_flag(conn))),
+                );
+                _6_frame_definitions.insert(
+                    "sends continuation frame preceded by data frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_continuation_frame_preceded_by_data_frame(conn))),
+                );
+
+                sections.insert("6. frame definitions", _6_frame_definitions);
+            }
+            {
+                use ::httpwg::rfc9113::_7_error_codes as s;
+                let mut _7_error_codes: HashMap<&'static str, BoxedTest<IO>> = Default::default();
+
+                _7_error_codes.insert(
+                    "sends goaway frame with unknown error code",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_goaway_frame_with_unknown_error_code(conn))),
+                );
+                _7_error_codes.insert(
+                    "sends rst stream frame with unknown error code",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_rst_stream_frame_with_unknown_error_code(conn))),
+                );
+
+                sections.insert("7. error codes", _7_error_codes);
+            }
+            {
+                use ::httpwg::rfc9113::_8_expressing_http_semantics_in_http2 as s;
+                let mut _8_expressing_http_semantics_in_http2: HashMap<&'static str, BoxedTest<IO>> = Default::default();
+
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends second headers frame without end stream",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_second_headers_frame_without_end_stream(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with incorrect content length single data frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_incorrect_content_length_single_data_frame(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with incorrect content length multiple data frames",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_incorrect_content_length_multiple_data_frames(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with uppercase field name",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_uppercase_field_name(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with space in field name",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_space_in_field_name(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with non visible ascii",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_non_visible_ascii(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with del character",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_del_character(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with non ascii character",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_non_ascii_character(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with colon in field name",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_colon_in_field_name(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with lf in field value",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_lf_in_field_value(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with cr in field value",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_cr_in_field_value(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with nul in field value",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_nul_in_field_value(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with leading space in field value",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_leading_space_in_field_value(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with trailing tab in field value",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_trailing_tab_in_field_value(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with connection header",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_connection_header(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with proxy connection header",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_proxy_connection_header(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with keep alive header",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_keep_alive_header(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with transfer encoding header",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_transfer_encoding_header(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with upgrade header",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_upgrade_header(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with te trailers",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_te_trailers(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with te not trailers",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_te_not_trailers(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with response pseudo header",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_response_pseudo_header(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with pseudo header in trailer",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_pseudo_header_in_trailer(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with duplicate pseudo headers",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_duplicate_pseudo_headers(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with mismatched host authority",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_mismatched_host_authority(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with empty path component",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_empty_path_component(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame without method",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_without_method(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame without scheme",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_without_scheme(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame without path",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_without_path(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame without status",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_without_status(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "client sends push promise frame",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::client_sends_push_promise_frame(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends connect with scheme",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_connect_with_scheme(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends connect with path",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_connect_with_path(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends connect without authority",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_connect_without_authority(conn))),
+                );
+                _8_expressing_http_semantics_in_http2.insert(
+                    "sends headers frame with pseudo headers after regular headers",
+                    Box::new(|conn: Conn<IO>| Box::pin(s::sends_headers_frame_with_pseudo_headers_after_regular_headers(conn))),
+                );
+
+                sections.insert("8. expressing http semantics in http2", _8_expressing_http_semantics_in_http2);
+            }
+
+            rfcs.insert("RFC 9113", sections);
+        }
+
+        rfcs
+    }
+  }
+}

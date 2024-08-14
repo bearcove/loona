@@ -1,5 +1,7 @@
 # just manual: https://github.com/casey/just#readme
 
+set positional-arguments
+
 _default:
 	just --list
 
@@ -56,17 +58,14 @@ tls-sample:
 httpwg-gen:
     cargo run --release --package httpwg-gen
 
-httpwg-over-tcp *args:
+httpwg-over-tcp *args='':
     #!/usr/bin/env -S bash -eux
     cargo build --release \
         --package httpwg-loona \
         --package httpwg-cli
     export TEST_PROTO=h2
     export PORT=8001
-    ./target/release/httpwg \
-        --address localhost:8001 \
-        {{args}} \
-        -- ./target/release/httpwg-loona
+    ./target/release/httpwg --address localhost:8001 "$@" -- ./target/release/httpwg-loona
 
 instruments:
     #!/usr/bin/env -S bash -eux

@@ -1,10 +1,9 @@
 use std::{
-    collections::HashMap, ffi::OsString, future::Future, net::SocketAddr, pin::Pin, rc::Rc,
-    time::Duration,
+    cell::RefCell, collections::HashMap, ffi::OsString, net::SocketAddr, rc::Rc, time::Duration,
 };
 
 use buffet::{net::TcpStream, IntoHalves};
-use httpwg::{rfc9113, Config, Conn};
+use httpwg::{Config, Conn};
 use tracing::Level;
 use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -21,6 +20,9 @@ struct Args {
 
     /// which tests to run
     filter: Option<String>,
+
+    /// whether to print verbose output
+    verbose: bool,
 }
 
 pub trait IntoStringResult {
@@ -70,6 +72,9 @@ fn parse_args() -> eyre::Result<Args> {
             lexopt::Arg::Long("filter") | lexopt::Arg::Short('f') => {
                 args.filter = Some(parser.value()?.into_string_result()?);
             }
+            lexopt::Arg::Long("verbose") | lexopt::Arg::Short('v') => {
+                args.verbose = true;
+            }
             lexopt::Arg::Value(value) => {
                 args.server_binary.push(value.into_string_result()?);
             }
@@ -87,6 +92,7 @@ Options:
     -a, --address <ADDRESS>    The address/port the server will listen on
     -t, --connect-timeout <MS> The timeout for connections in milliseconds
     -f, --filter <FILTER>      Which tests to run
+    -v, --verbose              Print verbose output
 
 Arguments:
     SERVER                     The server to run tests against
@@ -116,7 +122,7 @@ fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-async fn async_main(args: Args) -> eyre::Result<()> {
+async fn async_main(mut args: Args) -> eyre::Result<()> {
     let cat = catalog::<buffet::net::TcpStream>();
 
     let addr = match args.server_address {
@@ -137,8 +143,16 @@ async fn async_main(args: Args) -> eyre::Result<()> {
     });
 
     eprintln!("Will run tests against {addr} with a connect timeout of {connect_timeout:?}");
+
+    // this works around an oddity of Just when forwarding positional arguments
+    args.server_binary.retain(|s| !s.is_empty());
+
+    let mut server_name = format!("a server listening on {addr}");
+
     if !args.server_binary.is_empty() {
         let binary_and_args = args.server_binary;
+        let binary_name = &binary_and_args[0];
+        server_name = format!("{binary_name} listening on {addr}");
 
         eprintln!(
             "Launching ({}) now and waiting until it listens on {addr}",
@@ -185,7 +199,16 @@ async fn async_main(args: Args) -> eyre::Result<()> {
         panic!("Server did not start listening within 3 seconds");
     }
 
-    let local_set = tokio::task::LocalSet::new();
+    let mut local_set = tokio::task::LocalSet::new();
+
+    let sequential = std::env::var("SEQUENTIAL")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+
+    let mut num_tests = 0;
+    let num_passed: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
+
+    let start_time = std::time::Instant::now();
 
     for (rfc, sections) in cat {
         for (section, tests) in sections {
@@ -193,32 +216,61 @@ async fn async_main(args: Args) -> eyre::Result<()> {
                 let test_name = format!("{rfc} :: {section} :: {test}");
                 if let Some(filter) = &args.filter {
                     if !test_name.contains(filter) {
-                        println!("Skipping test: {}", test_name);
                         continue;
                     }
                 }
 
+                num_tests += 1;
                 let stream =
                     tokio::time::timeout(Duration::from_millis(250), TcpStream::connect(addr))
                         .await
                         .unwrap()
                         .unwrap();
                 let conn = Conn::new(conf.clone(), stream);
+                let num_passed = num_passed.clone();
                 let test = async move {
-                    println!("🔷 Running test: {}", test_name);
-                    boxed_test(conn).await.unwrap();
-                    println!("✅ Test passed: {}", test_name);
+                    if args.verbose {
+                        eprintln!("🔷 Running test: {}", test_name);
+                    }
+                    match boxed_test(conn).await {
+                        Ok(()) => {
+                            eprintln!("✅ Test passed: {}", test_name);
+                            {
+                                *num_passed.borrow_mut() += 1;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("❌ Test failed: {}\n{e:?}", test_name);
+                        }
+                    }
                 };
                 local_set.spawn_local(async move {
                     {
                         test.await;
                     }
                 });
+                if sequential {
+                    (&mut local_set).await;
+                }
             }
         }
     }
 
     local_set.await;
+    let num_passed = *num_passed.borrow();
+
+    eprintln!(
+        "🚄 Passed \x1b[1;32m{}/{}\x1b[0m tests in \x1b[1;33m{:.2}\x1b[0m seconds against \x1b[1;36m{}\x1b[0m",
+        num_passed,
+        num_tests,
+        start_time.elapsed().as_secs_f32(),
+        server_name,
+    );
+
+    if num_passed != num_tests {
+        eprintln!("❌ Some tests failed");
+        std::process::exit(1);
+    }
 
     Ok(())
 }
@@ -263,39 +315,5 @@ fn setup_tracing_and_error_reporting() {
         .with(fmt_layer)
         .init();
 }
-type BoxedTest<IO> = Box<dyn Fn(Conn<IO>) -> Pin<Box<dyn Future<Output = eyre::Result<()>>>>>;
 
-pub fn catalog<IO: IntoHalves>(
-) -> HashMap<&'static str, HashMap<&'static str, HashMap<&'static str, BoxedTest<IO>>>> {
-    let mut rfcs: HashMap<
-        &'static str,
-        HashMap<&'static str, HashMap<&'static str, BoxedTest<IO>>>,
-    > = Default::default();
-
-    {
-        let mut sections: HashMap<&'static str, _> = Default::default();
-
-        {
-            use rfc9113::_8_expressing_http_semantics_in_http2 as s;
-            let mut section8: HashMap<&'static str, BoxedTest<IO>> = Default::default();
-            section8.insert(
-                "client sends push promise frame",
-                Box::new(|conn: Conn<IO>| Box::pin(s::client_sends_push_promise_frame(conn))),
-            );
-            section8.insert(
-                "sends connect with scheme",
-                Box::new(|conn: Conn<IO>| Box::pin(s::sends_connect_with_scheme(conn))),
-            );
-            section8.insert(
-                "sends connect with path",
-                Box::new(|conn: Conn<IO>| Box::pin(s::sends_connect_with_path(conn))),
-            );
-
-            sections.insert("Section 8: Expressing HTTP Semantics in HTTP/2", section8);
-        }
-
-        rfcs.insert("RFC 9113", sections);
-    }
-
-    rfcs
-}
+httpwg_macros::gen_catalog!(catalog);

@@ -1,6 +1,6 @@
 use eyre::eyre;
 use rfc9113::DEFAULT_FRAME_SIZE;
-use std::{collections::VecDeque, rc::Rc, time::Duration};
+use std::{collections::VecDeque, future::Future, pin::Pin, rc::Rc, time::Duration};
 
 use buffet::{IntoHalves, Piece, PieceList, Roll, RollMut, WriteOwned};
 use enumflags2::{bitflags, BitFlags};
@@ -17,6 +17,8 @@ use tracing::{debug, trace};
 use crate::rfc9113::default_settings;
 
 pub mod rfc9113;
+
+pub type BoxedTest<IO> = Box<dyn Fn(Conn<IO>) -> Pin<Box<dyn Future<Output = eyre::Result<()>>>>>;
 
 #[derive(Default)]
 pub struct Headers {
@@ -243,10 +245,12 @@ impl<IO: IntoHalves> Conn<IO> {
         let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<Ev>(1);
         let mut eof = false;
 
+        let ev_tx_unwrap = ev_tx.clone();
+        let mut res_buf = RollMut::alloc().unwrap();
+
         let recv_fut = {
             let config = config.clone();
             async move {
-                let mut res_buf = RollMut::alloc()?;
                 'read: loop {
                     trace!("'read loop");
 
@@ -258,7 +262,7 @@ impl<IO: IntoHalves> Conn<IO> {
                             // read frame payload
                             let frame_len = frame.len as usize;
                             trace!(?frame_len, "reserving memory");
-                            res_buf.reserve_at_least(frame_len)?;
+                            res_buf.reserve_at_least(frame_len).unwrap();
 
                             let deadline = Instant::now() + config.timeout;
                             trace!(?frame_len, ?deadline, "reading");
@@ -319,7 +323,7 @@ impl<IO: IntoHalves> Conn<IO> {
                             }
 
                             trace!("reserving");
-                            res_buf.reserve()?;
+                            res_buf.reserve().unwrap();
                             let res;
                             trace!("re-filling buffer");
                             let deadline = Instant::now() + config.timeout;
@@ -352,7 +356,7 @@ impl<IO: IntoHalves> Conn<IO> {
                     }
                 }
 
-                Ok::<_, eyre::Report>(())
+                Ok::<_, std::io::Error>(())
             }
         };
 
@@ -368,7 +372,11 @@ impl<IO: IntoHalves> Conn<IO> {
                     tracing::trace!("httpwg receive loop cancelled!");
                 },
                 result = recv_fut => {
-                    result.unwrap();
+                    if let Err(e) = result {
+                        if ev_tx_unwrap.send(Ev::IoError { error: e }).await.is_err() {
+                            // well the test already hung up I guess.
+                        }
+                    }
                 }
             }
         });
