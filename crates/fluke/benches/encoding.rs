@@ -79,7 +79,7 @@ pub fn format_content_length(c: &mut Criterion) {
     c.bench_function("format_content_length/itoa/buffet", |b| {
         b.iter_batched(
             || {
-                fluke_buffet::bufpool::initialize_allocator().unwrap();
+                fluke_buffet::bufpool::initialize_allocator_with_num_bufs(512 * 1024).unwrap();
                 (content_lengths.clone(), RollMut::alloc().unwrap())
             },
             |(lengths, mut roll)| {
