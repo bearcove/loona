@@ -1,10 +1,10 @@
-# fluke
+# loona
 
-[![test pipeline](https://github.com/bearcove/fluke/actions/workflows/test.yml/badge.svg)](https://github.com/bearcove/fluke/actions/workflows/test.yml?query=branch%3Amain)
-[![Coverage Status (codecov.io)](https://codecov.io/gh/bearcove/fluke/branch/main/graph/badge.svg)](https://codecov.io/gh/bearcove/fluke/)
+[![test pipeline](https://github.com/bearcove/loona/actions/workflows/test.yml/badge.svg)](https://github.com/bearcove/loona/actions/workflows/test.yml?query=branch%3Amain)
+[![Coverage Status (codecov.io)](https://codecov.io/gh/bearcove/loona/branch/main/graph/badge.svg)](https://codecov.io/gh/bearcove/loona/)
 [![MIT OR Apache-2.0 licensed](https://img.shields.io/badge/license-MIT+Apache_2.0-blue.svg)](./LICENSE)
-[![Crates.io](https://img.shields.io/crates/v/fluke)](https://crates.io/crates/fluke)
-[![CodSpeed Badge](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://codspeed.io/bearcove/fluke)
+[![Crates.io](https://img.shields.io/crates/v/loona)](https://crates.io/crates/loona)
+[![CodSpeed Badge](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://codspeed.io/bearcove/loona)
 
 An experimental, HTTP/1.1 and HTTP/2 implementation in Rust on top of io-uring.
 
