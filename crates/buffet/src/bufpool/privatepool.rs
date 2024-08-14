@@ -31,8 +31,9 @@ struct Inner {
     // mmapped memory
     ptr: *mut u8,
 
-    // The mmap object, if we're using an anonymous mapping
-    mmap: Option<MmapMut>,
+    // The mmap object, if we're using an anonymous mapping.
+    // This is only used for its `Drop` implementation.
+    _mmap: Option<MmapMut>,
 
     // index of free blocks
     // there's several optimizations we could do here:
@@ -78,7 +79,7 @@ pub fn initialize_allocator_with_num_bufs(num_bufs: u32) -> Result<()> {
 
         let mut inner = Inner {
             ptr: std::ptr::null_mut(),
-            mmap: None,
+            _mmap: None,
             free: VecDeque::from_iter(0..num_bufs),
             ref_counts: vec![0; num_bufs as usize],
         };
@@ -96,7 +97,7 @@ pub fn initialize_allocator_with_num_bufs(num_bufs: u32) -> Result<()> {
         {
             let mut map = memmap2::MmapOptions::new().len(alloc_len).map_anon()?;
             inner.ptr = map.as_mut_ptr();
-            inner.mmap = Some(map);
+            inner._mmap = Some(map);
         }
 
         unsafe {
