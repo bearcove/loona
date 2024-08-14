@@ -1517,7 +1517,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     };
 
                     // Note: An implementation that validates fields according to the definitions in
-                    // Sections 5.1 and 5.5 of [HTTP] only needs an additional check that field
+                    // Sections 5.1 and 5.5 of HTTP only needs an additional check that field
                     // names do not include uppercase characters.
                     if key.iter().any(|b: &u8| b.is_ascii_uppercase()) {
                         req_error = Some(H2StreamError::BadRequest(

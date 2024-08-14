@@ -224,7 +224,7 @@ impl<'a> HeaderTable<'a> {
     /// table. They are merged into a single index address space, though.
     ///
     /// This is according to the [HPACK spec, section 2.3.3.]
-    /// (http://http2.github.io/http2-spec/compression.html#index.address.space)
+    /// <http://http2.github.io/http2-spec/compression.html#index.address.space>
     pub fn get_from_table(&self, index: usize) -> Option<(&[u8], &[u8])> {
         // The IETF defined table indexing as 1-based.
         // So, before starting, make sure the given index is within the proper

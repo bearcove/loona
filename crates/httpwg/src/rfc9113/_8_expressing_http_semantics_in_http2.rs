@@ -43,7 +43,7 @@ pub async fn sends_second_headers_frame_without_end_stream<IO: IntoHalves>(
 // frame payload lengths that form the content, unless the message is defined as
 // having no content. For example, 204 or 304 responses contain no content, as
 // does the response to a HEAD request. A response that is defined to have no
-// content, as described in Section 6.4.1 of [HTTP], MAY have a non-zero
+// content, as described in Section 6.4.1 of HTTP, MAY have a non-zero
 // content-length header field, even though no content is included in DATA
 // frames.
 //
@@ -101,7 +101,7 @@ pub async fn sends_headers_frame_with_incorrect_content_length_multiple_data_fra
 ///
 /// When a request message violates one of these requirements, an implementation
 /// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
-/// [HTTP]), unless a more suitable status code is defined or the status code
+/// HTTP), unless a more suitable status code is defined or the status code
 /// cannot be sent (e.g., because the error occurs in a trailer field).
 pub async fn sends_headers_frame_with_uppercase_field_name<IO: IntoHalves>(
     mut conn: Conn<IO>,
@@ -123,7 +123,7 @@ pub async fn sends_headers_frame_with_uppercase_field_name<IO: IntoHalves>(
 ///
 /// When a request message violates one of these requirements, an implementation
 /// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
-/// [HTTP]), unless a more suitable status code is defined or the status code
+/// HTTP), unless a more suitable status code is defined or the status code
 /// cannot be sent (e.g., because the error occurs in a trailer field).
 pub async fn sends_headers_frame_with_space_in_field_name<IO: IntoHalves>(
     mut conn: Conn<IO>,
@@ -145,7 +145,7 @@ pub async fn sends_headers_frame_with_space_in_field_name<IO: IntoHalves>(
 ///
 /// When a request message violates one of these requirements, an implementation
 /// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
-/// [HTTP]), unless a more suitable status code is defined or the status code
+/// HTTP), unless a more suitable status code is defined or the status code
 /// cannot be sent (e.g., because the error occurs in a trailer field).
 pub async fn sends_headers_frame_with_non_visible_ascii<IO: IntoHalves>(
     mut conn: Conn<IO>,
@@ -167,7 +167,7 @@ pub async fn sends_headers_frame_with_non_visible_ascii<IO: IntoHalves>(
 ///
 /// When a request message violates one of these requirements, an implementation
 /// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
-/// [HTTP]), unless a more suitable status code is defined or the status code
+/// HTTP), unless a more suitable status code is defined or the status code
 /// cannot be sent (e.g., because the error occurs in a trailer field).
 pub async fn sends_headers_frame_with_del_character<IO: IntoHalves>(
     mut conn: Conn<IO>,
@@ -189,7 +189,7 @@ pub async fn sends_headers_frame_with_del_character<IO: IntoHalves>(
 ///
 /// When a request message violates one of these requirements, an implementation
 /// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
-/// [HTTP]), unless a more suitable status code is defined or the status code
+/// HTTP), unless a more suitable status code is defined or the status code
 /// cannot be sent (e.g., because the error occurs in a trailer field).
 pub async fn sends_headers_frame_with_non_ascii_character<IO: IntoHalves>(
     mut conn: Conn<IO>,
@@ -210,7 +210,7 @@ pub async fn sends_headers_frame_with_non_ascii_character<IO: IntoHalves>(
 ///
 /// When a request message violates one of these requirements, an implementation
 /// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
-/// [HTTP]), unless a more suitable status code is defined or the status code
+/// HTTP), unless a more suitable status code is defined or the status code
 /// cannot be sent (e.g., because the error occurs in a trailer field).
 pub async fn sends_headers_frame_with_colon_in_field_name<IO: IntoHalves>(
     mut conn: Conn<IO>,
@@ -230,7 +230,7 @@ pub async fn sends_headers_frame_with_colon_in_field_name<IO: IntoHalves>(
 ///
 /// When a request message violates one of these requirements, an implementation
 /// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
-/// [HTTP]), unless a more suitable status code is defined or the status code
+/// HTTP), unless a more suitable status code is defined or the status code
 /// cannot be sent (e.g., because the error occurs in a trailer field).
 pub async fn sends_headers_frame_with_lf_in_field_value<IO: IntoHalves>(
     mut conn: Conn<IO>,
@@ -250,7 +250,7 @@ pub async fn sends_headers_frame_with_lf_in_field_value<IO: IntoHalves>(
 ///
 /// When a request message violates one of these requirements, an implementation
 /// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
-/// [HTTP]), unless a more suitable status code is defined or the status code
+/// HTTP), unless a more suitable status code is defined or the status code
 /// cannot be sent (e.g., because the error occurs in a trailer field).
 pub async fn sends_headers_frame_with_cr_in_field_value<IO: IntoHalves>(
     mut conn: Conn<IO>,
@@ -270,7 +270,7 @@ pub async fn sends_headers_frame_with_cr_in_field_value<IO: IntoHalves>(
 ///
 /// When a request message violates one of these requirements, an implementation
 /// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
-/// [HTTP]), unless a more suitable status code is defined or the status code
+/// HTTP), unless a more suitable status code is defined or the status code
 /// cannot be sent (e.g., because the error occurs in a trailer field).
 pub async fn sends_headers_frame_with_nul_in_field_value<IO: IntoHalves>(
     mut conn: Conn<IO>,
@@ -290,7 +290,7 @@ pub async fn sends_headers_frame_with_nul_in_field_value<IO: IntoHalves>(
 
 /// When a request message violates one of these requirements, an implementation
 /// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
-/// [HTTP]), unless a more suitable status code is defined or the status code
+/// HTTP), unless a more suitable status code is defined or the status code
 /// cannot be sent (e.g., because the error occurs in a trailer field).
 pub async fn sends_headers_frame_with_leading_space_in_field_value<IO: IntoHalves>(
     mut conn: Conn<IO>,
@@ -310,7 +310,7 @@ pub async fn sends_headers_frame_with_leading_space_in_field_value<IO: IntoHalve
 
 /// When a request message violates one of these requirements, an implementation
 /// SHOULD generate a 400 (Bad Request) status code (see Section 15.5.1 of
-/// [HTTP]), unless a more suitable status code is defined or the status code
+/// HTTP), unless a more suitable status code is defined or the status code
 /// cannot be sent (e.g., because the error occurs in a trailer field).
 pub async fn sends_headers_frame_with_trailing_tab_in_field_value<IO: IntoHalves>(
     mut conn: Conn<IO>,
@@ -327,12 +327,12 @@ pub async fn sends_headers_frame_with_trailing_tab_in_field_value<IO: IntoHalves
 
 //---- Section 8.2.2: Connection-Specific Header Fields
 
-/// HTTP/2 does not use the Connection header field (Section 7.6.1 of [HTTP]) to
+/// HTTP/2 does not use the Connection header field (Section 7.6.1 of HTTP) to
 /// indicate connection-specific header fields; in this protocol,
 /// connection-specific metadata is conveyed by other means. An endpoint MUST
 /// NOT generate an HTTP/2 message containing connection-specific header fields.
 /// This includes the Connection header field and those listed as having
-/// connection-specific semantics in Section 7.6.1 of [HTTP] (that is,
+/// connection-specific semantics in Section 7.6.1 of HTTP (that is,
 /// Proxy-Connection, Keep-Alive, Transfer-Encoding, and Upgrade). Any message
 /// containing connection-specific header fields MUST be treated as malformed
 /// (Section 8.1.1).
@@ -349,13 +349,13 @@ pub async fn sends_headers_frame_with_connection_header<IO: IntoHalves>(
     Ok(())
 }
 
-/// HTTP/2 does not use the Connection header field (Section 7.6.1 of [HTTP]) to
+/// HTTP/2 does not use the Connection header field (Section 7.6.1 of HTTP) to
 /// indicate connection-specific header fields; in this protocol,
 /// connection-specific metadata is conveyed by other means. An endpoint MUST
 /// NOT generate an HTTP/2 message containing connection-specific header fields.
 ///
 /// This includes the Connection header field and those listed as having
-/// connection-specific semantics in Section 7.6.1 of [HTTP] (that is,
+/// connection-specific semantics in Section 7.6.1 of HTTP (that is,
 /// Proxy-Connection, Keep-Alive, Transfer-Encoding, and Upgrade). Any message
 /// containing connection-specific header fields MUST be treated as malformed
 /// (Section 8.1.1).
@@ -372,13 +372,13 @@ pub async fn sends_headers_frame_with_proxy_connection_header<IO: IntoHalves>(
     Ok(())
 }
 
-/// HTTP/2 does not use the Connection header field (Section 7.6.1 of [HTTP]) to
+/// HTTP/2 does not use the Connection header field (Section 7.6.1 of HTTP) to
 /// indicate connection-specific header fields; in this protocol,
 /// connection-specific metadata is conveyed by other means. An endpoint MUST
 /// NOT generate an HTTP/2 message containing connection-specific header fields.
 ///
 /// This includes the Connection header field and those listed as having
-/// connection-specific semantics in Section 7.6.1 of [HTTP] (that is,
+/// connection-specific semantics in Section 7.6.1 of HTTP (that is,
 /// Proxy-Connection, Keep-Alive, Transfer-Encoding, and Upgrade). Any message
 /// containing connection-specific header fields MUST be treated as malformed
 /// (Section 8.1.1).
@@ -395,13 +395,13 @@ pub async fn sends_headers_frame_with_keep_alive_header<IO: IntoHalves>(
     Ok(())
 }
 
-/// HTTP/2 does not use the Connection header field (Section 7.6.1 of [HTTP]) to
+/// HTTP/2 does not use the Connection header field (Section 7.6.1 of HTTP) to
 /// indicate connection-specific header fields; in this protocol,
 /// connection-specific metadata is conveyed by other means. An endpoint MUST
 /// NOT generate an HTTP/2 message containing connection-specific header fields.
 ///
 /// This includes the Connection header field and those listed as having
-/// connection-specific semantics in Section 7.6.1 of [HTTP] (that is,
+/// connection-specific semantics in Section 7.6.1 of HTTP (that is,
 /// Proxy-Connection, Keep-Alive, Transfer-Encoding, and Upgrade). Any message
 /// containing connection-specific header fields MUST be treated as malformed
 /// (Section 8.1.1).
@@ -418,13 +418,13 @@ pub async fn sends_headers_frame_with_transfer_encoding_header<IO: IntoHalves>(
     Ok(())
 }
 
-/// HTTP/2 does not use the Connection header field (Section 7.6.1 of [HTTP]) to
+/// HTTP/2 does not use the Connection header field (Section 7.6.1 of HTTP) to
 /// indicate connection-specific header fields; in this protocol,
 /// connection-specific metadata is conveyed by other means. An endpoint MUST
 /// NOT generate an HTTP/2 message containing connection-specific header fields.
 ///
 /// This includes the Connection header field and those listed as having
-/// connection-specific semantics in Section 7.6.1 of [HTTP] (that is,
+/// connection-specific semantics in Section 7.6.1 of HTTP (that is,
 /// Proxy-Connection, Keep-Alive, Transfer-Encoding, and Upgrade). Any message
 /// containing connection-specific header fields MUST be treated as malformed
 /// (Section 8.1.1).
@@ -547,9 +547,9 @@ pub async fn sends_headers_frame_with_duplicate_pseudo_headers<IO: IntoHalves>(
 /// A server SHOULD treat a request as malformed if it contains a Host header
 /// field that identifies an entity that differs from the entity in the
 /// ":authority" pseudo-header field. The values of fields need to be normalized
-/// to compare them (see Section 6.2 of [RFC3986]). An origin server can apply
+/// to compare them (see Section 6.2 of RFC3986). An origin server can apply
 /// any normalization method, whereas other servers MUST perform scheme-based
-/// normalization (see Section 6.2.3 of [RFC3986]) of the two fields.
+/// normalization (see Section 6.2.3 of RFC3986) of the two fields.
 ///
 /// cf. <https://www.rfc-editor.org/rfc/rfc3986.html#section-6.2.3>
 pub async fn sends_headers_frame_with_mismatched_host_authority<IO: IntoHalves>(
@@ -581,7 +581,7 @@ pub async fn sends_headers_frame_with_mismatched_host_authority<IO: IntoHalves>(
 ///
 /// an OPTIONS request for an "http" or "https" URI that does not include a path
 /// component; these MUST include a ":path" pseudo-header field with a value of
-/// '*' (see Section 7.1 of [HTTP]). CONNECT requests (Section 8.5), where the
+/// '*' (see Section 7.1 of HTTP). CONNECT requests (Section 8.5), where the
 /// ":path" pseudo-header field is omitted.
 pub async fn sends_headers_frame_with_empty_path_component<IO: IntoHalves>(
     mut conn: Conn<IO>,
@@ -721,7 +721,7 @@ pub async fn client_sends_push_promise_frame<IO: IntoHalves>(
 
 //---- Section 8.5: The CONNECT Method
 
-/// The CONNECT method (Section 9.3.6 of [HTTP]) is used to convert an HTTP
+/// The CONNECT method (Section 9.3.6 of HTTP) is used to convert an HTTP
 /// connection into a tunnel to a remote host. CONNECT is primarily used with
 /// HTTP proxies to establish a TLS session with an origin server for the
 /// purposes of interacting with "https" resources.
