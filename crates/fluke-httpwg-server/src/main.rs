@@ -11,33 +11,63 @@ use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::Subscriber
 
 fn main() {
     setup_tracing_and_error_reporting();
-
     fluke_buffet::start(async move {
-        let ln = fluke_buffet::net::TcpListener::bind("127.0.0.1:8001".parse().unwrap())
-            .await
-            .unwrap();
+        let port = std::env::var("PORT").unwrap_or("8001".to_string());
+        let ln =
+            fluke_buffet::net::TcpListener::bind(format!("127.0.0.1:{}", port).parse().unwrap())
+                .await
+                .unwrap();
 
-        println!(
-            "Listening on {:?} for 'http2 prior knowledge' connections (no TLS)",
-            ln.local_addr().unwrap()
-        );
+        println!("I listen on {:?}", ln.local_addr().unwrap());
+
+        #[derive(Debug, Clone, Copy)]
+        enum Proto {
+            H1,
+            H2,
+        }
+
+        let proto = match std::env::var("TEST_PROTO")
+            .unwrap_or("h1".to_string())
+            .as_str()
+        {
+            "h1" => Proto::H1,
+            "h2" => Proto::H2,
+            _ => panic!("TEST_PROTO must be either 'h1' or 'h2'"),
+        };
+        println!("Using {proto:?} protocol (export TEST_PROTO=h1 or TEST_PROTO=h2 to override)");
 
         loop {
             let (stream, addr) = ln.accept().await.unwrap();
             tracing::info!(?addr, "Accepted connection");
 
             fluke_buffet::spawn(async move {
-                let server_conf = Rc::new(fluke::h2::ServerConf {
-                    ..Default::default()
-                });
-
                 let client_buf = RollMut::alloc().unwrap();
-                let driver = Rc::new(TestDriver);
                 let io = stream.into_halves();
-                fluke::h2::serve(io, server_conf, client_buf, driver)
-                    .await
-                    .unwrap();
-                tracing::debug!("http/2 server done");
+
+                match proto {
+                    Proto::H1 => {
+                        let driver = TestDriver;
+                        let server_conf = Rc::new(fluke::h1::ServerConf {
+                            ..Default::default()
+                        });
+
+                        fluke::h1::serve(io, server_conf, client_buf, driver)
+                            .await
+                            .unwrap();
+                        tracing::debug!("http/1 server done");
+                    }
+                    Proto::H2 => {
+                        let driver = Rc::new(TestDriver);
+                        let server_conf = Rc::new(fluke::h2::ServerConf {
+                            ..Default::default()
+                        });
+
+                        fluke::h2::serve(io, server_conf, client_buf, driver)
+                            .await
+                            .unwrap();
+                        tracing::debug!("http/2 server done");
+                    }
+                }
             });
         }
     });
