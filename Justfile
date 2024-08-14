@@ -36,6 +36,9 @@ test1 test:
 	export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 	cargo nextest run --no-capture -E 'test(/{{test}}$/)'
 
+c *args:
+    just check {{args}}
+
 check:
 	#!/bin/bash -eu
 	cargo clippy --all-targets --all-features
