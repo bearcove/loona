@@ -133,13 +133,35 @@ pub fn format_content_length(c: &mut Criterion) {
         )
     });
 
-    c.bench_function("format_content_length/std_fmt", |b| {
+    c.bench_function("format_content_length/std_fmt/heap", |b| {
         b.iter_batched(
             || content_lengths.clone(),
             |lengths| {
                 for length in &lengths {
                     let vec = length.to_string();
                     let piece: Piece = vec.into_bytes().into();
+                    black_box(piece);
+                }
+            },
+            codspeed_criterion_compat::BatchSize::SmallInput,
+        )
+    });
+
+    c.bench_function("format_content_length/std_fmt/buffet", |b| {
+        b.iter_batched(
+            || {
+                fluke_buffet::bufpool::initialize_allocator_with_num_bufs(512 * 1024).unwrap();
+                (content_lengths.clone(), RollMut::alloc().unwrap())
+            },
+            |(lengths, mut roll)| {
+                for length in &lengths {
+                    // that's the max length of an u64 formatted as decimal
+                    roll.reserve_at_least(20).unwrap();
+
+                    use std::io::Write;
+                    std::write!(&mut roll, "{}", length).unwrap();
+
+                    let piece: Piece = roll.take_all().into();
                     black_box(piece);
                 }
             },
