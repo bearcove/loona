@@ -28,8 +28,8 @@ t *args:
 test *args:
 	#!/bin/bash
 	just httpwg-hyper httpwg-gen
-	export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
-	cargo nextest run {{args}}
+	export RUST_BACKTRACE="${RUST_BACKTRACE:-0}"
+	cargo nextest run --release {{args}}
 
 test1 test:
 	#!/bin/bash
@@ -71,9 +71,9 @@ instruments:
 samply:
     #!/usr/bin/env -S bash -eux
     cargo build \
-        --package fluke-httpwg-server \
+        --package httpwg-loona \
         --profile profiling \
         --features tracing/release_max_level_info
     export TEST_PROTO=h2
     export PORT=8002
-    target/profiling/fluke-httpwg-server
+    target/profiling/httpwg-loona

@@ -18,3 +18,11 @@ rest of the loona cinematic universe:
   * [httpwg](https://crates.io/crates/httpwg), a Rust port of h2spec
   * [loona-h2](https://crates.io/crates/loona-h2), parsers for HTTP/2 frames
   * [loona-hpack](https://crates.io/crates/loona-hpack), HPACK decoder
+
+## Example usage
+
+To see how loona can be used to make HTTP/1 and HTTP/2 servers, you can check out:
+
+  * [httpwg-loona](../httpwg-loona/README.md)
+
+loona also integrates well with ktls, you can check the [tls example](./examples/tls) (Linux-only).

@@ -24,7 +24,7 @@ pub async fn start() -> eyre::Result<(SocketAddr, impl Any)> {
 
     let exe_name = format!("httpwg-hyper{EXE_FILE_EXT}");
     let binary_path = project_dir.join("target").join("release").join(exe_name);
-    debug!("Using testbed binary: {}", binary_path.display());
+    eprintln!("Using testbed binary: {}", binary_path.display());
     let mut cmd = Command::new(binary_path);
     cmd.stdout(Stdio::piped());
 

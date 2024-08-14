@@ -1516,7 +1516,7 @@ mod interop_tests {
     use std::{borrow::Cow, collections::HashMap};
 
     use serde::Deserialize;
-    use tracing::debug;
+    use tracing::trace;
 
     use super::Decoder;
 
