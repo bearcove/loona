@@ -168,9 +168,6 @@ pub fn format_content_length(c: &mut Criterion) {
         )
     });
 
-    // Note: we cannot use this variant as-is, because it's not pinned, so we can't
-    // pass it to the kernel for writes. We _could_ have a pool of those Buffers
-    // I suppose? And return them to the pool when done.
     c.bench_function("format_content_length/itoa/pool", |b| {
         const NUM_BUFFERS: usize = 128 * 1024;
 
@@ -225,6 +222,46 @@ pub fn format_content_length(c: &mut Criterion) {
             codspeed_criterion_compat::BatchSize::SmallInput,
         )
     });
+
+    c.bench_function("format_content_length/lut", |b| {
+        type BufferType = Vec<u8>;
+        type OffsetType = (u32, u32);
+        type FormattedNumbersType = (BufferType, Vec<OffsetType>);
+
+        static FORMATTED_NUMBERS: std::sync::LazyLock<FormattedNumbersType> =
+            std::sync::LazyLock::new(|| {
+                let mut buffer = BufferType::new();
+                let mut offsets = Vec::new();
+                for i in 0..=1024 * 1024 {
+                    let start = buffer.len();
+                    use std::io::Write;
+                    write!(&mut buffer, "{}", i).unwrap();
+                    let end = buffer.len();
+                    offsets.push((start as u32, (end - start) as u32));
+                }
+                (buffer, offsets)
+            });
+
+        b.iter_batched(
+            || {
+                let results = Vec::with_capacity(content_lengths.len());
+                (content_lengths.clone(), results)
+            },
+            |(lengths, mut results)| {
+                let (buffer, offsets) = &*FORMATTED_NUMBERS;
+                for length in lengths {
+                    let (offset, len) = offsets[length as usize];
+                    let slice = &buffer[offset as usize..(offset + len) as usize];
+                    let piece: Piece = slice.into();
+                    results.push(piece);
+                }
+                black_box(results);
+            },
+            codspeed_criterion_compat::BatchSize::SmallInput,
+        )
+    });
+
+    c.finish()
 }
 
 criterion_group!(benches, format_status_code, format_content_length);
