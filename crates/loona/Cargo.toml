@@ -1,6 +1,6 @@
 [package]
 name = "loona"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 keywords = ["http", "http1", "http2", "io-uring", "loona"]
@@ -26,8 +26,8 @@ harness = false
 byteorder = "1.5.0"
 eyre = { version = "0.6.12", default-features = false }
 futures-util = "0.3.30"
-buffet = { version = "0.2.0", path = "../buffet" }
-loona-hpack = { version = "0.3.1", path = "../loona-hpack" }
+buffet = { version = "0.2.1", path = "../buffet" }
+loona-hpack = { version = "0.3.2", path = "../loona-hpack" }
 http = "1.1.0"
 memchr = "2.7.4"
 nom = { version = "7.1.3", default-features = false }
@@ -40,10 +40,10 @@ smallvec = { version = "1.13.2", default-features = false, features = [
 thiserror = { version = "1.0.63", default-features = false }
 tokio = { version = "1.39.2", features = ["macros", "sync"] }
 tracing = { version = "0.1.40", default-features = false }
-loona-h2 = { version = "0.2.0", path = "../loona-h2" }
+loona-h2 = { version = "0.2.1", path = "../loona-h2" }
 
 [dev-dependencies]
-buffet = { version = "0.2.0", path = "../buffet" }
+buffet = { version = "0.2.1", path = "../buffet" }
 bytes = { version = "1.7.1", default-features = false }
 pretty_assertions = { version = "1.4.0", default-features = false, features = [
     "std",
@@ -67,7 +67,7 @@ futures-util = { version = "0.3.30", default-features = false, features = [
 libc = "0.2.155"
 httpwg = { path = "../httpwg" }
 color-eyre = "0.6.3"
-httpwg-macros = { version = "0.2.0", path = "../httpwg-macros" }
+httpwg-macros = { version = "0.2.1", path = "../httpwg-macros" }
 cargo-husky = { version = "1", features = ["user-hooks"] }
 criterion = "0.5.1"
 codspeed-criterion-compat = "2.6.0"

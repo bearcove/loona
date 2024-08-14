@@ -6,18 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.1](https://github.com/bearcove/loona/compare/httpwg-v0.2.0...httpwg-v0.2.1) - 2024-08-14
+## [0.2.1](https://github.com/bearcove/loona/compare/httpwg-cli-v0.2.0...httpwg-cli-v0.2.1) - 2024-08-14
 
 ### Added
+- httpwg-cli: Count tests passing, fail when not all tests pass
 - Generate catalog in httpwg-macros
-
-### Fixed
-- Fix rustdoc errors
 
 ### Other
 - Improve httpwg-cli, make it not so noisy
-
-## [0.1.1](https://github.com/bearcove/fluke/compare/httpwg-v0.1.0...httpwg-v0.1.1) - 2024-05-27
-
-### Other
-- updated the following local packages: fluke-buffet, fluke-hpack

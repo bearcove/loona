@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2](https://github.com/bearcove/loona/compare/loona-hpack-v0.3.1...loona-hpack-v0.3.2) - 2024-08-14
+
+### Fixed
+- Fix rustdoc errors
+
+### Other
+- Make tests pass
+
 ## [0.3.1](https://github.com/bearcove/fluke/compare/fluke-hpack-v0.3.0...fluke-hpack-v0.3.1) - 2024-05-27
 
 ### Added
