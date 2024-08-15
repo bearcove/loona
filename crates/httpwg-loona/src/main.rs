@@ -23,7 +23,14 @@ fn main() {
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
 
     let server_handle = std::thread::spawn(move || {
-        httpwg_loona::do_main(ready_tx, cancel_rx, port, proto);
+        httpwg_loona::do_main(
+            port,
+            proto,
+            httpwg_loona::Mode::Server {
+                ready_tx,
+                cancel_rx,
+            },
+        );
     });
 
     let ready = ready_rx.blocking_recv().unwrap();
