@@ -18,6 +18,9 @@ struct Args {
     /// the timeout for connections (in milliseconds)
     connect_timeout: Option<u64>,
 
+    /// the timeout to wait for a frame (in milliseconds)
+    frame_timeout: Option<u64>,
+
     /// which tests to run
     filter: Option<String>,
 
@@ -60,7 +63,16 @@ fn parse_args() -> eyre::Result<Args> {
                     }
                 });
             }
-            lexopt::Arg::Long("connect-timeout") | lexopt::Arg::Short('t') => {
+            lexopt::Arg::Long("frame-timeout") => {
+                args.frame_timeout = Some(
+                    parser
+                        .value()?
+                        .into_string_result()?
+                        .parse()
+                        .map_err(|e| eyre::eyre!("Failed to parse frame timeout: {}", e))?,
+                );
+            }
+            lexopt::Arg::Long("connect-timeout") => {
                 args.connect_timeout = Some(
                     parser
                         .value()?
@@ -90,7 +102,8 @@ fn print_usage() -> eyre::Result<()> {
 
 Options:
     -a, --address <ADDRESS>    The address/port the server will listen on
-    -t, --connect-timeout <MS> The timeout for connections in milliseconds
+    --connect-timeout <MS>     The timeout for connections in milliseconds
+    --frame-timeout <MS>       The timeout to wait for a frame in milliseconds
     -f, --filter <FILTER>      Which tests to run
     -v, --verbose              Print verbose output
 
@@ -137,12 +150,16 @@ async fn async_main(mut args: Args) -> eyre::Result<()> {
         Some(timeout) => Duration::from_millis(timeout),
         None => Duration::from_millis(250),
     };
+    let frame_timeout = match args.frame_timeout {
+        Some(timeout) => Duration::from_millis(timeout),
+        None => Duration::from_millis(250),
+    };
     let conf = Rc::new(Config {
-        timeout: connect_timeout,
+        timeout: frame_timeout,
         ..Default::default()
     });
 
-    eprintln!("Will run tests against {addr} with a connect timeout of {connect_timeout:?}");
+    eprintln!("Will run tests against {addr}");
 
     // this works around an oddity of Just when forwarding positional arguments
     args.server_binary.retain(|s| !s.is_empty());
@@ -186,17 +203,20 @@ async fn async_main(mut args: Args) -> eyre::Result<()> {
         eprintln!("No server binary specified");
     };
 
-    eprintln!("Waiting until server is listening on {addr}");
+    let max_startup_time = Duration::from_secs(1);
+    let sleep_time = Duration::from_millis(100);
+    eprintln!("Waiting until server is listening on {addr} (up to {max_startup_time:?})");
     let start = std::time::Instant::now();
-    let duration = Duration::from_secs(1);
-    while start.elapsed() < duration {
-        match tokio::time::timeout(Duration::from_millis(100), TcpStream::connect(addr)).await {
+    loop {
+        match tokio::time::timeout(sleep_time, TcpStream::connect(addr)).await {
             Ok(Ok(_)) => break,
-            _ => tokio::time::sleep(Duration::from_millis(100)).await,
+            _ => {
+                if start.elapsed() >= max_startup_time {
+                    panic!("Server did not start listening within {max_startup_time:?}");
+                }
+                tokio::time::sleep(sleep_time).await
+            }
         }
-    }
-    if start.elapsed() >= duration {
-        panic!("Server did not start listening within 3 seconds");
     }
 
     let mut local_set = tokio::task::LocalSet::new();
@@ -221,13 +241,18 @@ async fn async_main(mut args: Args) -> eyre::Result<()> {
                 }
 
                 num_tests += 1;
-                let stream =
-                    tokio::time::timeout(Duration::from_millis(250), TcpStream::connect(addr))
-                        .await
-                        .unwrap()
-                        .unwrap();
+                let stream = tokio::time::timeout(connect_timeout, TcpStream::connect(addr))
+                    .await
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "tested server failed to accept connction within {connect_timeout:?}"
+                        )
+                    })
+                    .unwrap();
+                eprintln!("Holding {num_tests} connections");
                 let conn = Conn::new(conf.clone(), stream);
                 let num_passed = num_passed.clone();
+
                 let test = async move {
                     if args.verbose {
                         eprintln!("🔷 Running test: {}", test_name);
@@ -244,11 +269,7 @@ async fn async_main(mut args: Args) -> eyre::Result<()> {
                         }
                     }
                 };
-                local_set.spawn_local(async move {
-                    {
-                        test.await;
-                    }
-                });
+                local_set.spawn_local(test);
                 if sequential {
                     (&mut local_set).await;
                 }
@@ -256,6 +277,7 @@ async fn async_main(mut args: Args) -> eyre::Result<()> {
         }
     }
 
+    eprintln!("Awaiting local set");
     local_set.await;
     let num_passed = *num_passed.borrow();
 

@@ -65,6 +65,7 @@ httpwg-over-tcp *args='':
         --package httpwg-cli
     export TEST_PROTO=h2
     export PORT=8001
+    export RUST_LOG=${RUST_LOG:-info}
     ./target/release/httpwg --address localhost:8001 "$@" -- ./target/release/httpwg-loona
 
 instruments:

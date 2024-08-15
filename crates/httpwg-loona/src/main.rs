@@ -22,13 +22,14 @@ fn main() {
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
 
-    std::thread::spawn(move || {
+    let server_handle = std::thread::spawn(move || {
         httpwg_loona::do_main(ready_tx, cancel_rx, port, proto);
     });
 
     let ready = ready_rx.blocking_recv().unwrap();
-    eprintln!("I listen on {:?}", ready);
+    eprintln!("I listen on {}", ready.port);
 
+    server_handle.join().unwrap();
     drop(cancel_tx);
 }
 

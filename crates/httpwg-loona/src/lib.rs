@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 use tokio::sync::oneshot;
 
 use buffet::{IntoHalves, RollMut};
@@ -26,6 +26,8 @@ pub fn do_main(
     port: u16,
     proto: Proto,
 ) {
+    let server_start = std::time::Instant::now();
+
     let server_fut = async move {
         let ln = buffet::net::TcpListener::bind(format!("127.0.0.1:{port}").parse().unwrap())
             .await
@@ -33,11 +35,33 @@ pub fn do_main(
         let port = ln.local_addr().unwrap().port();
         ready_tx.send(Ready { port }).unwrap();
 
+        let num_conns = Rc::new(RefCell::new(0));
+
         loop {
+            let num_conns = num_conns.clone();
+            tracing::debug!("Accepting...");
+            let before_accept = std::time::Instant::now();
             let (stream, addr) = ln.accept().await.unwrap();
-            tracing::debug!(?addr, "Accepted connection");
+
+            *num_conns.borrow_mut() += 1;
+            tracing::debug!(
+                ?addr,
+                "Accepted connection in {:?} ({:?} since start), total conns = {}",
+                before_accept.elapsed(),
+                server_start.elapsed(),
+                num_conns.borrow()
+            );
 
             let conn_fut = async move {
+                struct DecrementOnDrop(Rc<RefCell<usize>>);
+                impl Drop for DecrementOnDrop {
+                    fn drop(&mut self) {
+                        let mut num_conns = self.0.borrow_mut();
+                        *num_conns -= 1;
+                    }
+                }
+                let _guard = DecrementOnDrop(num_conns);
+
                 let client_buf = RollMut::alloc().unwrap();
                 let io = stream.into_halves();
 
@@ -68,7 +92,10 @@ pub fn do_main(
                     }
                 }
             };
+
+            let before_spawn = std::time::Instant::now();
             buffet::spawn(conn_fut);
+            tracing::debug!("spawned connection in {:?}", before_spawn.elapsed());
         }
     };
 
