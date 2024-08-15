@@ -23,6 +23,12 @@ jobs:
           cache-target: release
           bins: cargo-codspeed
 
+      - name: Install h2load
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y nghttp2-client
+
       - name: Build the benchmark target(s)
         run: cargo codspeed build
 

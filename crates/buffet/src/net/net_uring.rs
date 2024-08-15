@@ -63,13 +63,17 @@ impl TcpListener {
     pub async fn bind(addr: SocketAddr) -> std::io::Result<Self> {
         let addr: socket2::SockAddr = addr.into();
         let socket = socket2::Socket::new(addr.domain(), socket2::Type::STREAM, None)?;
+
         socket.set_nodelay(true)?;
+
         // FIXME: don't hardcode
         socket.set_reuse_port(true)?;
         socket.set_reuse_address(true)?;
         socket.bind(&addr)?;
+
         // FIXME: magic values
-        socket.listen(16)?;
+        socket.listen(256)?;
+
         let fd = socket.as_raw_fd();
         std::mem::forget(socket);
 

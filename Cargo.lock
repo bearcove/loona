@@ -791,8 +791,10 @@ name = "httpwg-loona"
 version = "0.2.0"
 dependencies = [
  "buffet",
+ "codspeed-criterion-compat",
  "color-eyre",
  "loona",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]
