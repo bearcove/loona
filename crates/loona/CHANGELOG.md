@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2](https://github.com/bearcove/loona/compare/loona-v0.2.1...loona-v0.2.2) - 2024-08-16
+
+### Other
+- Also add logo to main crate
+
 ## [0.2.1](https://github.com/bearcove/loona/compare/loona-v0.2.0...loona-v0.2.1) - 2024-08-14
 
 ### Fixed
