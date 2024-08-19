@@ -206,11 +206,11 @@ mod tests {
 
     #[test]
     fn test_accept() {
-        color_eyre::install().unwrap();
-
-        async fn test_accept_inner() -> color_eyre::Result<()> {
-            let listener = super::TcpListener::bind("127.0.0.1:0".parse().unwrap()).await?;
-            let addr = listener.local_addr()?;
+        async fn test_accept_inner() {
+            let listener = super::TcpListener::bind("127.0.0.1:0".parse().unwrap())
+                .await
+                .unwrap();
+            let addr = listener.local_addr().unwrap();
             println!("listening on {}", addr);
 
             std::thread::spawn(move || {
@@ -231,26 +231,23 @@ mod tests {
                 println!("[client] wrote: hello");
             });
 
-            let (stream, addr) = listener.accept().await?;
+            let (stream, addr) = listener.accept().await.unwrap();
             println!("accepted connection!, addr={addr:?}");
 
             let (mut r, mut w) = stream.into_halves();
-            // write bye
-            w.write_all_owned("howdy").await?;
+            w.write_all_owned("howdy").await.unwrap();
 
             let buf = vec![0u8; 1024];
             let (res, buf) = r.read_owned(buf).await;
-            let n = res?;
+            let n = res.unwrap();
             let slice = &buf[..n];
             println!(
                 "read {} bytes: {:?}, as string: {:?}",
                 n,
                 slice,
-                std::str::from_utf8(slice)?
+                std::str::from_utf8(slice).unwrap()
             );
-
-            Ok(())
         }
-        crate::start(async move { test_accept_inner().await.unwrap() });
+        crate::start(async move { test_accept_inner().await });
     }
 }
