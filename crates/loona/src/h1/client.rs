@@ -20,7 +20,7 @@ pub struct ClientConf {}
 #[allow(async_fn_in_trait)] // we never require Send
 pub trait ClientDriver {
     type Return;
-    type Error: std::error::Error + 'static;
+    type Error: AsRef<dyn std::error::Error>;
 
     async fn on_informational_response(&mut self, res: Response) -> Result<(), Self::Error>;
     async fn on_final_response(
@@ -30,47 +30,23 @@ pub trait ClientDriver {
     ) -> Result<Self::Return, Self::Error>;
 }
 
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-#[derive(Debug)]
-pub enum Http1ClientError<DE> {
-    // An error occured with the client driver
-    DriverError(DE),
+pub enum Http1ClientError<DriverError> {
+    #[error("An error occurred with the client driver: {0}")]
+    DriverError(#[source] DriverError),
 
-    // We could not write the request headers
-    WhileWritingRequestHeaders(std::io::Error),
+    #[error("Could not write the request headers")]
+    WhileWritingRequestHeaders(#[source] std::io::Error),
 
-    // Could not read / receive the response headers
-    ErrorReadingResponseHeaders(ReadAndParseError),
+    #[error("Could not read / receive the response headers")]
+    ErrorReadingResponseHeaders(#[from] ReadAndParseError),
 
-    /// Server went away before sending response headers
+    #[error("Server went away before sending response headers")]
     ServerWentAwayBeforeSendingResponseHeaders,
 
-    /// Allocation failed
-    Alloc(buffet::bufpool::Error),
-}
-
-impl<DE> From<buffet::bufpool::Error> for Http1ClientError<DE> {
-    fn from(e: buffet::bufpool::Error) -> Self {
-        Http1ClientError::Alloc(e)
-    }
-}
-
-impl<E: std::fmt::Debug> std::fmt::Display for Http1ClientError<E> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl<E: std::error::Error + 'static> std::error::Error for Http1ClientError<E> {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Http1ClientError::DriverError(e) => Some(e),
-            Http1ClientError::WhileWritingRequestHeaders(e) => Some(e),
-            Http1ClientError::ErrorReadingResponseHeaders(e) => Some(e),
-            Http1ClientError::ServerWentAwayBeforeSendingResponseHeaders => None,
-            Http1ClientError::Alloc(e) => Some(e),
-        }
-    }
+    #[error("Allocation failed")]
+    Alloc(#[from] buffet::bufpool::Error),
 }
 
 /// Perform an HTTP/1.1 request against an HTTP/1.1 server
@@ -119,7 +95,7 @@ where
                 Err(err) => {
                     // TODO: find way to report this error to the driver without
                     // spawning, without ref-counting the driver, etc.
-                    panic!("error writing request body: {err:?}");
+                    panic!("error writing request body: {}", err.as_ref());
                 }
                 Ok(_) => {
                     debug!("done writing request body");

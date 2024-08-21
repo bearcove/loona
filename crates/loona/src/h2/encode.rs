@@ -47,30 +47,25 @@ impl H2Encoder {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum H2EncoderError {
-    /// HTTP/2 does not support informational responses
-    H2DoesNotSupportInformationalResponses {
-        status: StatusCode,
-    },
-
     /// The encoder is in the wrong state
+    #[error("Wrong state: expected {expected:?}, actual {actual:?}")]
     WrongState {
         expected: EncoderState,
         actual: EncoderState,
     },
 
+    #[error("Stream reset")]
     StreamReset,
 }
 
-impl std::fmt::Display for H2EncoderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+impl AsRef<dyn std::error::Error> for H2EncoderError {
+    fn as_ref(&self) -> &(dyn std::error::Error + 'static) {
+        self
     }
 }
-
-impl std::error::Error for H2EncoderError {}
 
 impl Encoder for H2Encoder {
     type Error = H2EncoderError;

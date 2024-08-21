@@ -1,5 +1,3 @@
-use std::fmt;
-
 use buffet::Piece;
 use http::{header, StatusCode};
 
@@ -19,116 +17,47 @@ impl ResponseState for ExpectResponseBody {}
 pub struct ResponseDone;
 impl ResponseState for ResponseDone {}
 
-#[derive(Debug)]
 #[non_exhaustive]
+#[derive(thiserror::Error, Debug)]
 pub enum ResponderError<EncoderError> {
-    /// The response status code was not 1xx
-    InterimResponseMustHaveStatusCode1xx {
-        actual: StatusCode,
-    },
+    #[error("interim response must have status code 1xx, got {actual}")]
+    InterimResponseMustHaveStatusCode1xx { actual: StatusCode },
 
-    /// The response status code was not >= 200
-    FinalResponseMustHaveStatusCodeGreaterThanOrEqualTo200 {
-        actual: StatusCode,
-    },
+    #[error("final response must have status code >= 200, got {actual}")]
+    FinalResponseMustHaveStatusCodeGreaterThanOrEqualTo200 { actual: StatusCode },
 
-    BodyLengthDoesNotMatchAnnouncedContentLength {
-        actual: u64,
-        expected: u64,
-    },
+    #[error(
+        "body length does not match announced content length: actual {actual}, expected {expected}"
+    )]
+    BodyLengthDoesNotMatchAnnouncedContentLength { actual: u64, expected: u64 },
 
-    /// Got an encoder error
-    EncoderError(EncoderError),
+    #[error("encoder error: {0}")]
+    EncoderError(#[from] EncoderError),
 }
 
-impl<E> fmt::Display for ResponderError<E>
-where
-    E: std::error::Error,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InterimResponseMustHaveStatusCode1xx { actual } => {
-                write!(
-                    f,
-                    "interim response must have status code 1xx, got {actual}"
-                )
-            }
-            Self::FinalResponseMustHaveStatusCodeGreaterThanOrEqualTo200 { actual } => {
-                write!(
-                    f,
-                    "final response must have status code >= 200, got {actual}"
-                )
-            }
-            Self::BodyLengthDoesNotMatchAnnouncedContentLength { actual, expected } => {
-                write!(
-                    f,
-                    "body length does not match announced content length: actual {actual}, expected {expected}"
-                )
-            }
-            Self::EncoderError(e) => write!(f, "encoder error: {e}"),
-        }
-    }
-}
-
-impl<E> std::error::Error for ResponderError<E>
-where
-    E: std::error::Error + 'static,
-{
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::EncoderError(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ResponderOrBodyError<EncoderError, BodyError> {
+    #[error("Responder error: {0}")]
     Responder(ResponderError<EncoderError>),
-    Body(BodyError),
+    #[error("Body error: {0}")]
+    Body(#[from] BodyError),
 }
 
-impl<EncoderError, BodyError> fmt::Display for ResponderOrBodyError<EncoderError, BodyError>
+pub struct Responder<OurEncoder, OurResponseState>
 where
-    EncoderError: fmt::Debug,
-    BodyError: fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Responder(e) => write!(f, "{e:?}"),
-            Self::Body(e) => write!(f, "{e:?}"),
-        }
-    }
-}
-
-impl<EncoderError, BodyError> std::error::Error for ResponderOrBodyError<EncoderError, BodyError>
-where
-    EncoderError: std::error::Error + 'static,
-    BodyError: std::error::Error + 'static,
-{
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Responder(e) => Some(e),
-            Self::Body(e) => Some(e),
-        }
-    }
-}
-
-pub struct Responder<TheirEncoder, OurResponseState>
-where
-    TheirEncoder: Encoder,
+    OurEncoder: Encoder,
     OurResponseState: ResponseState,
 {
-    encoder: TheirEncoder,
+    encoder: OurEncoder,
     state: OurResponseState,
 }
 
-impl<TheirEncoder> Responder<TheirEncoder, ExpectResponseHeaders>
+impl<OurEncoder> Responder<OurEncoder, ExpectResponseHeaders>
 where
-    TheirEncoder: Encoder,
+    OurEncoder: Encoder,
 {
-    pub fn new(encoder: TheirEncoder) -> Self {
+    pub fn new(encoder: OurEncoder) -> Self {
         Self {
             encoder,
             state: ExpectResponseHeaders,
@@ -140,7 +69,7 @@ where
     pub async fn write_interim_response(
         &mut self,
         res: Response,
-    ) -> Result<(), ResponderError<TheirEncoder::Error>> {
+    ) -> Result<(), ResponderError<OurEncoder::Error>> {
         if !res.status.is_informational() {
             return Err(ResponderError::InterimResponseMustHaveStatusCode1xx {
                 actual: res.status,
@@ -158,8 +87,7 @@ where
         mut self,
         res: Response,
         announced_content_length: Option<u64>,
-    ) -> Result<Responder<TheirEncoder, ExpectResponseBody>, ResponderError<TheirEncoder::Error>>
-    {
+    ) -> Result<Responder<OurEncoder, ExpectResponseBody>, ResponderError<OurEncoder::Error>> {
         if res.status.is_informational() {
             return Err(
                 ResponderError::FinalResponseMustHaveStatusCodeGreaterThanOrEqualTo200 {
@@ -186,7 +114,7 @@ where
     pub async fn write_final_response(
         self,
         res: Response,
-    ) -> ResponderResult<Responder<TheirEncoder, ExpectResponseBody>, TheirEncoder::Error> {
+    ) -> ResponderResult<Responder<OurEncoder, ExpectResponseBody>, OurEncoder::Error> {
         let announced_content_length = res.headers.content_length();
         self.write_final_response_internal(res, announced_content_length)
             .await
@@ -199,8 +127,8 @@ where
         mut res: Response,
         body: &mut TheirBody,
     ) -> Result<
-        Responder<TheirEncoder, ResponseDone>,
-        ResponderOrBodyError<TheirEncoder::Error, TheirBody::Error>,
+        Responder<OurEncoder, ResponseDone>,
+        ResponderOrBodyError<OurEncoder::Error, TheirBody::Error>,
     >
     where
         TheirBody: Body,
@@ -315,7 +243,7 @@ pub type ResponderResult<T, EncoderError> = Result<T, ResponderError<EncoderErro
 
 #[allow(async_fn_in_trait)] // we never require Send
 pub trait Encoder {
-    type Error: std::error::Error;
+    type Error: AsRef<dyn std::error::Error>;
 
     async fn write_response(&mut self, res: Response) -> Result<(), Self::Error>;
     /// Note: encoders do not have a duty to check for matching content-length:
@@ -327,6 +255,8 @@ pub trait Encoder {
 
 #[cfg(test)]
 mod tests {
+    use crate::error::BoxError;
+
     use super::*;
     use buffet::Piece;
     use http::{StatusCode, Version};
@@ -335,7 +265,7 @@ mod tests {
     struct MockEncoder;
 
     impl Encoder for MockEncoder {
-        type Error = std::convert::Infallible;
+        type Error = BoxError;
 
         async fn write_response(&mut self, _: Response) -> Result<(), Self::Error> {
             Ok(())

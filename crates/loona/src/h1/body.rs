@@ -73,7 +73,7 @@ impl<T: ReadOwned> H1Body<T> {
     }
 }
 
-impl<T: ReadOwned> Body for H1Body<T> {
+impl<OurReadOwned: ReadOwned> Body for H1Body<OurReadOwned> {
     type Error = BodyError;
 
     fn content_len(&self) -> Option<u64> {
@@ -258,39 +258,23 @@ pub enum BodyWriteMode {
     Empty,
 }
 
-#[derive(Debug)]
-pub enum WriteBodyError<BE> {
+#[derive(thiserror::Error, Debug)]
+pub enum WriteBodyError<OurBodyError>
+where
+    OurBodyError: AsRef<dyn std::error::Error>,
+{
     // Error from the `Body` impl itself
-    InnerBodyError(BE),
+    #[error("inner body error: {0}")]
+    InnerBodyError(OurBodyError),
 
     // BodyError
-    BodyError(BodyError),
+    #[error("body error: {0}")]
+    BodyError(#[from] BodyError),
 }
 
-impl<BE> fmt::Display for WriteBodyError<BE>
-where
-    BE: fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl<BE> From<BodyError> for WriteBodyError<BE> {
-    fn from(e: BodyError) -> Self {
-        WriteBodyError::BodyError(e)
-    }
-}
-
-impl<BE> std::error::Error for WriteBodyError<BE>
-where
-    BE: std::error::Error + 'static,
-{
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            WriteBodyError::InnerBodyError(_) => None,
-            WriteBodyError::BodyError(e) => Some(e),
-        }
+impl<OurBodyError> AsRef<dyn std::error::Error> for WriteBodyError<OurBodyError> {
+    fn as_ref(&self) -> &(dyn std::error::Error + 'static) {
+        self
     }
 }
 

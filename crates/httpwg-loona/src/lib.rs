@@ -2,10 +2,10 @@ use std::{cell::RefCell, rc::Rc};
 use tokio::{process::Command, sync::oneshot};
 
 use buffet::{IntoHalves, RollMut};
-use color_eyre::eyre;
 use loona::{
     http::{self, StatusCode},
     Body, BodyChunk, Encoder, ExpectResponseHeaders, Responder, Response, ResponseDone,
+    ServerDriver,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -164,15 +164,18 @@ pub fn do_main(port: u16, proto: Proto, mode: Mode) {
 
 struct TestDriver;
 
-impl loona::ServerDriver for TestDriver {
-    type Error = BoxError;
+impl<OurEncoder> ServerDriver<OurEncoder> for TestDriver
+where
+    OurEncoder: Encoder,
+{
+    type Error = Box<dyn std::error::Error>;
 
-    async fn handle<E: Encoder>(
+    async fn handle(
         &self,
         _req: loona::Request,
         req_body: &mut impl Body,
-        mut res: Responder<E, ExpectResponseHeaders>,
-    ) -> eyre::Result<Responder<E, ResponseDone>> {
+        mut res: Responder<OurEncoder, ExpectResponseHeaders>,
+    ) -> Result<Responder<OurEncoder, ResponseDone>, Self::Error> {
         // if the client sent `expect: 100-continue`, we must send a 100 status code
         if let Some(h) = _req.headers.get(http::header::EXPECT) {
             if &h[..] == b"100-continue" {
@@ -187,7 +190,10 @@ impl loona::ServerDriver for TestDriver {
         // then read the full request body
         let mut req_body_len = 0;
         loop {
-            let chunk = req_body.next_chunk().await?;
+            let chunk = req_body
+                .next_chunk()
+                .await
+                .map_err(TestDriverError::RequestBodyError)?;
             match chunk {
                 BodyChunk::Done { trailers } => {
                     // yey

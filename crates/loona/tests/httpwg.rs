@@ -1,8 +1,12 @@
+use std::error::Error as StdError;
 use std::rc::Rc;
 
 use buffet::{IntoHalves, PipeRead, PipeWrite, ReadOwned, RollMut, WriteOwned};
 use http::StatusCode;
-use loona::{Body, BodyChunk, Encoder, ExpectResponseHeaders, Responder, Response, ResponseDone};
+use loona::{
+    Body, BodyChunk, Encoder, ExpectResponseHeaders, Responder, ResponderError, Response,
+    ResponseDone, ServerDriver,
+};
 use tracing::Level;
 use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -10,8 +14,6 @@ use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::Subscriber
 /// globals. But it will work with `cargo nextest`, and that's what loona is
 /// standardizing on.
 pub(crate) fn setup_tracing_and_error_reporting() {
-    color_eyre::install().unwrap();
-
     let targets = if let Ok(rust_log) = std::env::var("RUST_LOG") {
         rust_log.parse::<Targets>().unwrap()
     } else {
@@ -36,13 +38,19 @@ pub(crate) fn setup_tracing_and_error_reporting() {
 
 struct TestDriver;
 
-impl loona::ServerDriver for TestDriver {
-    async fn handle<E: Encoder>(
+impl<OurEncoder> ServerDriver<OurEncoder> for TestDriver
+where
+    OurEncoder: Encoder,
+    <OurEncoder as Encoder>::Error: AsRef<dyn StdError>,
+{
+    type Error = ResponderError<OurEncoder::Error>;
+
+    async fn handle(
         &self,
         _req: loona::Request,
         req_body: &mut impl Body,
-        mut res: Responder<E, ExpectResponseHeaders>,
-    ) -> eyre::Result<Responder<E, ResponseDone>> {
+        mut res: Responder<OurEncoder, ExpectResponseHeaders>,
+    ) -> eyre::Result<Responder<OurEncoder, ResponseDone>> {
         // if the client sent `expect: 100-continue`, we must send a 100 status code
         if let Some(h) = _req.headers.get(http::header::EXPECT) {
             if &h[..] == b"100-continue" {

@@ -33,14 +33,16 @@ impl Default for ServerConf {
     }
 }
 
-pub async fn serve<Driver>(
-    (mut transport_r, mut transport_w): (impl ReadOwned, impl WriteOwned),
+pub async fn serve<OurDriver, OurReadOwned, OurWriteOwned>(
+    (mut transport_r, mut transport_w): (OurReadOwned, OurWriteOwned),
     conf: Rc<ServerConf>,
     mut client_buf: RollMut,
-    driver: Driver,
-) -> Result<ServeOutcome, ServeError<Driver::Error>>
+    driver: OurDriver,
+) -> Result<ServeOutcome, ServeError<OurDriver::Error>>
 where
-    Driver: ServerDriver,
+    OurDriver: ServerDriver<H1Encoder<OurWriteOwned>>,
+    OurReadOwned: ReadOwned,
+    OurWriteOwned: WriteOwned,
 {
     loop {
         let req;

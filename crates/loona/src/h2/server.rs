@@ -57,14 +57,16 @@ impl Default for ServerConf {
     }
 }
 
-pub async fn serve<Driver>(
-    (transport_r, transport_w): (impl ReadOwned, impl WriteOwned),
+pub async fn serve<OurDriver, OurReadOwned, OurWriteOwned>(
+    (transport_r, transport_w): (OurReadOwned, OurWriteOwned),
     conf: Rc<ServerConf>,
     client_buf: RollMut,
-    driver: Rc<Driver>,
-) -> Result<(), ServeError<Driver::Error>>
+    driver: Rc<OurDriver>,
+) -> Result<(), ServeError<OurDriver::Error>>
 where
-    Driver: ServerDriver + 'static,
+    OurDriver: ServerDriver<H2Encoder> + 'static,
+    OurReadOwned: ReadOwned,
+    OurWriteOwned: WriteOwned,
 {
     let mut state = ConnState::default();
     state.self_settings.max_concurrent_streams = conf.max_streams;
@@ -78,8 +80,12 @@ where
 }
 
 /// Reads and processes h2 frames from the client.
-pub(crate) struct ServerContext<D: ServerDriver + 'static, W: WriteOwned> {
-    driver: Rc<D>,
+pub(crate) struct ServerContext<OurDriver, OurWriter>
+where
+    OurDriver: ServerDriver<H2Encoder> + 'static,
+    OurWriter: WriteOwned,
+{
+    driver: Rc<OurDriver>,
     state: ConnState,
 
     hpack_dec: loona_hpack::Decoder<'static>,
@@ -91,21 +97,21 @@ pub(crate) struct ServerContext<D: ServerDriver + 'static, W: WriteOwned> {
 
     /// TODO: encapsulate into a framer, don't
     /// allow direct access from context methods
-    transport_w: W,
+    transport_w: OurWriter,
 
     ev_tx: mpsc::Sender<H2Event>,
     ev_rx: mpsc::Receiver<H2Event>,
 }
 
-impl<Driver, Write> ServerContext<Driver, Write>
+impl<OurDriver, OurWriteOwned> ServerContext<OurDriver, OurWriteOwned>
 where
-    Driver: ServerDriver + 'static,
-    Write: WriteOwned,
+    OurDriver: ServerDriver<H2Encoder> + 'static,
+    OurWriteOwned: WriteOwned,
 {
     pub(crate) fn new(
-        driver: Rc<Driver>,
+        driver: Rc<OurDriver>,
         state: ConnState,
-        transport_w: Write,
+        transport_w: OurWriteOwned,
     ) -> Result<Self, buffet::bufpool::Error> {
         let mut hpack_dec = loona_hpack::Decoder::new();
         hpack_dec
@@ -133,7 +139,7 @@ where
         &mut self,
         mut client_buf: RollMut,
         mut transport_r: impl ReadOwned,
-    ) -> Result<ServeOutcome, ServeError<Driver::Error>> {
+    ) -> Result<ServeOutcome, ServeError<OurDriver::Error>> {
         // first read the preface
         {
             (client_buf, _) = match read_and_parse(
@@ -1840,7 +1846,7 @@ where
                             }
                             Err(e) => {
                                 // TODO: actually handle that error.
-                                debug!("Handler returned an error: {e}")
+                                debug!("Handler returned an error: {}", e.as_ref())
                             }
                         }
                     }

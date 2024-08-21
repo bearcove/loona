@@ -1,3 +1,5 @@
+use std::error::Error as StdError;
+
 mod types;
 mod util;
 
@@ -17,13 +19,17 @@ pub use http;
 pub mod error;
 
 #[allow(async_fn_in_trait)] // we never require Send
-pub trait ServerDriver {
-    type Error: std::error::Error + 'static;
+pub trait ServerDriver<OurEncoder>
+where
+    OurEncoder: Encoder,
+    <OurEncoder as Encoder>::Error: AsRef<dyn StdError>,
+{
+    type Error: AsRef<dyn StdError>;
 
-    async fn handle<E: Encoder>(
+    async fn handle(
         &self,
         req: Request,
         req_body: &mut impl Body,
-        respond: Responder<E, ExpectResponseHeaders>,
-    ) -> Result<Responder<E, ResponseDone>, Self::Error>;
+        respond: Responder<OurEncoder, ExpectResponseHeaders>,
+    ) -> Result<Responder<OurEncoder, ResponseDone>, Self::Error>;
 }

@@ -3,60 +3,61 @@ use std::fmt;
 
 use crate::h2::types::H2ConnectionError;
 
-pub type BoxError = Box<dyn StdError + 'static>;
+pub type BoxError = Box<dyn StdError>;
 
 /// Any error that can occur when servicing a connection
 #[non_exhaustive]
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ServeError<DriverError> {
     /// An error occurred while writing to the downstream
-    DownstreamWrite(std::io::Error),
+    #[error("Error writing to downstream: {0}")]
+    DownstreamWrite(#[from] std::io::Error),
 
     /// The server driver errored out
+    #[error("Server driver error: {0:?}")]
     Driver(DriverError),
 
     /// HTTP/1.1 response body was not drained by response
     /// handler before the client closed the connection
+    #[error("HTTP/1.1 response body was not drained before client closed connection")]
     ResponseHandlerBodyNotDrained,
 
     /// An error occurred while handling an HTTP/2 connection
-    H2ConnectionError(H2ConnectionError),
+    #[error("HTTP/2 connection error: {0}")]
+    H2ConnectionError(#[from] H2ConnectionError),
 
     /// An error occurred during memory allocation
-    Alloc(buffet::bufpool::Error),
+    #[error("Memory allocation error: {0}")]
+    Alloc(#[from] buffet::bufpool::Error),
 }
 
-impl<DriverError> From<H2ConnectionError> for ServeError<DriverError> {
-    fn from(error: H2ConnectionError) -> Self {
-        ServeError::H2ConnectionError(error)
+impl<DriverError> AsRef<dyn StdError> for ServeError<DriverError>
+where
+    DriverError: AsRef<dyn StdError> + fmt::Debug + 'static,
+{
+    fn as_ref(&self) -> &(dyn StdError + 'static) {
+        self
     }
 }
 
-impl<DriverError> fmt::Display for ServeError<DriverError>
-where
-    DriverError: fmt::Debug,
-{
+pub struct NeverError;
+
+impl AsRef<dyn StdError> for NeverError {
+    fn as_ref(&self) -> &(dyn StdError + 'static) {
+        self
+    }
+}
+
+impl fmt::Debug for NeverError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{self:?}")
+        f.write_str("NeverError")
     }
 }
 
-impl<DriverError> StdError for ServeError<DriverError>
-where
-    DriverError: StdError + 'static,
-{
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        match self {
-            Self::DownstreamWrite(e) => Some(e),
-            Self::Driver(e) => Some(e),
-            Self::Alloc(e) => Some(e),
-            _ => None,
-        }
+impl fmt::Display for NeverError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NeverError")
     }
 }
 
-impl<DriverError> From<buffet::bufpool::Error> for ServeError<DriverError> {
-    fn from(error: buffet::bufpool::Error) -> Self {
-        ServeError::Alloc(error)
-    }
-}
+impl StdError for NeverError {}

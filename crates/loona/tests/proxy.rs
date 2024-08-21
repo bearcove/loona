@@ -17,13 +17,15 @@ pub struct ProxyDriver {
     pub pool: TransportPool,
 }
 
-impl ServerDriver for ProxyDriver {
-    async fn handle<E: Encoder>(
+impl<OurEncoder> ServerDriver<OurEncoder> for ProxyDriver {
+    type Error = BoxError;
+
+    async fn handle(
         &self,
         req: loona::Request,
         req_body: &mut impl Body,
-        mut respond: Responder<E, ExpectResponseHeaders>,
-    ) -> eyre::Result<Responder<E, ResponseDone>> {
+        mut respond: Responder<OurEncoder, ExpectResponseHeaders>,
+    ) -> eyre::Result<Responder<OurEncoder, ResponseDone>> {
         if req.headers.expects_100_continue() {
             debug!("Sending 100-continue");
             let res = Response {
@@ -70,11 +72,9 @@ where
     respond: Responder<E, ExpectResponseHeaders>,
 }
 
-impl<E> h1::ClientDriver for ProxyClientDriver<E>
-where
-    E: Encoder,
-{
+impl h1::ClientDriver for ProxyClientDriver<E> {
     type Return = Responder<E, ResponseDone>;
+    type Error = BoxError;
 
     async fn on_informational_response(&mut self, res: Response) -> eyre::Result<()> {
         debug!("Got informational response {}", res.status);

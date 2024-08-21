@@ -4,6 +4,7 @@ use bytes::BytesMut;
 use http::{header, StatusCode};
 use httparse::{Status, EMPTY_HEADER};
 use loona::buffet::{IntoHalves, ReadOwned, WriteOwned};
+use loona::error::BoxError;
 use loona::{
     buffet::{PieceCore, RollMut},
     h1, h2, Body, BodyChunk, Encoder, ExpectResponseHeaders, Headers, HeadersExt, Method, Request,
@@ -46,7 +47,12 @@ fn serve_api() {
 
         struct TestDriver;
 
-        impl ServerDriver for TestDriver {
+        impl ServerDriver<OurEncoder> for TestDriver
+        where
+            OurEncoder: Encoder,
+        {
+            type Error = BoxError;
+
             async fn handle<E: Encoder>(
                 &self,
                 _req: loona::Request,
@@ -154,6 +160,7 @@ fn request_api() {
 
         impl h1::ClientDriver for TestDriver {
             type Return = ();
+            type Error = BoxError;
 
             async fn on_informational_response(&mut self, _res: Response) -> eyre::Result<()> {
                 todo!("got informational response!")
@@ -649,13 +656,18 @@ fn curl_echo_body_noproxy(typ: BodyType) {
 
         struct TestDriver;
 
-        impl ServerDriver for TestDriver {
-            async fn handle<E: Encoder>(
+        impl<OurEncoder> ServerDriver<OurEncoder> for TestDriver
+        where
+            OurEncoder: Encoder,
+        {
+            type Error = BoxError;
+
+            async fn handle(
                 &self,
                 req: Request,
                 req_body: &mut impl Body,
-                mut respond: Responder<E, ExpectResponseHeaders>,
-            ) -> eyre::Result<Responder<E, ResponseDone>> {
+                mut respond: Responder<OurEncoder, ExpectResponseHeaders>,
+            ) -> eyre::Result<Responder<OurEncoder, ResponseDone>> {
                 if req.headers.expects_100_continue() {
                     debug!("Sending 100-continue");
                     let res = Response {
@@ -792,13 +804,18 @@ fn h2_basic_post() {
 
         struct TestDriver;
 
-        impl ServerDriver for TestDriver {
-            async fn handle<E: Encoder>(
+        impl<OurEncoder> ServerDriver<OurEncoder> for TestDriver
+        where
+            OurEncoder: Encoder,
+        {
+            type Error = BoxError;
+
+            async fn handle(
                 &self,
                 req: Request,
                 req_body: &mut impl Body,
-                respond: Responder<E, ExpectResponseHeaders>,
-            ) -> eyre::Result<Responder<E, ResponseDone>> {
+                respond: Responder<OurEncoder, ExpectResponseHeaders>,
+            ) -> eyre::Result<Responder<OurEncoder, ResponseDone>> {
                 debug!("Got request {req:#?}");
 
                 debug!("Writing final response");
@@ -901,6 +918,8 @@ impl Default for SampleBody {
 }
 
 impl Body for SampleBody {
+    type Error = BoxError;
+
     fn content_len(&self) -> Option<u64> {
         None
     }
@@ -961,13 +980,18 @@ fn h2_basic_get() {
 
         struct TestDriver;
 
-        impl ServerDriver for TestDriver {
-            async fn handle<E: Encoder>(
+        impl<OurEncoder> ServerDriver<OurEncoder> for TestDriver
+        where
+            OurEncoder: Encoder,
+        {
+            type Error = BoxError;
+
+            async fn handle(
                 &self,
                 req: Request,
                 _req_body: &mut impl Body,
-                respond: Responder<E, ExpectResponseHeaders>,
-            ) -> eyre::Result<Responder<E, ResponseDone>> {
+                respond: Responder<OurEncoder, ExpectResponseHeaders>,
+            ) -> eyre::Result<Responder<OurEncoder, ResponseDone>> {
                 debug!("Got request {req:#?}");
 
                 debug!("Writing final response");

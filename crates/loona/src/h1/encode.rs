@@ -149,19 +149,19 @@ const CODE_DIGITS: &str = "\
 960961962963964965966967968969970971972973974975976977978979\
 980981982983984985986987988989990991992993994995996997998999";
 
-pub struct H1Encoder<T>
+pub struct H1Encoder<OurWriteOwned>
 where
-    T: WriteOwned,
+    OurWriteOwned: WriteOwned,
 {
-    pub(crate) transport_w: T,
+    pub(crate) transport_w: OurWriteOwned,
     mode: BodyWriteMode,
 }
 
-impl<T> H1Encoder<T>
+impl<OurWriteOwned> H1Encoder<OurWriteOwned>
 where
-    T: WriteOwned,
+    OurWriteOwned: WriteOwned,
 {
-    pub fn new(transport_w: T) -> Self {
+    pub fn new(transport_w: OurWriteOwned) -> Self {
         Self {
             transport_w,
             mode: BodyWriteMode::Empty,
@@ -169,34 +169,23 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum H1EncoderError {
-    IoError(std::io::Error),
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+    #[error("Wrong state: expected {expected:?}, actual {actual:?}")]
     WrongState {
         expected: BodyWriteMode,
         actual: BodyWriteMode,
     },
-    BodyError(BodyError),
+    #[error("Body error: {0}")]
+    BodyError(#[from] BodyError),
 }
 
-impl std::fmt::Display for H1EncoderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl std::error::Error for H1EncoderError {}
-
-impl From<BodyError> for H1EncoderError {
-    fn from(e: BodyError) -> Self {
-        H1EncoderError::BodyError(e)
-    }
-}
-
-impl From<std::io::Error> for H1EncoderError {
-    fn from(error: std::io::Error) -> Self {
-        H1EncoderError::IoError(error)
+impl AsRef<dyn std::error::Error> for H1EncoderError {
+    fn as_ref(&self) -> &(dyn std::error::Error + 'static) {
+        self
     }
 }
 

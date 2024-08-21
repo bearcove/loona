@@ -4,44 +4,27 @@ use tracing::{debug, trace};
 
 use buffet::{ReadOwned, Roll, RollMut};
 
-#[derive(Debug)]
+use thiserror::Error;
+
+#[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ReadAndParseError {
     /// Allocation error
-    Alloc(buffet::bufpool::Error),
+    #[error("Allocation error: {0}")]
+    Alloc(#[from] buffet::bufpool::Error),
 
     /// Read error
-    ReadError(std::io::Error),
+    #[error("Read error: {0}")]
+    ReadError(#[from] std::io::Error),
 
     /// Buffer limit reached while parsing
+    #[error("Buffer limit reached while parsing (limit: {limit})")]
     BufferLimitReachedWhileParsing { limit: usize },
 
     /// Parsing error
     // TODO: should we pass any amount of detail here?
+    #[error("Parsing error in parser: {parser}")]
     ParsingError { parser: &'static str },
-}
-
-impl From<buffet::bufpool::Error> for ReadAndParseError {
-    fn from(e: buffet::bufpool::Error) -> Self {
-        ReadAndParseError::Alloc(e)
-    }
-}
-
-impl std::fmt::Display for ReadAndParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl std::error::Error for ReadAndParseError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            ReadAndParseError::Alloc(e) => Some(e),
-            ReadAndParseError::ReadError(e) => Some(e),
-            ReadAndParseError::BufferLimitReachedWhileParsing { .. } => None,
-            ReadAndParseError::ParsingError { .. } => None,
-        }
-    }
 }
 
 /// Returns `None` on EOF, error if partially parsed message.

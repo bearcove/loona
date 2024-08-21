@@ -2,7 +2,7 @@ use core::fmt;
 
 use tokio::sync::mpsc;
 
-use crate::{Body, BodyChunk, Headers};
+use crate::{error::NeverError, Body, BodyChunk, Headers};
 use buffet::Piece;
 
 use super::types::H2StreamError;
@@ -34,9 +34,10 @@ pub(crate) struct StreamIncoming {
     pub(crate) capacity: i64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum StreamIncomingError {
+    #[error("stream reset")]
     StreamReset,
 }
 
@@ -128,23 +129,19 @@ pub(crate) struct H2Body {
     pub(crate) rx: mpsc::Receiver<IncomingMessageResult>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub(crate) enum H2BodyError {
+    #[error("Stream reset")]
     StreamReset,
 
+    #[error("Unexpected EOF")]
     UnexpectedEof,
 }
 
-impl fmt::Display for H2BodyError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl std::error::Error for H2BodyError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
+impl AsRef<dyn std::error::Error> for H2BodyError {
+    fn as_ref(&self) -> &(dyn std::error::Error + 'static) {
+        self
     }
 }
 
@@ -218,7 +215,7 @@ impl SinglePieceBody {
 }
 
 impl Body for SinglePieceBody {
-    type Error = std::convert::Infallible;
+    type Error = NeverError;
 
     fn content_len(&self) -> Option<u64> {
         Some(self.content_len)
