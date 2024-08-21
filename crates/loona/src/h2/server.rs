@@ -34,7 +34,7 @@ use crate::{
         },
     },
     util::{read_and_parse, ReadAndParseError},
-    Headers, Method, Request, Responder, ServeOutcome, ServerDriver,
+    Headers, Method, Request, Responder, ResponderOrBodyError, ServeOutcome, ServerDriver,
 };
 
 use super::{
@@ -1030,7 +1030,13 @@ where
                                     },
                                     &mut SinglePieceBody::new(e.message),
                                 )
-                                .await?;
+                                .await
+                                .map_err(|e| match e {
+                                    ResponderOrBodyError::Responder(e) => e,
+                                    ResponderOrBodyError::Body(_) => {
+                                        unreachable!("SinglePieceBody's error is Infallible")
+                                    }
+                                })?;
 
                             // don't even store the stream state anywhere, just record the last
                             // stream id since we technically processed the request? maybe?

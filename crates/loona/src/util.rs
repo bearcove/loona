@@ -21,6 +21,12 @@ pub enum ReadAndParseError {
     ParsingError { parser: &'static str },
 }
 
+impl From<buffet::bufpool::Error> for ReadAndParseError {
+    fn from(e: buffet::bufpool::Error) -> Self {
+        ReadAndParseError::Alloc(e)
+    }
+}
+
 impl std::fmt::Display for ReadAndParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
@@ -110,15 +116,5 @@ where
                 }
             }
         };
-    }
-}
-
-impl SemanticError {
-    pub(crate) fn as_http_response(&self) -> &'static [u8] {
-        match self {
-            Self::BufferLimitReachedWhileParsing => {
-                b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n"
-            }
-        }
     }
 }

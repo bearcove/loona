@@ -8,9 +8,9 @@ use http::StatusCode;
 use loona_hpack::decoder::DecoderError;
 use tokio::sync::Notify;
 
-use crate::{util::ReadAndParseError, Response};
+use crate::{util::ReadAndParseError, ResponderError, Response};
 
-use super::body::StreamIncoming;
+use super::{body::StreamIncoming, encode::H2EncoderError};
 use loona_h2::{FrameType, KnownErrorCode, Settings, SettingsError, StreamId};
 
 pub(crate) struct ConnState {
@@ -380,6 +380,9 @@ pub(crate) enum H2ConnectionError {
 
     #[error("error writing H2 frame: {0:?}")]
     WriteError(std::io::Error),
+
+    #[error("H2 responder error: {0:?}")]
+    ResponderError(#[from] ResponderError<H2EncoderError>),
 
     #[error("received rst frame for unknown stream")]
     RstStreamForUnknownStream { stream_id: StreamId },

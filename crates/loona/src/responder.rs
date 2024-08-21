@@ -21,10 +21,7 @@ impl ResponseState for ResponseDone {}
 
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum ResponderError<EncoderError>
-where
-    EncoderError: std::error::Error,
-{
+pub enum ResponderError<EncoderError> {
     /// The response status code was not 1xx
     InterimResponseMustHaveStatusCode1xx {
         actual: StatusCode,
@@ -44,16 +41,10 @@ where
     EncoderError(EncoderError),
 }
 
-impl<E> From<E> for ResponderError<E>
+impl<E> fmt::Display for ResponderError<E>
 where
     E: std::error::Error,
 {
-    fn from(e: E) -> Self {
-        Self::EncoderError(e)
-    }
-}
-
-impl fmt::Display for ResponderError<http::Error> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InterimResponseMustHaveStatusCode1xx { actual } => {
@@ -79,22 +70,65 @@ impl fmt::Display for ResponderError<http::Error> {
     }
 }
 
-impl<E> std::error::Error for ResponderError<E> where E: std::error::Error {}
-
-pub struct Responder<E, S>
+impl<E> std::error::Error for ResponderError<E>
 where
-    E: Encoder,
-    S: ResponseState,
+    E: std::error::Error + 'static,
 {
-    encoder: E,
-    state: S,
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::EncoderError(e) => Some(e),
+            _ => None,
+        }
+    }
 }
 
-impl<E> Responder<E, ExpectResponseHeaders>
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum ResponderOrBodyError<EncoderError, BodyError> {
+    Responder(ResponderError<EncoderError>),
+    Body(BodyError),
+}
+
+impl<EncoderError, BodyError> fmt::Display for ResponderOrBodyError<EncoderError, BodyError>
 where
-    E: Encoder,
+    EncoderError: fmt::Debug,
+    BodyError: fmt::Debug,
 {
-    pub fn new(encoder: E) -> Self {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Responder(e) => write!(f, "{e:?}"),
+            Self::Body(e) => write!(f, "{e:?}"),
+        }
+    }
+}
+
+impl<EncoderError, BodyError> std::error::Error for ResponderOrBodyError<EncoderError, BodyError>
+where
+    EncoderError: std::error::Error + 'static,
+    BodyError: std::error::Error + 'static,
+{
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Responder(e) => Some(e),
+            Self::Body(e) => Some(e),
+        }
+    }
+}
+
+pub struct Responder<TheirEncoder, OurResponseState>
+where
+    TheirEncoder: Encoder,
+    OurResponseState: ResponseState,
+{
+    encoder: TheirEncoder,
+    state: OurResponseState,
+}
+
+impl<TheirEncoder> Responder<TheirEncoder, ExpectResponseHeaders>
+where
+    TheirEncoder: Encoder,
+{
+    pub fn new(encoder: TheirEncoder) -> Self {
         Self {
             encoder,
             state: ExpectResponseHeaders,
@@ -103,14 +137,20 @@ where
 
     /// Send an informational status code, cf. <https://httpwg.org/specs/rfc9110.html#status.1xx>
     /// Errors out if the response status is not 1xx
-    pub async fn write_interim_response(&mut self, res: Response) -> Result<(), ResponderError> {
+    pub async fn write_interim_response(
+        &mut self,
+        res: Response,
+    ) -> Result<(), ResponderError<TheirEncoder::Error>> {
         if !res.status.is_informational() {
             return Err(ResponderError::InterimResponseMustHaveStatusCode1xx {
                 actual: res.status,
             });
         }
 
-        self.encoder.write_response(res).await?;
+        self.encoder
+            .write_response(res)
+            .await
+            .map_err(ResponderError::EncoderError)?;
         Ok(())
     }
 
@@ -118,7 +158,8 @@ where
         mut self,
         res: Response,
         announced_content_length: Option<u64>,
-    ) -> Result<Responder<E, ExpectResponseBody>, ResponderError> {
+    ) -> Result<Responder<TheirEncoder, ExpectResponseBody>, ResponderError<TheirEncoder::Error>>
+    {
         if res.status.is_informational() {
             return Err(
                 ResponderError::FinalResponseMustHaveStatusCodeGreaterThanOrEqualTo200 {
@@ -126,7 +167,10 @@ where
                 },
             );
         }
-        self.encoder.write_response(res).await?;
+        self.encoder
+            .write_response(res)
+            .await
+            .map_err(ResponderError::EncoderError)?;
         Ok(Responder {
             state: ExpectResponseBody {
                 announced_content_length,
@@ -142,7 +186,7 @@ where
     pub async fn write_final_response(
         self,
         res: Response,
-    ) -> ResponderResult<Responder<E, ExpectResponseBody>> {
+    ) -> ResponderResult<Responder<TheirEncoder, ExpectResponseBody>, TheirEncoder::Error> {
         let announced_content_length = res.headers.content_length();
         self.write_final_response_internal(res, announced_content_length)
             .await
@@ -150,11 +194,17 @@ where
 
     /// Writes a response with the given body. Sets `content-length` or
     /// `transfer-encoding` as needed.
-    pub async fn write_final_response_with_body(
+    pub async fn write_final_response_with_body<TheirBody>(
         self,
         mut res: Response,
-        body: &mut impl Body,
-    ) -> ResponderResult<Responder<E, ResponseDone>> {
+        body: &mut TheirBody,
+    ) -> Result<
+        Responder<TheirEncoder, ResponseDone>,
+        ResponderOrBodyError<TheirEncoder::Error, TheirBody::Error>,
+    >
+    where
+        TheirBody: Body,
+    {
         if let Some(clen) = body.content_len() {
             res.headers
                 .entry(header::CONTENT_LENGTH)
@@ -171,15 +221,27 @@ where
                 });
         }
 
-        let mut this = self.write_final_response(res).await?;
+        let mut this = self
+            .write_final_response(res)
+            .await
+            .map_err(ResponderOrBodyError::Responder)?;
 
         loop {
-            match body.next_chunk().await? {
+            match body
+                .next_chunk()
+                .await
+                .map_err(ResponderOrBodyError::Body)?
+            {
                 BodyChunk::Chunk(chunk) => {
-                    this.write_chunk(chunk).await?;
+                    this.write_chunk(chunk)
+                        .await
+                        .map_err(ResponderOrBodyError::Responder)?;
                 }
                 BodyChunk::Done { trailers } => {
-                    return this.finish_body(trailers).await;
+                    return this
+                        .finish_body(trailers)
+                        .await
+                        .map_err(ResponderOrBodyError::Responder);
                 }
             }
         }
@@ -193,9 +255,12 @@ where
     /// Send a response body chunk. Errors out if sending more than the
     /// announced content-length.
     #[inline]
-    pub async fn write_chunk(&mut self, chunk: Piece) -> ResponderResult<()> {
+    pub async fn write_chunk(&mut self, chunk: Piece) -> ResponderResult<(), E::Error> {
         self.state.bytes_written += chunk.len() as u64;
-        self.encoder.write_body_chunk(chunk).await
+        self.encoder
+            .write_body_chunk(chunk)
+            .await
+            .map_err(ResponderError::EncoderError)
     }
 
     /// Finish the body, with optional trailers, cf. <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/TE>
@@ -207,7 +272,7 @@ where
     pub async fn finish_body(
         mut self,
         trailers: Option<Box<Headers>>,
-    ) -> ResponderResult<Responder<E, ResponseDone>> {
+    ) -> ResponderResult<Responder<E, ResponseDone>, E::Error> {
         if let Some(announced_content_length) = self.state.announced_content_length {
             if self.state.bytes_written != announced_content_length {
                 return Err(
@@ -218,10 +283,16 @@ where
                 );
             }
         }
-        self.encoder.write_body_end().await?;
+        self.encoder
+            .write_body_end()
+            .await
+            .map_err(ResponderError::EncoderError)?;
 
         if let Some(trailers) = trailers {
-            self.encoder.write_trailers(trailers).await?;
+            self.encoder
+                .write_trailers(trailers)
+                .await
+                .map_err(ResponderError::EncoderError)?;
         }
 
         Ok(Responder {
