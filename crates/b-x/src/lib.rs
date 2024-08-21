@@ -100,3 +100,13 @@ make_bxable!(std::sync::mpsc::RecvError);
 make_bxable!(std::sync::mpsc::TryRecvError);
 make_bxable!(std::sync::mpsc::SendError<Box<dyn StdError + Send + Sync>>);
 make_bxable!(std::sync::PoisonError<Box<dyn StdError + Send + Sync>>);
+
+#[macro_export]
+macro_rules! bail {
+    ($err:expr) => {
+        return Err($crate::BX::from_err($err));
+    };
+    ($fmt:expr, $($arg:tt)*) => {
+        return Err($crate::BX::from_string(format!($fmt, $($arg)*)));
+    };
+}

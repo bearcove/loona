@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use b_x::{BxForResults, BX};
 use http::Version;
 use ktls::CorkStream;
 use loona::{
@@ -138,7 +139,7 @@ async fn handle_plaintext_conn(
     stream: tokio::net::TcpStream,
     remote_addr: std::net::SocketAddr,
     proto: Proto,
-) -> Result<(), color_eyre::Report> {
+) -> Result<(), BX> {
     info!("Accepted connection from {remote_addr}");
     let buf = RollMut::alloc()?;
 
@@ -165,7 +166,7 @@ async fn handle_tls_conn(
     remote_addr: std::net::SocketAddr,
     h1_conf: Rc<h1::ServerConf>,
     h2_conf: Rc<h2::ServerConf>,
-) -> Result<(), color_eyre::Report> {
+) -> b_x::Result<()> {
     info!("Accepted connection from {remote_addr}");
     let stream = CorkStream::new(stream);
     let stream = acceptor.accept(stream).await?;
@@ -176,7 +177,7 @@ async fn handle_tls_conn(
         .and_then(|p| std::str::from_utf8(p).ok().map(|s| s.to_string()));
     debug!(?alpn_proto, "Performed TLS handshake");
 
-    let stream = ktls::config_ktls_server(stream).await?;
+    let stream = ktls::config_ktls_server(stream).await.bx()?;
 
     debug!("Set up kTLS");
     let (drained, stream) = stream.into_raw();
@@ -199,7 +200,9 @@ async fn handle_tls_conn(
             info!("Using HTTP/1.1");
             loona::h1::serve(stream.into_halves(), h1_conf, buf, driver).await?;
         }
-        Some(other) => return Err(eyre::eyre!("Unsupported ALPN protocol: {}", other)),
+        Some(other) => {
+            b_x::bail!("Unsupported ALPN protocol: {}", other)
+        }
     }
 
     Ok(())
@@ -207,13 +210,18 @@ async fn handle_tls_conn(
 
 struct SDriver {}
 
-impl ServerDriver for SDriver {
-    async fn handle<E: Encoder>(
+impl<OurEncoder> ServerDriver<OurEncoder> for SDriver
+where
+    OurEncoder: Encoder,
+{
+    type Error = BX;
+
+    async fn handle(
         &self,
         mut req: loona::Request,
         req_body: &mut impl Body,
-        respond: Responder<E, ExpectResponseHeaders>,
-    ) -> eyre::Result<Responder<E, ResponseDone>> {
+        respond: Responder<OurEncoder, ExpectResponseHeaders>,
+    ) -> b_x::Result<Responder<OurEncoder, ResponseDone>> {
         info!("Handling {:?} {}", req.method, req.uri);
 
         let addr = "httpbingo.org:80"
@@ -237,20 +245,21 @@ impl ServerDriver for SDriver {
     }
 }
 
-struct CDriver<E>
+struct CDriver<OurEncoder>
 where
-    E: Encoder,
+    OurEncoder: Encoder,
 {
-    respond: Responder<E, ExpectResponseHeaders>,
+    respond: Responder<OurEncoder, ExpectResponseHeaders>,
 }
 
-impl<E> h1::ClientDriver for CDriver<E>
+impl<OurEncoder> h1::ClientDriver for CDriver<OurEncoder>
 where
-    E: Encoder,
+    OurEncoder: Encoder,
 {
-    type Return = Responder<E, ResponseDone>;
+    type Error = BX;
+    type Return = Responder<OurEncoder, ResponseDone>;
 
-    async fn on_informational_response(&mut self, _res: loona::Response) -> eyre::Result<()> {
+    async fn on_informational_response(&mut self, _res: loona::Response) -> b_x::Result<()> {
         // ignore informational responses
 
         Ok(())
@@ -260,7 +269,7 @@ where
         self,
         res: loona::Response,
         body: &mut impl Body,
-    ) -> eyre::Result<Self::Return> {
+    ) -> b_x::Result<Self::Return> {
         info!("Client got final response: {}", res.status);
         let respond = self.respond;
 
@@ -268,7 +277,7 @@ where
 
         let trailers = loop {
             debug!("Reading from body {body:?}");
-            match body.next_chunk().await? {
+            match body.next_chunk().await.bx()? {
                 loona::BodyChunk::Chunk(chunk) => {
                     debug!("Client got chunk of len {}", chunk.len());
 
@@ -280,16 +289,17 @@ where
             }
         };
 
-        respond.finish_body(trailers).await
+        respond.finish_body(trailers).await.bx()
     }
 }
 
 struct SampleCDriver {}
 
 impl h1::ClientDriver for SampleCDriver {
+    type Error = BX;
     type Return = ();
 
-    async fn on_informational_response(&mut self, _res: loona::Response) -> eyre::Result<()> {
+    async fn on_informational_response(&mut self, _res: loona::Response) -> b_x::Result<()> {
         // ignore informational responses
 
         Ok(())
@@ -299,12 +309,12 @@ impl h1::ClientDriver for SampleCDriver {
         self,
         res: loona::Response,
         body: &mut impl Body,
-    ) -> eyre::Result<Self::Return> {
+    ) -> b_x::Result<Self::Return> {
         info!("Client got final response: {}", res.status);
 
         loop {
             debug!("Reading from body {body:?}");
-            match body.next_chunk().await? {
+            match body.next_chunk().await.bx()? {
                 loona::BodyChunk::Chunk(chunk) => {
                     debug!("Client got chunk of len {}", chunk.len());
                 }
@@ -317,7 +327,7 @@ impl h1::ClientDriver for SampleCDriver {
     }
 }
 
-async fn sample_http_request() -> color_eyre::Result<()> {
+async fn sample_http_request() -> b_x::Result<()> {
     info!("Doing sample HTTP request to httpbingo");
 
     let addr = "httpbingo.org:80"
