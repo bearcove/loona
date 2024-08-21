@@ -1288,27 +1288,32 @@ mod tests {
     fn test_roll_iobuf() {
         crate::bufpool::initialize_allocator().unwrap();
 
+        use b_x::{BxForResults, BX};
+
         use crate::{
-            io::{IntoHalves, ReadOwned, WriteOwned},
+            io::IntoHalves,
             net::{TcpListener, TcpStream},
+            ReadOwned, WriteOwned,
         };
 
-        async fn test_roll_iobuf_inner(mut rm: RollMut) -> eyre::Result<()> {
+        async fn test_roll_iobuf_inner(mut rm: RollMut) -> b_x::Result<()> {
             rm.put(b"hello").unwrap();
             let roll = rm.take_all();
 
-            let ln = TcpListener::bind("127.0.0.1:0".parse()?).await?;
-            let local_addr = ln.local_addr()?;
+            let ln = TcpListener::bind("127.0.0.1:0".parse().unwrap())
+                .await
+                .unwrap();
+            let local_addr = ln.local_addr().unwrap();
 
             let send_fut = async move {
-                let stream = TcpStream::connect(local_addr).await?;
+                let stream = TcpStream::connect(local_addr).await.bx()?;
                 let (_stream_r, mut stream_w) = IntoHalves::into_halves(stream);
                 stream_w.write_all_owned(roll).await?;
-                Ok::<_, eyre::Report>(())
+                Ok::<_, BX>(())
             };
 
             let recv_fut = async move {
-                let (stream, addr) = ln.accept().await?;
+                let (stream, addr) = ln.accept().await.bx()?;
                 let (mut stream_r, _stream_w) = IntoHalves::into_halves(stream);
                 println!("Accepted connection from {addr}");
 
@@ -1319,7 +1324,7 @@ mod tests {
 
                 assert_eq!(&buf[..n], b"hello");
 
-                Ok::<_, eyre::Report>(())
+                Ok::<_, BX>(())
             };
 
             tokio::try_join!(send_fut, recv_fut)?;

@@ -6,4 +6,6 @@ pub use server::*;
 
 mod body;
 mod encode;
-mod types;
+pub use encode::H2EncoderError;
+
+pub(crate) mod types;

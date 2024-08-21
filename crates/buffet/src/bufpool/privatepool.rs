@@ -7,6 +7,7 @@ use super::BufMut;
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(thiserror::Error, Debug)]
+#[non_exhaustive]
 pub enum Error {
     #[error("could not mmap buffer")]
     Mmap(#[from] std::io::Error),
@@ -17,6 +18,8 @@ pub enum Error {
     #[error("slice does not fit into this RollMut")]
     DoesNotFit,
 }
+
+b_x::make_bxable!(Error);
 
 thread_local! {
     static POOL: Pool = const { Pool::new() };

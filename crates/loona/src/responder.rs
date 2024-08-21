@@ -1,5 +1,6 @@
+use b_x::BX;
 use buffet::Piece;
-use http::header;
+use http::{header, StatusCode};
 
 use crate::{Body, BodyChunk, Headers, HeadersExt, Response};
 
@@ -17,20 +18,56 @@ impl ResponseState for ExpectResponseBody {}
 pub struct ResponseDone;
 impl ResponseState for ResponseDone {}
 
-pub struct Responder<E, S>
-where
-    E: Encoder,
-    S: ResponseState,
-{
-    encoder: E,
-    state: S,
+#[non_exhaustive]
+#[derive(thiserror::Error, Debug)]
+pub enum ResponderError<EncoderError> {
+    #[error("interim response must have status code 1xx, got {actual}")]
+    InterimResponseMustHaveStatusCode1xx { actual: StatusCode },
+
+    #[error("final response must have status code >= 200, got {actual}")]
+    FinalResponseMustHaveStatusCodeGreaterThanOrEqualTo200 { actual: StatusCode },
+
+    #[error(
+        "body length does not match announced content length: actual {actual}, expected {expected}"
+    )]
+    BodyLengthDoesNotMatchAnnouncedContentLength { actual: u64, expected: u64 },
+
+    #[error("encoder error: {0}")]
+    EncoderError(#[from] EncoderError),
 }
 
-impl<E> Responder<E, ExpectResponseHeaders>
+impl<EncoderError> From<ResponderError<EncoderError>> for BX
 where
-    E: Encoder,
+    EncoderError: std::error::Error + 'static,
 {
-    pub fn new(encoder: E) -> Self {
+    fn from(e: ResponderError<EncoderError>) -> Self {
+        BX::from_err(e)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ResponderOrBodyError<EncoderError, BodyError> {
+    #[error("Responder error: {0}")]
+    Responder(ResponderError<EncoderError>),
+    #[error("Body error: {0}")]
+    Body(#[from] BodyError),
+}
+
+pub struct Responder<OurEncoder, OurResponseState>
+where
+    OurEncoder: Encoder,
+    OurResponseState: ResponseState,
+{
+    encoder: OurEncoder,
+    state: OurResponseState,
+}
+
+impl<OurEncoder> Responder<OurEncoder, ExpectResponseHeaders>
+where
+    OurEncoder: Encoder,
+{
+    pub fn new(encoder: OurEncoder) -> Self {
         Self {
             encoder,
             state: ExpectResponseHeaders,
@@ -39,12 +76,20 @@ where
 
     /// Send an informational status code, cf. <https://httpwg.org/specs/rfc9110.html#status.1xx>
     /// Errors out if the response status is not 1xx
-    pub async fn write_interim_response(&mut self, res: Response) -> eyre::Result<()> {
+    pub async fn write_interim_response(
+        &mut self,
+        res: Response,
+    ) -> Result<(), ResponderError<OurEncoder::Error>> {
         if !res.status.is_informational() {
-            return Err(eyre::eyre!("interim response must have status code 1xx"));
+            return Err(ResponderError::InterimResponseMustHaveStatusCode1xx {
+                actual: res.status,
+            });
         }
 
-        self.encoder.write_response(res).await?;
+        self.encoder
+            .write_response(res)
+            .await
+            .map_err(ResponderError::EncoderError)?;
         Ok(())
     }
 
@@ -52,11 +97,18 @@ where
         mut self,
         res: Response,
         announced_content_length: Option<u64>,
-    ) -> eyre::Result<Responder<E, ExpectResponseBody>> {
+    ) -> Result<Responder<OurEncoder, ExpectResponseBody>, ResponderError<OurEncoder::Error>> {
         if res.status.is_informational() {
-            return Err(eyre::eyre!("final response must have status code >= 200"));
+            return Err(
+                ResponderError::FinalResponseMustHaveStatusCodeGreaterThanOrEqualTo200 {
+                    actual: res.status,
+                },
+            );
         }
-        self.encoder.write_response(res).await?;
+        self.encoder
+            .write_response(res)
+            .await
+            .map_err(ResponderError::EncoderError)?;
         Ok(Responder {
             state: ExpectResponseBody {
                 announced_content_length,
@@ -72,7 +124,7 @@ where
     pub async fn write_final_response(
         self,
         res: Response,
-    ) -> eyre::Result<Responder<E, ExpectResponseBody>> {
+    ) -> ResponderResult<Responder<OurEncoder, ExpectResponseBody>, OurEncoder::Error> {
         let announced_content_length = res.headers.content_length();
         self.write_final_response_internal(res, announced_content_length)
             .await
@@ -80,11 +132,17 @@ where
 
     /// Writes a response with the given body. Sets `content-length` or
     /// `transfer-encoding` as needed.
-    pub async fn write_final_response_with_body(
+    pub async fn write_final_response_with_body<TheirBody>(
         self,
         mut res: Response,
-        body: &mut impl Body,
-    ) -> eyre::Result<Responder<E, ResponseDone>> {
+        body: &mut TheirBody,
+    ) -> Result<
+        Responder<OurEncoder, ResponseDone>,
+        ResponderOrBodyError<OurEncoder::Error, TheirBody::Error>,
+    >
+    where
+        TheirBody: Body,
+    {
         if let Some(clen) = body.content_len() {
             res.headers
                 .entry(header::CONTENT_LENGTH)
@@ -101,15 +159,27 @@ where
                 });
         }
 
-        let mut this = self.write_final_response(res).await?;
+        let mut this = self
+            .write_final_response(res)
+            .await
+            .map_err(ResponderOrBodyError::Responder)?;
 
         loop {
-            match body.next_chunk().await? {
+            match body
+                .next_chunk()
+                .await
+                .map_err(ResponderOrBodyError::Body)?
+            {
                 BodyChunk::Chunk(chunk) => {
-                    this.write_chunk(chunk).await?;
+                    this.write_chunk(chunk)
+                        .await
+                        .map_err(ResponderOrBodyError::Responder)?;
                 }
                 BodyChunk::Done { trailers } => {
-                    return this.finish_body(trailers).await;
+                    return this
+                        .finish_body(trailers)
+                        .await
+                        .map_err(ResponderOrBodyError::Responder);
                 }
             }
         }
@@ -123,9 +193,12 @@ where
     /// Send a response body chunk. Errors out if sending more than the
     /// announced content-length.
     #[inline]
-    pub async fn write_chunk(&mut self, chunk: Piece) -> eyre::Result<()> {
+    pub async fn write_chunk(&mut self, chunk: Piece) -> ResponderResult<(), E::Error> {
         self.state.bytes_written += chunk.len() as u64;
-        self.encoder.write_body_chunk(chunk).await
+        self.encoder
+            .write_body_chunk(chunk)
+            .await
+            .map_err(ResponderError::EncoderError)
     }
 
     /// Finish the body, with optional trailers, cf. <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/TE>
@@ -137,19 +210,27 @@ where
     pub async fn finish_body(
         mut self,
         trailers: Option<Box<Headers>>,
-    ) -> eyre::Result<Responder<E, ResponseDone>> {
+    ) -> ResponderResult<Responder<E, ResponseDone>, E::Error> {
         if let Some(announced_content_length) = self.state.announced_content_length {
             if self.state.bytes_written != announced_content_length {
-                eyre::bail!(
-                    "content-length mismatch: announced {announced_content_length}, wrote {}",
-                    self.state.bytes_written
+                return Err(
+                    ResponderError::BodyLengthDoesNotMatchAnnouncedContentLength {
+                        actual: self.state.bytes_written,
+                        expected: announced_content_length,
+                    },
                 );
             }
         }
-        self.encoder.write_body_end().await?;
+        self.encoder
+            .write_body_end()
+            .await
+            .map_err(ResponderError::EncoderError)?;
 
         if let Some(trailers) = trailers {
-            self.encoder.write_trailers(trailers).await?;
+            self.encoder
+                .write_trailers(trailers)
+                .await
+                .map_err(ResponderError::EncoderError)?;
         }
 
         Ok(Responder {
@@ -168,12 +249,18 @@ where
     }
 }
 
+pub type ResponderResult<T, EncoderError> = Result<T, ResponderError<EncoderError>>;
+
 #[allow(async_fn_in_trait)] // we never require Send
 pub trait Encoder {
-    async fn write_response(&mut self, res: Response) -> eyre::Result<()>;
-    async fn write_body_chunk(&mut self, chunk: Piece) -> eyre::Result<()>;
-    async fn write_body_end(&mut self) -> eyre::Result<()>;
-    async fn write_trailers(&mut self, trailers: Box<Headers>) -> eyre::Result<()>;
+    type Error: std::error::Error + 'static;
+
+    async fn write_response(&mut self, res: Response) -> Result<(), Self::Error>;
+    /// Note: encoders do not have a duty to check for matching content-length:
+    /// the responder takes care of that for HTTP/1.1 and HTTP/2
+    async fn write_body_chunk(&mut self, chunk: Piece) -> Result<(), Self::Error>;
+    async fn write_body_end(&mut self) -> Result<(), Self::Error>;
+    async fn write_trailers(&mut self, trailers: Box<Headers>) -> Result<(), Self::Error>;
 }
 
 #[cfg(test)]
@@ -186,16 +273,18 @@ mod tests {
     struct MockEncoder;
 
     impl Encoder for MockEncoder {
-        async fn write_response(&mut self, _: Response) -> eyre::Result<()> {
+        type Error = BX;
+
+        async fn write_response(&mut self, _: Response) -> Result<(), Self::Error> {
             Ok(())
         }
-        async fn write_body_chunk(&mut self, _: Piece) -> eyre::Result<()> {
+        async fn write_body_chunk(&mut self, _: Piece) -> Result<(), Self::Error> {
             Ok(())
         }
-        async fn write_body_end(&mut self) -> eyre::Result<()> {
+        async fn write_body_end(&mut self) -> Result<(), Self::Error> {
             Ok(())
         }
-        async fn write_trailers(&mut self, _: Box<Headers>) -> eyre::Result<()> {
+        async fn write_trailers(&mut self, _: Box<Headers>) -> Result<(), Self::Error> {
             Ok(())
         }
     }
@@ -219,7 +308,10 @@ mod tests {
             responder.write_chunk(b"12345".into()).await.unwrap();
             let result = responder.finish_body(None).await;
             assert!(result.is_err());
-            assert!(matches!(result, Err(e) if e.to_string().contains("content-length mismatch")));
+            assert!(matches!(
+                result,
+                Err(ResponderError::BodyLengthDoesNotMatchAnnouncedContentLength { .. })
+            ));
 
             // Test writing more bytes than announced
             let encoder = MockEncoder;
@@ -230,7 +322,10 @@ mod tests {
             responder.write_chunk(b"12345678901".into()).await.unwrap();
             let result = responder.finish_body(None).await;
             assert!(result.is_err());
-            assert!(matches!(result, Err(e) if e.to_string().contains("content-length mismatch")));
+            assert!(matches!(
+                result,
+                Err(ResponderError::BodyLengthDoesNotMatchAnnouncedContentLength { .. })
+            ));
         }
     }
 }

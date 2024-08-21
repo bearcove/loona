@@ -2,7 +2,7 @@ use std::fmt;
 
 use tracing::debug;
 
-use crate::{util::read_and_parse, Body, BodyChunk, BodyErrorReason};
+use crate::{util::read_and_parse, Body, BodyChunk, BodyError};
 use buffet::{Piece, PieceList, ReadOwned, RollMut, WriteOwned};
 
 /// An HTTP/1.1 body, either chunked or content-length.
@@ -73,7 +73,9 @@ impl<T: ReadOwned> H1Body<T> {
     }
 }
 
-impl<T: ReadOwned> Body for H1Body<T> {
+impl<OurReadOwned: ReadOwned> Body for H1Body<OurReadOwned> {
+    type Error = BodyError;
+
     fn content_len(&self) -> Option<u64> {
         match &self.state {
             Decoder::Chunked(_) => None,
@@ -81,7 +83,7 @@ impl<T: ReadOwned> Body for H1Body<T> {
         }
     }
 
-    async fn next_chunk(&mut self) -> eyre::Result<BodyChunk> {
+    async fn next_chunk(&mut self) -> Result<BodyChunk, BodyError> {
         if self.buf.is_none() {
             return Ok(BodyChunk::Done { trailers: None });
         }
@@ -107,7 +109,7 @@ impl ContentLengthDecoder {
         &mut self,
         buf_slot: &mut Option<RollMut>,
         transport: &mut impl ReadOwned,
-    ) -> eyre::Result<BodyChunk> {
+    ) -> Result<BodyChunk, BodyError> {
         let remain = self.len - self.read;
         if remain == 0 {
             return Ok(BodyChunk::Done { trailers: None });
@@ -117,19 +119,19 @@ impl ContentLengthDecoder {
 
         let mut buf = buf_slot
             .take()
-            .ok_or_else(|| BodyErrorReason::CalledNextChunkAfterError.as_err())?;
+            .ok_or(BodyError::CalledNextChunkAfterError)?;
 
         if buf.is_empty() {
             buf.reserve()?;
 
             let res;
             (res, buf) = buf.read_into(usize::MAX, transport).await;
-            res.map_err(|e| BodyErrorReason::ErrorWhileReadingChunkData.with_cx(e))?;
+            res.map_err(BodyError::ErrorWhileReadingChunkData)?;
         }
 
         let chunk = buf
             .take_at_most(remain as usize)
-            .ok_or_else(|| BodyErrorReason::ClosedWhileReadingContentLength.as_err())?;
+            .ok_or(BodyError::ClosedWhileReadingContentLength)?;
         self.read += chunk.len() as u64;
         buf_slot.replace(buf);
         Ok(BodyChunk::Chunk(chunk.into()))
@@ -145,11 +147,11 @@ impl ChunkedDecoder {
         &mut self,
         buf_slot: &mut Option<RollMut>,
         transport: &mut impl ReadOwned,
-    ) -> eyre::Result<BodyChunk> {
+    ) -> Result<BodyChunk, BodyError> {
         loop {
             let mut buf = buf_slot
                 .take()
-                .ok_or_else(|| BodyErrorReason::CalledNextChunkAfterError.as_err())?;
+                .ok_or(BodyError::CalledNextChunkAfterError)?;
 
             if let ChunkedDecoder::Done = self {
                 buf_slot.replace(buf);
@@ -159,21 +161,30 @@ impl ChunkedDecoder {
             }
 
             if let ChunkedDecoder::ReadingChunkHeader = self {
-                let (next_buf, chunk_size) =
-                    read_and_parse(super::parse::chunk_size, transport, buf, 16)
-                        .await
-                        .map_err(|e| BodyErrorReason::InvalidChunkSize.with_cx(e))?
-                        .ok_or_else(|| BodyErrorReason::ClosedWhileReadingChunkSize.as_err())?;
+                let (next_buf, chunk_size) = read_and_parse(
+                    "Http1BodyChunk",
+                    super::parse::chunk_size,
+                    transport,
+                    buf,
+                    16,
+                )
+                .await
+                .map_err(|_| BodyError::InvalidChunkSize)?
+                .ok_or(BodyError::ClosedWhileReadingChunkSize)?;
                 buf = next_buf;
 
                 if chunk_size == 0 {
                     // that's the final chunk, look for the final CRLF
-                    let (next_buf, _) = read_and_parse(super::parse::crlf, transport, buf, 2)
-                        .await
-                        .map_err(|e| BodyErrorReason::InvalidChunkTerminator.with_cx(e))?
-                        .ok_or_else(|| {
-                            BodyErrorReason::ClosedWhileReadingChunkTerminator.as_err()
-                        })?;
+                    let (next_buf, _) = read_and_parse(
+                        "Http1BodyChunkFinalTerminator",
+                        super::parse::crlf,
+                        transport,
+                        buf,
+                        2,
+                    )
+                    .await
+                    .map_err(BodyError::InvalidChunkTerminator)?
+                    .ok_or(BodyError::ClosedWhileReadingChunkTerminator)?;
                     buf = next_buf;
                     *self = ChunkedDecoder::Done;
                     buf_slot.replace(buf);
@@ -188,12 +199,16 @@ impl ChunkedDecoder {
             if let ChunkedDecoder::ReadingChunk { remain } = self {
                 if *remain == 0 {
                     // look for CRLF terminator
-                    let (next_buf, _) = read_and_parse(super::parse::crlf, transport, buf, 2)
-                        .await
-                        .map_err(|e| BodyErrorReason::InvalidChunkTerminator.with_cx(e))?
-                        .ok_or_else(|| {
-                            BodyErrorReason::ClosedWhileReadingChunkTerminator.as_err()
-                        })?;
+                    let (next_buf, _) = read_and_parse(
+                        "Http1BodyChunkTerminator",
+                        super::parse::crlf,
+                        transport,
+                        buf,
+                        2,
+                    )
+                    .await
+                    .map_err(BodyError::InvalidChunkTerminator)?
+                    .ok_or(BodyError::ClosedWhileReadingChunkTerminator)?;
                     buf = next_buf;
                     *self = ChunkedDecoder::ReadingChunkHeader;
                     buf_slot.replace(buf);
@@ -205,7 +220,7 @@ impl ChunkedDecoder {
 
                     let res;
                     (res, buf) = buf.read_into(*remain as usize, transport).await;
-                    res.map_err(|e| BodyErrorReason::ErrorWhileReadingChunkData.with_cx(e))?;
+                    res.map_err(BodyError::ErrorWhileReadingChunkData)?;
                 }
 
                 let chunk = buf.take_at_most(*remain as usize);
@@ -216,7 +231,7 @@ impl ChunkedDecoder {
                         return Ok(BodyChunk::Chunk(chunk.into()));
                     }
                     None => {
-                        return Err(BodyErrorReason::ClosedWhileReadingChunkData.as_err().into());
+                        return Err(BodyError::ClosedWhileReadingChunkData);
                     }
                 }
             } else {
@@ -236,20 +251,38 @@ pub enum BodyWriteMode {
     Chunked,
 
     // we set a length and are writing exactly the number of bytes we promised
-    ContentLength,
+    ContentLength(u64),
 
     // we didn't set a content-length and we're not doing chunked transfer
     // encoding, so we're not sending a body at all.
     Empty,
 }
 
-pub(crate) async fn write_h1_body(
+#[derive(thiserror::Error, Debug)]
+pub enum WriteBodyError<OurBodyError> {
+    // Error from the `Body` impl itself
+    #[error("inner body error: {0}")]
+    InnerBodyError(OurBodyError),
+
+    // BodyError
+    #[error("body error: {0}")]
+    BodyError(#[from] BodyError),
+}
+
+pub(crate) async fn write_h1_body<B>(
     transport: &mut impl WriteOwned,
-    body: &mut impl Body,
+    body: &mut B,
     mode: BodyWriteMode,
-) -> eyre::Result<()> {
+) -> Result<(), WriteBodyError<B::Error>>
+where
+    B: Body,
+{
     loop {
-        match body.next_chunk().await? {
+        match body
+            .next_chunk()
+            .await
+            .map_err(WriteBodyError::InnerBodyError)?
+        {
             BodyChunk::Chunk(chunk) => write_h1_body_chunk(transport, chunk, mode).await?,
             BodyChunk::Done { .. } => {
                 // TODO: check that we've sent what we announced in terms of
@@ -267,7 +300,7 @@ pub(crate) async fn write_h1_body_chunk(
     transport: &mut impl WriteOwned,
     chunk: Piece,
     mode: BodyWriteMode,
-) -> eyre::Result<()> {
+) -> Result<(), BodyError> {
     match mode {
         BodyWriteMode::Chunked => {
             transport
@@ -277,15 +310,17 @@ pub(crate) async fn write_h1_body_chunk(
                         .followed_by(chunk)
                         .followed_by("\r\n"),
                 )
-                .await?;
+                .await
+                .map_err(BodyError::WriteError)?;
         }
-        BodyWriteMode::ContentLength => {
-            transport.write_all_owned(chunk).await?;
+        BodyWriteMode::ContentLength(_) => {
+            transport
+                .write_all_owned(chunk)
+                .await
+                .map_err(BodyError::WriteError)?;
         }
         BodyWriteMode::Empty => {
-            return Err(BodyErrorReason::CalledWriteBodyChunkWhenNoBodyWasExpected
-                .as_err()
-                .into());
+            return Err(BodyError::CalledWriteBodyChunkWhenNoBodyWasExpected);
         }
     }
     Ok(())
@@ -294,13 +329,16 @@ pub(crate) async fn write_h1_body_chunk(
 pub(crate) async fn write_h1_body_end(
     transport: &mut impl WriteOwned,
     mode: BodyWriteMode,
-) -> eyre::Result<()> {
+) -> Result<(), BodyError> {
     debug!(?mode, "writing h1 body end");
     match mode {
         BodyWriteMode::Chunked => {
-            transport.write_all_owned("0\r\n\r\n").await?;
+            transport
+                .write_all_owned("0\r\n\r\n")
+                .await
+                .map_err(BodyError::WriteError)?;
         }
-        BodyWriteMode::ContentLength => {
+        BodyWriteMode::ContentLength(..) => {
             // nothing to do
         }
         BodyWriteMode::Empty => {

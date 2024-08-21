@@ -200,6 +200,7 @@ impl FieldRepresentation {
 /// Represents all errors that can be encountered while decoding an
 /// integer.
 #[derive(PartialEq, Copy, Clone, Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum IntegerDecodingError {
     /// 5.1. specifies that "excessively large integer decodings" MUST be
     /// considered an error (whether the size is the number of octets or
@@ -221,6 +222,7 @@ pub enum IntegerDecodingError {
 }
 
 #[derive(PartialEq, Copy, Clone, Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum StringDecodingError {
     #[error("Not enough octets in the buffer")]
     NotEnoughOctets,
@@ -231,6 +233,7 @@ pub enum StringDecodingError {
 /// Represents all errors that can be encountered while performing the decoding
 /// of an HPACK header set.
 #[derive(PartialEq, Copy, Clone, Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum DecoderError {
     #[error("Header index out of bounds")]
     HeaderIndexOutOfBounds,

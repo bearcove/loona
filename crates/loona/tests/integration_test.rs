@@ -1,5 +1,6 @@
 mod helpers;
 
+use b_x::{BxForResults, BX};
 use bytes::BytesMut;
 use http::{header, StatusCode};
 use httparse::{Status, EMPTY_HEADER};
@@ -11,9 +12,10 @@ use loona::{
 };
 use pretty_assertions::assert_eq;
 use pretty_hex::PrettyHex;
-use std::{future::Future, net::SocketAddr, process::Command, rc::Rc, time::Duration};
+use std::{future::Future, net::SocketAddr, rc::Rc, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::process::Command;
 use tracing::debug;
 
 mod proxy;
@@ -46,13 +48,18 @@ fn serve_api() {
 
         struct TestDriver;
 
-        impl ServerDriver for TestDriver {
-            async fn handle<E: Encoder>(
+        impl<OurEncoder> ServerDriver<OurEncoder> for TestDriver
+        where
+            OurEncoder: Encoder,
+        {
+            type Error = BX;
+
+            async fn handle(
                 &self,
                 _req: loona::Request,
                 _req_body: &mut impl Body,
-                mut res: Responder<E, ExpectResponseHeaders>,
-            ) -> eyre::Result<Responder<E, ResponseDone>> {
+                mut res: Responder<OurEncoder, ExpectResponseHeaders>,
+            ) -> b_x::Result<Responder<OurEncoder, ResponseDone>> {
                 let mut buf = RollMut::alloc()?;
 
                 buf.put(b"Continue")?;
@@ -107,7 +114,7 @@ fn serve_api() {
 
             let mut headers = [EMPTY_HEADER; 16];
             let mut res = httparse::Response::new(&mut headers[..]);
-            let body_offset = match res.parse(&res_buf[..])? {
+            let body_offset = match res.parse(&res_buf[..]).bx()? {
                 Status::Complete(off) => off,
                 Status::Partial => {
                     debug!("partial response, continuing");
@@ -132,7 +139,10 @@ fn serve_api() {
 
         drop(client_write);
 
-        tokio::time::timeout(Duration::from_secs(5), serve_fut).await???;
+        tokio::time::timeout(Duration::from_secs(5), serve_fut)
+            .await
+            .bx()?
+            .bx()??;
 
         Ok(())
     })
@@ -154,8 +164,9 @@ fn request_api() {
 
         impl h1::ClientDriver for TestDriver {
             type Return = ();
+            type Error = BX;
 
-            async fn on_informational_response(&mut self, _res: Response) -> eyre::Result<()> {
+            async fn on_informational_response(&mut self, _res: Response) -> b_x::Result<()> {
                 todo!("got informational response!")
             }
 
@@ -163,14 +174,14 @@ fn request_api() {
                 self,
                 res: Response,
                 body: &mut impl Body,
-            ) -> eyre::Result<Self::Return> {
+            ) -> b_x::Result<Self::Return> {
                 debug!(
                     "got final response! content length = {:?}, is chunked = {}",
                     res.headers.content_length(),
                     res.headers.is_chunked_transfer_encoding(),
                 );
 
-                while let BodyChunk::Chunk(chunk) = body.next_chunk().await? {
+                while let BodyChunk::Chunk(chunk) = body.next_chunk().await.bx()? {
                     debug!("got a chunk: {:?}", chunk.hex_dump());
                 }
 
@@ -197,7 +208,7 @@ fn request_api() {
 
             let mut headers = [EMPTY_HEADER; 16];
             let mut req = httparse::Request::new(&mut headers[..]);
-            let body_offset = match req.parse(&req_buf[..])? {
+            let body_offset = match req.parse(&req_buf[..]).bx()? {
                 Status::Complete(off) => off,
                 Status::Partial => {
                     debug!("partial request, continuing");
@@ -221,7 +232,10 @@ fn request_api() {
         server_write.write_all_owned(body).await?;
         drop(server_write);
 
-        tokio::time::timeout(Duration::from_secs(5), request_fut).await???;
+        tokio::time::timeout(Duration::from_secs(5), request_fut)
+            .await
+            .bx()?
+            .bx()??;
 
         Ok(())
     })
@@ -230,7 +244,7 @@ fn request_api() {
 #[test]
 fn proxy_statuses() {
     #[allow(drop_bounds)]
-    async fn client(ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
+    async fn client(ln_addr: SocketAddr, _guard: impl Drop) -> b_x::Result<()> {
         let mut socket = TcpStream::connect(ln_addr).await?;
         socket.set_nodelay(true)?;
 
@@ -255,7 +269,7 @@ fn proxy_statuses() {
 
                 let mut headers = [EMPTY_HEADER; 16];
                 let mut res = httparse::Response::new(&mut headers[..]);
-                let _body_offset = match res.parse(&buf[..])? {
+                let _body_offset = match res.parse(&buf[..]).bx()? {
                     Status::Complete(off) => off,
                     Status::Partial => continue 'read_response,
                 };
@@ -286,7 +300,7 @@ fn proxy_statuses() {
 #[test]
 fn proxy_echo_body_content_len() {
     #[allow(drop_bounds)]
-    async fn client(ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
+    async fn client(ln_addr: SocketAddr, _guard: impl Drop) -> b_x::Result<()> {
         let socket = TcpStream::connect(ln_addr).await?;
         socket.set_nodelay(true)?;
 
@@ -310,7 +324,7 @@ fn proxy_echo_body_content_len() {
             write.write_all_owned(body.as_bytes()).await?;
             write.flush().await?;
 
-            Ok::<(), eyre::Report>(())
+            Ok::<(), BX>(())
         };
         loona::buffet::spawn(async move {
             if let Err(e) = send_fut.await {
@@ -329,7 +343,7 @@ fn proxy_echo_body_content_len() {
 
             let mut headers = [EMPTY_HEADER; 16];
             let mut res = httparse::Response::new(&mut headers[..]);
-            let body_offset = match res.parse(&buf[..])? {
+            let body_offset = match res.parse(&buf[..]).bx()? {
                 Status::Complete(off) => off,
                 Status::Partial => continue 'read_response,
             };
@@ -391,7 +405,7 @@ fn proxy_echo_body_content_len() {
 #[test]
 fn proxy_echo_body_chunked() {
     #[allow(drop_bounds)]
-    async fn client(ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
+    async fn client(ln_addr: SocketAddr, _guard: impl Drop) -> b_x::Result<()> {
         let socket = TcpStream::connect(ln_addr).await?;
         socket.set_nodelay(true)?;
 
@@ -419,7 +433,7 @@ fn proxy_echo_body_chunked() {
             write.write_all_owned(&b"0\r\n\r\n"[..]).await?;
             write.flush().await?;
 
-            Ok::<(), eyre::Report>(())
+            Ok::<(), BX>(())
         };
         loona::buffet::spawn(async move {
             if let Err(e) = send_fut.await {
@@ -438,7 +452,7 @@ fn proxy_echo_body_chunked() {
 
             let mut headers = [EMPTY_HEADER; 16];
             let mut res = httparse::Response::new(&mut headers[..]);
-            let body_offset = match res.parse(&buf[..])? {
+            let body_offset = match res.parse(&buf[..]).bx()? {
                 Status::Complete(off) => off,
                 Status::Partial => continue 'read_response,
             };
@@ -555,7 +569,7 @@ fn curl_echo_body_chunked() {
 
 fn curl_echo_body(typ: BodyType) {
     #[allow(drop_bounds)]
-    fn client(typ: BodyType, ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
+    async fn client(typ: BodyType, ln_addr: SocketAddr, _guard: impl Drop) -> b_x::Result<()> {
         let req_body = "Please return to sender";
         let mut cmd = Command::new("curl");
 
@@ -573,7 +587,8 @@ fn curl_echo_body(typ: BodyType) {
             cmd.arg("--header").arg("transfer-encoding: chunked");
         }
 
-        let res_body = cmd.output_assert_success().stdout;
+        let output = cmd.output_assert_success().await;
+        let res_body = output.stdout;
 
         debug!("Got body: {:?}", res_body.hex_dump());
         assert_eq!(res_body.len(), req_body.len());
@@ -585,12 +600,7 @@ fn curl_echo_body(typ: BodyType) {
     helpers::run(async move {
         let (upstream_addr, _upstream_guard) = testbed::start().await?;
         let (ln_addr, guard, proxy_fut) = proxy::start(upstream_addr).await?;
-        let client_fut = async move {
-            tokio::task::spawn_blocking(move || client(typ, ln_addr, guard))
-                .await
-                .unwrap()
-        };
-
+        let client_fut = client(typ, ln_addr, guard);
         tokio::try_join!(proxy_fut, client_fut)?;
         debug!("everything has been joined");
 
@@ -610,9 +620,9 @@ fn curl_echo_body_noproxy_chunked() {
 
 fn curl_echo_body_noproxy(typ: BodyType) {
     #[allow(drop_bounds)]
-    fn client(typ: BodyType, ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
+    async fn client(typ: BodyType, ln_addr: SocketAddr, _guard: impl Drop) -> b_x::Result<()> {
         let req_body = "Please return to sender";
-        let mut cmd = Command::new("curl");
+        let mut cmd = tokio::process::Command::new("curl");
 
         cmd.arg("--silent");
         cmd.arg("--fail-with-body");
@@ -628,7 +638,8 @@ fn curl_echo_body_noproxy(typ: BodyType) {
             cmd.arg("--header").arg("transfer-encoding: chunked");
         }
 
-        let res_body = cmd.output_assert_success().stdout;
+        let output = cmd.output_assert_success().await;
+        let res_body = output.stdout;
 
         debug!("Got body: {:?}", res_body.hex_dump());
         assert_eq!(res_body.len(), req_body.len());
@@ -637,11 +648,8 @@ fn curl_echo_body_noproxy(typ: BodyType) {
         Ok(())
     }
 
-    async fn start_server() -> eyre::Result<(
-        SocketAddr,
-        impl Drop,
-        impl Future<Output = eyre::Result<()>>,
-    )> {
+    async fn start_server(
+    ) -> b_x::Result<(SocketAddr, impl Drop, impl Future<Output = b_x::Result<()>>)> {
         let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
 
         let ln = loona::buffet::net::TcpListener::bind("127.0.0.1:0".parse()?).await?;
@@ -649,13 +657,18 @@ fn curl_echo_body_noproxy(typ: BodyType) {
 
         struct TestDriver;
 
-        impl ServerDriver for TestDriver {
-            async fn handle<E: Encoder>(
+        impl<OurEncoder> ServerDriver<OurEncoder> for TestDriver
+        where
+            OurEncoder: Encoder,
+        {
+            type Error = BX;
+
+            async fn handle(
                 &self,
                 req: Request,
                 req_body: &mut impl Body,
-                mut respond: Responder<E, ExpectResponseHeaders>,
-            ) -> eyre::Result<Responder<E, ResponseDone>> {
+                mut respond: Responder<OurEncoder, ExpectResponseHeaders>,
+            ) -> b_x::Result<Responder<OurEncoder, ResponseDone>> {
                 if req.headers.expects_100_continue() {
                     debug!("Sending 100-continue");
                     let res = Response {
@@ -677,7 +690,8 @@ fn curl_echo_body_noproxy(typ: BodyType) {
                 };
                 let respond = respond
                     .write_final_response_with_body(res, req_body)
-                    .await?;
+                    .await
+                    .bx()?;
 
                 debug!("Wrote final response");
                 Ok(respond)
@@ -738,11 +752,7 @@ fn curl_echo_body_noproxy(typ: BodyType) {
 
     helpers::run(async move {
         let (ln_addr, guard, server_fut) = start_server().await?;
-        let client_fut = async move {
-            tokio::task::spawn_blocking(move || client(typ, ln_addr, guard))
-                .await
-                .unwrap()
-        };
+        let client_fut = client(typ, ln_addr, guard);
 
         tokio::try_join!(server_fut, client_fut)?;
         debug!("everything has been joined");
@@ -754,9 +764,9 @@ fn curl_echo_body_noproxy(typ: BodyType) {
 #[test]
 fn h2_basic_post() {
     #[allow(drop_bounds)]
-    fn client(ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
+    async fn client(ln_addr: SocketAddr, _guard: impl Drop) -> b_x::Result<()> {
         let req_body = "Please return to sender";
-        let mut cmd = Command::new("curl");
+        let mut cmd = tokio::process::Command::new("curl");
 
         cmd.arg("--silent");
         cmd.arg("--fail-with-body");
@@ -766,7 +776,8 @@ fn h2_basic_post() {
         cmd.arg("--header")
             .arg("content-type: application/octet-stream");
 
-        let res_body = cmd.output_assert_success().stdout;
+        let output = cmd.output_assert_success().await;
+        let res_body = output.stdout;
 
         debug!("Got body: {:?}", res_body.hex_dump());
         assert_eq!(res_body.len(), req_body.len());
@@ -775,11 +786,8 @@ fn h2_basic_post() {
         Ok(())
     }
 
-    async fn start_server() -> eyre::Result<(
-        SocketAddr,
-        impl Drop,
-        impl Future<Output = eyre::Result<()>>,
-    )> {
+    async fn start_server(
+    ) -> b_x::Result<(SocketAddr, impl Drop, impl Future<Output = b_x::Result<()>>)> {
         let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
 
         let listen_port: u16 = std::env::var("LISTEN_PORT")
@@ -792,13 +800,18 @@ fn h2_basic_post() {
 
         struct TestDriver;
 
-        impl ServerDriver for TestDriver {
-            async fn handle<E: Encoder>(
+        impl<OurEncoder> ServerDriver<OurEncoder> for TestDriver
+        where
+            OurEncoder: Encoder,
+        {
+            type Error = BX;
+
+            async fn handle(
                 &self,
                 req: Request,
                 req_body: &mut impl Body,
-                respond: Responder<E, ExpectResponseHeaders>,
-            ) -> eyre::Result<Responder<E, ResponseDone>> {
+                respond: Responder<OurEncoder, ExpectResponseHeaders>,
+            ) -> b_x::Result<Responder<OurEncoder, ResponseDone>> {
                 debug!("Got request {req:#?}");
 
                 debug!("Writing final response");
@@ -813,7 +826,8 @@ fn h2_basic_post() {
                 };
                 let respond = respond
                     .write_final_response_with_body(res, req_body)
-                    .await?;
+                    .await
+                    .bx()?;
 
                 debug!("Wrote final response");
                 Ok(respond)
@@ -876,11 +890,7 @@ fn h2_basic_post() {
 
     helpers::run(async move {
         let (ln_addr, guard, server_fut) = start_server().await?;
-        let client_fut = async move {
-            tokio::task::spawn_blocking(move || client(ln_addr, guard))
-                .await
-                .unwrap()
-        };
+        let client_fut = client(ln_addr, guard);
 
         tokio::try_join!(server_fut, client_fut)?;
         debug!("everything has been joined");
@@ -901,6 +911,8 @@ impl Default for SampleBody {
 }
 
 impl Body for SampleBody {
+    type Error = BX;
+
     fn content_len(&self) -> Option<u64> {
         None
     }
@@ -909,7 +921,7 @@ impl Body for SampleBody {
         self.chunks_remain == 0
     }
 
-    async fn next_chunk(&mut self) -> eyre::Result<BodyChunk> {
+    async fn next_chunk(&mut self) -> b_x::Result<BodyChunk> {
         let c = match self.chunks_remain {
             0 => BodyChunk::Done { trailers: None },
             _ => BodyChunk::Chunk(
@@ -928,15 +940,17 @@ impl Body for SampleBody {
 #[test]
 fn h2_basic_get() {
     #[allow(drop_bounds)]
-    fn client(ln_addr: SocketAddr, _guard: impl Drop) -> eyre::Result<()> {
-        let mut cmd = Command::new("curl");
+    async fn client(ln_addr: SocketAddr, _guard: impl Drop) -> b_x::Result<()> {
+        let mut cmd = tokio::process::Command::new("curl");
 
         cmd.arg("--silent");
         cmd.arg("--fail-with-body");
         cmd.arg("--http2-prior-knowledge");
         cmd.arg(format!("http://{ln_addr}/stream-big-body"));
 
-        let res_body = cmd.output_assert_success().stdout;
+        let output = cmd.output_assert_success().await;
+        let res_body = output.stdout;
+
         let ref_body = "this is a big chunk".repeat(256).repeat(128);
         assert_eq!(res_body.len(), ref_body.len());
         assert_eq!(String::from_utf8(res_body).unwrap(), ref_body);
@@ -944,11 +958,8 @@ fn h2_basic_get() {
         Ok(())
     }
 
-    async fn start_server() -> eyre::Result<(
-        SocketAddr,
-        impl Drop,
-        impl Future<Output = eyre::Result<()>>,
-    )> {
+    async fn start_server(
+    ) -> b_x::Result<(SocketAddr, impl Drop, impl Future<Output = b_x::Result<()>>)> {
         let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
 
         let listen_port: u16 = std::env::var("LISTEN_PORT")
@@ -961,13 +972,18 @@ fn h2_basic_get() {
 
         struct TestDriver;
 
-        impl ServerDriver for TestDriver {
-            async fn handle<E: Encoder>(
+        impl<OurEncoder> ServerDriver<OurEncoder> for TestDriver
+        where
+            OurEncoder: Encoder,
+        {
+            type Error = BX;
+
+            async fn handle(
                 &self,
                 req: Request,
                 _req_body: &mut impl Body,
-                respond: Responder<E, ExpectResponseHeaders>,
-            ) -> eyre::Result<Responder<E, ResponseDone>> {
+                respond: Responder<OurEncoder, ExpectResponseHeaders>,
+            ) -> b_x::Result<Responder<OurEncoder, ResponseDone>> {
                 debug!("Got request {req:#?}");
 
                 debug!("Writing final response");
@@ -982,7 +998,8 @@ fn h2_basic_get() {
                 };
                 let respond = respond
                     .write_final_response_with_body(res, &mut SampleBody::default())
-                    .await?;
+                    .await
+                    .bx()?;
 
                 debug!("Wrote final response");
                 Ok(respond)
@@ -1045,11 +1062,7 @@ fn h2_basic_get() {
 
     helpers::run(async move {
         let (ln_addr, guard, server_fut) = start_server().await?;
-        let client_fut = async move {
-            tokio::task::spawn_blocking(move || client(ln_addr, guard))
-                .await
-                .unwrap()
-        };
+        let client_fut = client(ln_addr, guard);
 
         tokio::try_join!(server_fut, client_fut)?;
         debug!("everything has been joined");
@@ -1059,12 +1072,12 @@ fn h2_basic_get() {
 }
 
 trait CommandExt {
-    fn output_assert_success(&mut self) -> std::process::Output;
+    async fn output_assert_success(&mut self) -> std::process::Output;
 }
 
 impl CommandExt for Command {
-    fn output_assert_success(&mut self) -> std::process::Output {
-        let output = self.output().unwrap();
+    async fn output_assert_success(&mut self) -> std::process::Output {
+        let output = self.output().await.unwrap();
         if !output.status.success() {
             // print stderr
             eprintln!("command failed with status: {:?}", output.status);

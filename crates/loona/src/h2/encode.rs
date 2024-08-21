@@ -7,15 +7,16 @@ use super::types::{H2Event, H2EventPayload};
 use crate::{Encoder, Response};
 use loona_h2::StreamId;
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum EncoderState {
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[non_exhaustive]
+pub enum EncoderState {
     ExpectResponseHeaders,
     ExpectResponseBody,
     ResponseDone,
 }
 
 /// Encodes HTTP/2 responses and bodies
-pub(crate) struct H2Encoder {
+pub struct H2Encoder {
     stream_id: StreamId,
     tx: mpsc::Sender<H2Event>,
     state: EncoderState,
@@ -37,25 +38,51 @@ impl H2Encoder {
         }
     }
 
-    async fn send(&self, payload: H2EventPayload) -> eyre::Result<()> {
+    async fn send(&self, payload: H2EventPayload) -> Result<(), H2EncoderError> {
         self.tx
             .send(self.event(payload))
             .await
-            .map_err(|_| eyre::eyre!("could not send event to h2 connection handler"))?;
+            .map_err(|_| H2EncoderError::StreamReset)?;
         Ok(())
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum H2EncoderError {
+    /// The encoder is in the wrong state
+    #[error("Wrong state: expected {expected:?}, actual {actual:?}")]
+    WrongState {
+        expected: EncoderState,
+        actual: EncoderState,
+    },
+
+    #[error("Stream reset")]
+    StreamReset,
+}
+
+impl AsRef<dyn std::error::Error> for H2EncoderError {
+    fn as_ref(&self) -> &(dyn std::error::Error + 'static) {
+        self
+    }
+}
+
 impl Encoder for H2Encoder {
-    async fn write_response(&mut self, res: Response) -> eyre::Result<()> {
-        // TODO: don't panic here
+    type Error = H2EncoderError;
+
+    async fn write_response(&mut self, res: Response) -> Result<(), Self::Error> {
+        // FIXME: HTTP/2 _does_ support informational responses, cf. https://github.com/bearcove/loona/issues/190
         assert!(
             !res.status.is_informational(),
             "http/2 does not support informational responses"
         );
 
-        // TODO: don't panic here
-        assert_eq!(self.state, EncoderState::ExpectResponseHeaders);
+        if self.state != EncoderState::ExpectResponseHeaders {
+            return Err(H2EncoderError::WrongState {
+                expected: EncoderState::ExpectResponseHeaders,
+                actual: self.state,
+            });
+        }
 
         self.send(H2EventPayload::Headers(res)).await?;
         self.state = EncoderState::ExpectResponseBody;
@@ -64,16 +91,26 @@ impl Encoder for H2Encoder {
     }
 
     // TODO: BodyWriteMode is not relevant for h2
-    async fn write_body_chunk(&mut self, chunk: Piece) -> eyre::Result<()> {
-        assert!(matches!(self.state, EncoderState::ExpectResponseBody));
+    async fn write_body_chunk(&mut self, chunk: Piece) -> Result<(), Self::Error> {
+        if self.state != EncoderState::ExpectResponseBody {
+            return Err(H2EncoderError::WrongState {
+                expected: EncoderState::ExpectResponseBody,
+                actual: self.state,
+            });
+        }
 
         self.send(H2EventPayload::BodyChunk(chunk)).await?;
         Ok(())
     }
 
     // TODO: BodyWriteMode is not relevant for h2
-    async fn write_body_end(&mut self) -> eyre::Result<()> {
-        assert!(matches!(self.state, EncoderState::ExpectResponseBody));
+    async fn write_body_end(&mut self) -> Result<(), Self::Error> {
+        if self.state != EncoderState::ExpectResponseBody {
+            return Err(H2EncoderError::WrongState {
+                expected: EncoderState::ExpectResponseBody,
+                actual: self.state,
+            });
+        }
 
         self.send(H2EventPayload::BodyEnd).await?;
         self.state = EncoderState::ResponseDone;
@@ -82,8 +119,13 @@ impl Encoder for H2Encoder {
     }
 
     // TODO: handle trailers
-    async fn write_trailers(&mut self, _trailers: Box<crate::Headers>) -> eyre::Result<()> {
-        assert!(matches!(self.state, EncoderState::ResponseDone));
+    async fn write_trailers(&mut self, _trailers: Box<crate::Headers>) -> Result<(), Self::Error> {
+        if self.state != EncoderState::ResponseDone {
+            return Err(H2EncoderError::WrongState {
+                expected: EncoderState::ResponseDone,
+                actual: self.state,
+            });
+        }
 
         todo!("write trailers")
     }

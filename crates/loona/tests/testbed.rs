@@ -1,5 +1,6 @@
 use std::{any::Any, net::SocketAddr, path::PathBuf, process::Stdio};
 
+use b_x::BxForResults;
 #[cfg(target_os = "linux")]
 use libc::{prctl, PR_SET_PDEATHSIG, SIGKILL};
 
@@ -15,7 +16,7 @@ const EXE_FILE_EXT: &str = ".exe";
 #[cfg(not(target_os = "windows"))]
 const EXE_FILE_EXT: &str = "";
 
-pub async fn start() -> eyre::Result<(SocketAddr, impl Any)> {
+pub async fn start() -> b_x::Result<(SocketAddr, impl Any)> {
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<SocketAddr>();
 
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -58,6 +59,6 @@ pub async fn start() -> eyre::Result<(SocketAddr, impl Any)> {
         }
     });
 
-    let upstream_addr = addr_rx.await?;
+    let upstream_addr = addr_rx.await.bx()?;
     Ok((upstream_addr, child))
 }

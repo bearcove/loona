@@ -1,18 +1,41 @@
-use eyre::Context;
 use nom::IResult;
 use pretty_hex::PrettyHex;
 use tracing::{debug, trace};
 
 use buffet::{ReadOwned, Roll, RollMut};
 
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum ReadAndParseError {
+    /// Allocation error
+    #[error("Allocation error: {0}")]
+    Alloc(#[from] buffet::bufpool::Error),
+
+    /// Read error
+    #[error("Read error: {0}")]
+    ReadError(#[from] std::io::Error),
+
+    /// Buffer limit reached while parsing
+    #[error("Buffer limit reached while parsing (limit: {limit})")]
+    BufferLimitReachedWhileParsing { limit: usize },
+
+    /// Parsing error
+    // TODO: should we pass any amount of detail here?
+    #[error("Parsing error in parser: {parser}")]
+    ParsingError { parser: &'static str },
+}
+
 /// Returns `None` on EOF, error if partially parsed message.
 pub(crate) async fn read_and_parse<Parser, Output>(
+    parser_name: &'static str,
     parser: Parser,
     stream: &mut impl ReadOwned,
     mut buf: RollMut,
     max_len: usize,
     // TODO: proper error handling, no eyre::Result
-) -> eyre::Result<Option<(RollMut, Output)>>
+) -> Result<Option<(RollMut, Output)>, ReadAndParseError>
 where
     Parser: Fn(Roll) -> IResult<Roll, Output>,
 {
@@ -37,7 +60,9 @@ where
                     let res;
                     let read_limit = max_len - buf.len();
                     if buf.len() >= max_len {
-                        return Err(SemanticError::BufferLimitReachedWhileParsing.into());
+                        return Err(ReadAndParseError::BufferLimitReachedWhileParsing {
+                            limit: max_len,
+                        });
                     }
 
                     if buf.cap() == 0 {
@@ -51,15 +76,12 @@ where
                     );
                     (res, buf) = buf.read_into(read_limit, stream).await;
 
-                    let n = res.wrap_err_with(|| {
-                        format!(
-                            "read_into for read_and_parse::<{}>",
-                            std::any::type_name::<Output>()
-                        )
-                    })?;
+                    let n = res.map_err(ReadAndParseError::ReadError)?;
                     if n == 0 {
                         if !buf.is_empty() {
-                            return Err(eyre::eyre!("unexpected EOF"));
+                            return Err(ReadAndParseError::ReadError(
+                                std::io::ErrorKind::UnexpectedEof.into(),
+                            ));
                         } else {
                             return Ok(None);
                         }
@@ -71,25 +93,11 @@ where
                         debug!(?err, "parsing error");
                         debug!(input = %e.input.to_string_lossy(), "input was");
                     }
-                    return Err(eyre::eyre!("parsing error: {err}"));
+                    return Err(ReadAndParseError::ParsingError {
+                        parser: parser_name,
+                    });
                 }
             }
         };
-    }
-}
-
-#[derive(thiserror::Error, Debug)]
-pub(crate) enum SemanticError {
-    #[error("buffering limit reached while parsing")]
-    BufferLimitReachedWhileParsing,
-}
-
-impl SemanticError {
-    pub(crate) fn as_http_response(&self) -> &'static [u8] {
-        match self {
-            Self::BufferLimitReachedWhileParsing => {
-                b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n"
-            }
-        }
     }
 }

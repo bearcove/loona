@@ -8,9 +8,9 @@ use http::StatusCode;
 use loona_hpack::decoder::DecoderError;
 use tokio::sync::Notify;
 
-use crate::Response;
+use crate::{util::ReadAndParseError, ResponderError, Response};
 
-use super::body::StreamIncoming;
+use super::{body::StreamIncoming, encode::H2EncoderError};
 use loona_h2::{FrameType, KnownErrorCode, Settings, SettingsError, StreamId};
 
 pub(crate) struct ConnState {
@@ -311,7 +311,8 @@ impl fmt::Debug for H2RequestError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum H2ConnectionError {
+#[non_exhaustive]
+pub enum H2ConnectionError {
     #[error("frame too large: {frame_type:?} frame of size {frame_size} exceeds max frame size of {max_frame_size}")]
     FrameTooLarge {
         frame_type: FrameType,
@@ -374,14 +375,14 @@ pub(crate) enum H2ConnectionError {
     #[error("stream-specific frame {frame_type:?} sent to stream ID 0 (connection-wide)")]
     StreamSpecificFrameToConnection { frame_type: FrameType },
 
-    #[error("other error: {0:?}")]
-    Internal(#[from] eyre::Report),
-
     #[error("error reading/parsing H2 frame: {0:?}")]
-    ReadError(eyre::Report),
+    ReadAndParse(ReadAndParseError),
 
     #[error("error writing H2 frame: {0:?}")]
     WriteError(std::io::Error),
+
+    #[error("H2 responder error: {0:?}")]
+    ResponderError(#[from] ResponderError<H2EncoderError>),
 
     #[error("received rst frame for unknown stream")]
     RstStreamForUnknownStream { stream_id: StreamId },
@@ -445,8 +446,6 @@ impl H2ConnectionError {
             H2ConnectionError::HpackDecodingError(_) => KnownErrorCode::CompressionError,
             // stream closed error
             H2ConnectionError::StreamClosed { .. } => KnownErrorCode::StreamClosed,
-            // internal errors
-            H2ConnectionError::Internal(_) => KnownErrorCode::InternalError,
             // protocol errors
             H2ConnectionError::PaddedFrameTooShort { .. } => KnownErrorCode::ProtocolError,
             H2ConnectionError::StreamSpecificFrameToConnection { .. } => {
@@ -458,6 +457,7 @@ impl H2ConnectionError {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub(crate) enum H2StreamError {
     #[error("received {data_length} bytes in data frames but content-length announced {content_length} bytes")]
     DataLengthDoesNotMatchContentLength {

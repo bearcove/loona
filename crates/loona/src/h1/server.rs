@@ -1,12 +1,12 @@
 use std::rc::Rc;
 
-use eyre::Context;
 use tracing::debug;
 
 use crate::{
+    error::ServeError,
     h1::body::{H1Body, H1BodyKind},
-    util::{read_and_parse, SemanticError},
-    HeadersExt, Responder, ServerDriver,
+    util::{read_and_parse, ReadAndParseError},
+    HeadersExt, Responder, ServeOutcome, ServerDriver,
 };
 use buffet::{ReadOwned, RollMut, WriteOwned};
 
@@ -33,24 +33,21 @@ impl Default for ServerConf {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ServeOutcome {
-    ClientRequestedConnectionClose,
-    ServerRequestedConnectionClose,
-    ClientClosedConnectionBetweenRequests,
-    // TODO: return buffer there so we can see what they did write?
-    ClientDidntSpeakHttp11,
-}
-
-pub async fn serve(
-    (mut transport_r, mut transport_w): (impl ReadOwned, impl WriteOwned),
+pub async fn serve<OurDriver, OurReadOwned, OurWriteOwned>(
+    (mut transport_r, mut transport_w): (OurReadOwned, OurWriteOwned),
     conf: Rc<ServerConf>,
     mut client_buf: RollMut,
-    driver: impl ServerDriver,
-) -> eyre::Result<ServeOutcome> {
+    driver: OurDriver,
+) -> Result<ServeOutcome, ServeError<OurDriver::Error>>
+where
+    OurDriver: ServerDriver<H1Encoder<OurWriteOwned>>,
+    OurReadOwned: ReadOwned,
+    OurWriteOwned: WriteOwned,
+{
     loop {
         let req;
         (client_buf, req) = match read_and_parse(
+            "Http1Request",
             super::parse::request,
             &mut transport_r,
             client_buf,
@@ -65,17 +62,22 @@ pub async fn serve(
                     return Ok(ServeOutcome::ClientClosedConnectionBetweenRequests);
                 }
             },
-            Err(e) => {
-                if let Some(se) = e.downcast_ref::<SemanticError>() {
+            Err(e) => match e {
+                ReadAndParseError::BufferLimitReachedWhileParsing { limit } => {
+                    debug!("request headers larger than {limit} bytes, replying with 431 and hanging up");
+                    let reply = b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n";
                     transport_w
-                        .write_all_owned(se.as_http_response())
+                        .write_all_owned(reply)
                         .await
-                        .wrap_err("writing error response downstream")?;
-                }
+                        .map_err(ServeError::DownstreamWrite)?;
 
-                debug!(?e, "error reading request header from downstream");
-                return Ok(ServeOutcome::ClientDidntSpeakHttp11);
-            }
+                    return Ok(ServeOutcome::RequestHeadersTooLargeOnHttp1Conn);
+                }
+                _ => {
+                    debug!(?e, "error reading request header from downstream");
+                    return Ok(ServeOutcome::ClientDidntSpeakHttp11);
+                }
+            },
         };
         debug!("got request {req:?}");
 
@@ -98,14 +100,14 @@ pub async fn serve(
         let resp = driver
             .handle(req, &mut req_body, responder)
             .await
-            .wrap_err("handling request")?;
+            .map_err(ServeError::Driver)?;
 
         // TODO: if we sent `connection: close` we should close now
         transport_w = resp.into_inner().transport_w;
 
         (client_buf, transport_r) = req_body
             .into_inner()
-            .ok_or_else(|| eyre::eyre!("request body not drained, have to close connection"))?;
+            .ok_or(ServeError::ResponseHandlerBodyNotDrained)?;
 
         if connection_close {
             debug!("client requested connection close");

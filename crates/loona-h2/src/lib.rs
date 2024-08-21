@@ -404,6 +404,9 @@ impl Frame {
 }
 
 impl IntoPiece for Frame {
+    /// FIXME: not support happy about this returning an `std::io::Error`
+    /// really the only way this can fail is if we cannot allocate memory,
+    /// because we're never actually doing any I/O here.
     fn into_piece(self, scratch: &mut RollMut) -> std::io::Result<Piece> {
         debug_assert_eq!(scratch.len(), 0);
         self.write_into(&mut *scratch)?;
@@ -743,6 +746,7 @@ impl Settings {
 }
 
 #[derive(thiserror::Error, Debug)]
+#[non_exhaustive]
 pub enum SettingsError {
     #[error("ENABLE_PUSH setting is supposed to be either 0 or 1, got {actual}")]
     InvalidEnablePushValue { actual: u32 },
