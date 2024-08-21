@@ -308,7 +308,10 @@ mod tests {
             responder.write_chunk(b"12345".into()).await.unwrap();
             let result = responder.finish_body(None).await;
             assert!(result.is_err());
-            assert!(matches!(result, Err(e) if e.to_string().contains("content-length mismatch")));
+            assert!(matches!(
+                result,
+                Err(ResponderError::BodyLengthDoesNotMatchAnnouncedContentLength { .. })
+            ));
 
             // Test writing more bytes than announced
             let encoder = MockEncoder;
@@ -319,7 +322,10 @@ mod tests {
             responder.write_chunk(b"12345678901".into()).await.unwrap();
             let result = responder.finish_body(None).await;
             assert!(result.is_err());
-            assert!(matches!(result, Err(e) if e.to_string().contains("content-length mismatch")));
+            assert!(matches!(
+                result,
+                Err(ResponderError::BodyLengthDoesNotMatchAnnouncedContentLength { .. })
+            ));
         }
     }
 }
