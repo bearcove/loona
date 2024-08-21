@@ -347,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    fn freeze_test() -> eyre::Result<()> {
+    fn freeze_test() {
         crate::bufpool::initialize_allocator().unwrap();
 
         let total_bufs = num_free();
@@ -372,12 +372,10 @@ mod tests {
 
         drop(b2);
         assert_eq!(total_bufs, num_free());
-
-        Ok(())
     }
 
     #[test]
-    fn split_test() -> eyre::Result<()> {
+    fn split_test() {
         crate::bufpool::initialize_allocator().unwrap();
 
         let total_bufs = num_free();
@@ -391,7 +389,5 @@ mod tests {
         assert_eq!(&b[..6], b"jacket");
 
         drop((a, b));
-
-        Ok(())
     }
 }

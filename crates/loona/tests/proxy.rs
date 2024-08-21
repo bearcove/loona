@@ -1,10 +1,10 @@
+use b_x::{BxForResults, BX};
 use http::StatusCode;
 use loona::{
     buffet::{
         net::{TcpReadHalf, TcpWriteHalf},
         IntoHalves, RollMut,
     },
-    error::BoxError,
     h1, Body, BodyChunk, Encoder, ExpectResponseHeaders, HeadersExt, Responder, Response,
     ResponseDone, ServerDriver,
 };
@@ -22,14 +22,14 @@ impl<OurEncoder> ServerDriver<OurEncoder> for ProxyDriver
 where
     OurEncoder: Encoder,
 {
-    type Error = BoxError;
+    type Error = BX;
 
     async fn handle(
         &self,
         req: loona::Request,
         req_body: &mut impl Body,
         mut respond: Responder<OurEncoder, ExpectResponseHeaders>,
-    ) -> eyre::Result<Responder<OurEncoder, ResponseDone>> {
+    ) -> Result<Responder<OurEncoder, ResponseDone>, BX> {
         if req.headers.expects_100_continue() {
             debug!("Sending 100-continue");
             let res = Response {
@@ -81,9 +81,9 @@ where
     OurEncoder: Encoder,
 {
     type Return = Responder<OurEncoder, ResponseDone>;
-    type Error = BoxError;
+    type Error = BX;
 
-    async fn on_informational_response(&mut self, res: Response) -> Result<(), BoxError> {
+    async fn on_informational_response(&mut self, res: Response) -> Result<(), Self::Error> {
         debug!("Got informational response {}", res.status);
         Ok(())
     }
@@ -92,12 +92,12 @@ where
         self,
         res: Response,
         body: &mut impl Body,
-    ) -> Result<Self::Return, BoxError> {
+    ) -> Result<Self::Return, Self::Error> {
         let respond = self.respond;
         let mut respond = respond.write_final_response(res).await?;
 
         let trailers = loop {
-            match body.next_chunk().await? {
+            match body.next_chunk().await.bx()? {
                 BodyChunk::Chunk(chunk) => {
                     respond.write_chunk(chunk).await?;
                 }
@@ -117,11 +117,7 @@ where
 
 pub async fn start(
     upstream_addr: SocketAddr,
-) -> eyre::Result<(
-    SocketAddr,
-    impl Drop,
-    impl Future<Output = eyre::Result<()>>,
-)> {
+) -> b_x::Result<(SocketAddr, impl Drop, impl Future<Output = b_x::Result<()>>)> {
     let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
 
     let ln = loona::buffet::net::TcpListener::bind("127.0.0.1:0".parse()?).await?;

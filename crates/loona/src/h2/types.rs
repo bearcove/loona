@@ -312,7 +312,7 @@ impl fmt::Debug for H2RequestError {
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub(crate) enum H2ConnectionError {
+pub enum H2ConnectionError {
     #[error("frame too large: {frame_type:?} frame of size {frame_size} exceeds max frame size of {max_frame_size}")]
     FrameTooLarge {
         frame_type: FrameType,

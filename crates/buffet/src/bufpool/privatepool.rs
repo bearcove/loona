@@ -19,6 +19,8 @@ pub enum Error {
     DoesNotFit,
 }
 
+b_x::make_bxable!(Error);
+
 thread_local! {
     static POOL: Pool = const { Pool::new() };
 }

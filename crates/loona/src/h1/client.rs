@@ -1,3 +1,4 @@
+use b_x::BX;
 use http::header;
 use tracing::debug;
 
@@ -20,7 +21,7 @@ pub struct ClientConf {}
 #[allow(async_fn_in_trait)] // we never require Send
 pub trait ClientDriver {
     type Return;
-    type Error: AsRef<dyn std::error::Error>;
+    type Error: std::error::Error + 'static;
 
     async fn on_informational_response(&mut self, res: Response) -> Result<(), Self::Error>;
     async fn on_final_response(
@@ -47,6 +48,15 @@ pub enum Http1ClientError<DriverError> {
 
     #[error("Allocation failed")]
     Alloc(#[from] buffet::bufpool::Error),
+}
+
+impl<DriverError> From<Http1ClientError<DriverError>> for BX
+where
+    DriverError: std::error::Error + 'static,
+{
+    fn from(e: Http1ClientError<DriverError>) -> Self {
+        BX::from_err(e)
+    }
 }
 
 /// Perform an HTTP/1.1 request against an HTTP/1.1 server
@@ -95,7 +105,7 @@ where
                 Err(err) => {
                     // TODO: find way to report this error to the driver without
                     // spawning, without ref-counting the driver, etc.
-                    panic!("error writing request body: {}", err.as_ref());
+                    panic!("error writing request body: {err}");
                 }
                 Ok(_) => {
                     debug!("done writing request body");

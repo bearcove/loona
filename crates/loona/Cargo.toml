@@ -40,6 +40,7 @@ thiserror = { version = "1.0.63", default-features = false }
 tokio = { version = "1.39.2", features = ["macros", "sync"] }
 tracing = { version = "0.1.40", default-features = false }
 loona-h2 = { version = "0.2.1", path = "../loona-h2" }
+b-x = { version = "1.0.0", path = "../b-x" }
 
 [dev-dependencies]
 buffet = { version = "0.2.1", path = "../buffet" }

@@ -1,3 +1,4 @@
+use b_x::BX;
 use buffet::Piece;
 use http::{header, StatusCode};
 
@@ -33,6 +34,15 @@ pub enum ResponderError<EncoderError> {
 
     #[error("encoder error: {0}")]
     EncoderError(#[from] EncoderError),
+}
+
+impl<EncoderError> From<ResponderError<EncoderError>> for BX
+where
+    EncoderError: std::error::Error + 'static,
+{
+    fn from(e: ResponderError<EncoderError>) -> Self {
+        BX::from_err(e)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -243,7 +253,7 @@ pub type ResponderResult<T, EncoderError> = Result<T, ResponderError<EncoderErro
 
 #[allow(async_fn_in_trait)] // we never require Send
 pub trait Encoder {
-    type Error: AsRef<dyn std::error::Error>;
+    type Error: std::error::Error + 'static;
 
     async fn write_response(&mut self, res: Response) -> Result<(), Self::Error>;
     /// Note: encoders do not have a duty to check for matching content-length:
@@ -255,8 +265,6 @@ pub trait Encoder {
 
 #[cfg(test)]
 mod tests {
-    use crate::error::BoxError;
-
     use super::*;
     use buffet::Piece;
     use http::{StatusCode, Version};
@@ -265,7 +273,7 @@ mod tests {
     struct MockEncoder;
 
     impl Encoder for MockEncoder {
-        type Error = BoxError;
+        type Error = BX;
 
         async fn write_response(&mut self, _: Response) -> Result<(), Self::Error> {
             Ok(())

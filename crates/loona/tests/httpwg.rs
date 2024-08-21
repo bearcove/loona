@@ -1,11 +1,12 @@
 use std::error::Error as StdError;
 use std::rc::Rc;
 
+use b_x::{BxForResults, BX};
 use buffet::{IntoHalves, PipeRead, PipeWrite, ReadOwned, RollMut, WriteOwned};
 use http::StatusCode;
 use loona::{
-    Body, BodyChunk, Encoder, ExpectResponseHeaders, Responder, ResponderError, Response,
-    ResponseDone, ServerDriver,
+    Body, BodyChunk, Encoder, ExpectResponseHeaders, Responder, Response, ResponseDone,
+    ServerDriver,
 };
 use tracing::Level;
 use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::SubscriberInitExt};
@@ -43,14 +44,14 @@ where
     OurEncoder: Encoder,
     <OurEncoder as Encoder>::Error: AsRef<dyn StdError>,
 {
-    type Error = ResponderError<OurEncoder::Error>;
+    type Error = BX;
 
     async fn handle(
         &self,
         _req: loona::Request,
         req_body: &mut impl Body,
         mut res: Responder<OurEncoder, ExpectResponseHeaders>,
-    ) -> eyre::Result<Responder<OurEncoder, ResponseDone>> {
+    ) -> Result<Responder<OurEncoder, ResponseDone>, BX> {
         // if the client sent `expect: 100-continue`, we must send a 100 status code
         if let Some(h) = _req.headers.get(http::header::EXPECT) {
             if &h[..] == b"100-continue" {
@@ -65,7 +66,7 @@ where
         // then read the full request body
         let mut req_body_len = 0;
         loop {
-            let chunk = req_body.next_chunk().await?;
+            let chunk = req_body.next_chunk().await.bx()?;
             match chunk {
                 BodyChunk::Done { trailers } => {
                     // yey
@@ -121,7 +122,7 @@ pub fn start_server() -> httpwg::Conn<TwoHalves<PipeWrite, PipeRead>> {
         let io = (server_read, server_write);
         loona::h2::serve(io, server_conf, client_buf, driver).await?;
         tracing::debug!("http/2 server done");
-        Ok::<_, eyre::Report>(())
+        Ok::<_, BX>(())
     };
 
     buffet::spawn(async move {

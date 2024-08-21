@@ -1,11 +1,10 @@
 use std::error::Error as StdError;
 use std::fmt;
 
+use b_x::BX;
+
 use crate::h2::types::H2ConnectionError;
 
-pub type BoxError = Box<dyn StdError>;
-
-/// Any error that can occur when servicing a connection
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum ServeError<DriverError> {
@@ -31,22 +30,16 @@ pub enum ServeError<DriverError> {
     Alloc(#[from] buffet::bufpool::Error),
 }
 
-impl<DriverError> AsRef<dyn StdError> for ServeError<DriverError>
+impl<DriverError> From<ServeError<DriverError>> for BX
 where
-    DriverError: AsRef<dyn StdError> + fmt::Debug + 'static,
+    DriverError: std::error::Error + 'static,
 {
-    fn as_ref(&self) -> &(dyn StdError + 'static) {
-        self
+    fn from(e: ServeError<DriverError>) -> Self {
+        BX::from_err(e)
     }
 }
 
 pub struct NeverError;
-
-impl AsRef<dyn StdError> for NeverError {
-    fn as_ref(&self) -> &(dyn StdError + 'static) {
-        self
-    }
-}
 
 impl fmt::Debug for NeverError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

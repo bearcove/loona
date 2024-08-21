@@ -150,7 +150,7 @@ where
                 parse::PREFACE.len(),
             )
             .await
-            .map_err(|e| H2ConnectionError::ReadAndParse(e))?
+            .map_err(H2ConnectionError::ReadAndParse)?
             {
                 Some((client_buf, frame)) => (client_buf, frame),
                 None => {
@@ -340,7 +340,7 @@ where
                 frame.len as usize,
             )
             .await
-            .map_err(|e| H2ConnectionError::ReadAndParse(e))?
+            .map_err(H2ConnectionError::ReadAndParse)?
             {
                 Some((client_buf, payload)) => (client_buf, payload),
                 None => {
@@ -1846,7 +1846,7 @@ where
                             }
                             Err(e) => {
                                 // TODO: actually handle that error.
-                                debug!("Handler returned an error: {}", e.as_ref())
+                                debug!("Handler returned an error: {e}")
                             }
                         }
                     }

@@ -16,7 +16,7 @@ pub enum EncoderState {
 }
 
 /// Encodes HTTP/2 responses and bodies
-pub(crate) struct H2Encoder {
+pub struct H2Encoder {
     stream_id: StreamId,
     tx: mpsc::Sender<H2Event>,
     state: EncoderState,

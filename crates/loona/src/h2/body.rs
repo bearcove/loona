@@ -134,9 +134,6 @@ pub(crate) struct H2Body {
 pub(crate) enum H2BodyError {
     #[error("Stream reset")]
     StreamReset,
-
-    #[error("Unexpected EOF")]
-    UnexpectedEof,
 }
 
 impl AsRef<dyn std::error::Error> for H2BodyError {

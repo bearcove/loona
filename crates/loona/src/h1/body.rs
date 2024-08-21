@@ -231,7 +231,7 @@ impl ChunkedDecoder {
                         return Ok(BodyChunk::Chunk(chunk.into()));
                     }
                     None => {
-                        return Err(BodyError::ClosedWhileReadingChunkData.into());
+                        return Err(BodyError::ClosedWhileReadingChunkData);
                     }
                 }
             } else {
@@ -259,10 +259,7 @@ pub enum BodyWriteMode {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum WriteBodyError<OurBodyError>
-where
-    OurBodyError: AsRef<dyn std::error::Error>,
-{
+pub enum WriteBodyError<OurBodyError> {
     // Error from the `Body` impl itself
     #[error("inner body error: {0}")]
     InnerBodyError(OurBodyError),
@@ -270,18 +267,6 @@ where
     // BodyError
     #[error("body error: {0}")]
     BodyError(#[from] BodyError),
-}
-
-impl<OurBodyError> AsRef<dyn std::error::Error> for WriteBodyError<OurBodyError>
-where
-    OurBodyError: AsRef<dyn std::error::Error>,
-{
-    fn as_ref(&self) -> &(dyn std::error::Error + 'static) {
-        match self {
-            Self::InnerBodyError(e) => e.as_ref(),
-            Self::BodyError(e) => e.as_ref(),
-        }
-    }
 }
 
 pub(crate) async fn write_h1_body<B>(

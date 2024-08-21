@@ -21,7 +21,6 @@ miri = []
 
 [dependencies]
 bytemuck = { version = "1.16.3", features = ["extern_crate_std"] }
-eyre = "0.6.12"
 http = "1.1.0"
 libc = "0.2.155"
 memchr = "2.7.4"
@@ -41,6 +40,7 @@ tokio = { version = "1.39.2", features = [
 ] }
 tracing = "0.1.40"
 nix = "0.29.0"
+b-x = { version = "1.0.0", path = "../b-x" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 luring = { path = "../luring", version = "0.1.0", optional = true }

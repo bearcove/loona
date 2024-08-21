@@ -1,5 +1,3 @@
-use std::error::Error as StdError;
-
 mod types;
 mod util;
 
@@ -23,7 +21,7 @@ pub trait ServerDriver<OurEncoder>
 where
     OurEncoder: Encoder,
 {
-    type Error: AsRef<dyn StdError>;
+    type Error: std::error::Error + 'static;
 
     async fn handle(
         &self,

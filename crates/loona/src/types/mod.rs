@@ -173,7 +173,7 @@ pub trait Body: Debug
 where
     Self: Sized,
 {
-    type Error: AsRef<dyn std::error::Error + 'static>;
+    type Error: std::error::Error + 'static;
 
     fn content_len(&self) -> Option<u64>;
     fn eof(&self) -> bool;

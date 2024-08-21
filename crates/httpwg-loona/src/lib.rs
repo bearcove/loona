@@ -1,3 +1,4 @@
+use b_x::{BxForResults, BX};
 use std::{cell::RefCell, rc::Rc};
 use tokio::{process::Command, sync::oneshot};
 
@@ -168,7 +169,7 @@ impl<OurEncoder> ServerDriver<OurEncoder> for TestDriver
 where
     OurEncoder: Encoder,
 {
-    type Error = Box<dyn std::error::Error>;
+    type Error = BX;
 
     async fn handle(
         &self,
@@ -190,7 +191,7 @@ where
         // then read the full request body
         let mut req_body_len = 0;
         loop {
-            let chunk = req_body.next_chunk().await?;
+            let chunk = req_body.next_chunk().await.bx()?;
             match chunk {
                 BodyChunk::Done { trailers } => {
                     // yey
