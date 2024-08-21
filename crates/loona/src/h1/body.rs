@@ -190,7 +190,7 @@ impl ChunkedDecoder {
                     // look for CRLF terminator
                     let (next_buf, _) = read_and_parse(super::parse::crlf, transport, buf, 2)
                         .await
-                        .map_err(|_| BodyError::InvalidChunkTerminator)?
+                        .map_err(BodyError::InvalidChunkTerminator)?
                         .ok_or(BodyError::ClosedWhileReadingChunkTerminator)?;
                     buf = next_buf;
                     *self = ChunkedDecoder::ReadingChunkHeader;
@@ -234,20 +234,63 @@ pub enum BodyWriteMode {
     Chunked,
 
     // we set a length and are writing exactly the number of bytes we promised
-    ContentLength,
+    ContentLength(u64),
 
     // we didn't set a content-length and we're not doing chunked transfer
     // encoding, so we're not sending a body at all.
     Empty,
 }
 
-pub(crate) async fn write_h1_body(
+#[derive(Debug)]
+pub enum WriteBodyError<BE> {
+    // Error from the `Body` impl itself
+    InnerBodyError(BE),
+
+    // BodyError
+    BodyError(BodyError),
+}
+
+impl<BE> fmt::Display for WriteBodyError<BE>
+where
+    BE: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl<BE> From<BodyError> for WriteBodyError<BE> {
+    fn from(e: BodyError) -> Self {
+        WriteBodyError::BodyError(e)
+    }
+}
+
+impl<BE> std::error::Error for WriteBodyError<BE>
+where
+    BE: std::error::Error + 'static,
+{
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            WriteBodyError::InnerBodyError(_) => None,
+            WriteBodyError::BodyError(e) => Some(e),
+        }
+    }
+}
+
+pub(crate) async fn write_h1_body<B>(
     transport: &mut impl WriteOwned,
-    body: &mut impl Body,
+    body: &mut B,
     mode: BodyWriteMode,
-) -> Result<(), BodyError> {
+) -> Result<(), WriteBodyError<B::Error>>
+where
+    B: Body,
+{
     loop {
-        match body.next_chunk().await? {
+        match body
+            .next_chunk()
+            .await
+            .map_err(WriteBodyError::InnerBodyError)?
+        {
             BodyChunk::Chunk(chunk) => write_h1_body_chunk(transport, chunk, mode).await?,
             BodyChunk::Done { .. } => {
                 // TODO: check that we've sent what we announced in terms of
@@ -265,7 +308,7 @@ pub(crate) async fn write_h1_body_chunk(
     transport: &mut impl WriteOwned,
     chunk: Piece,
     mode: BodyWriteMode,
-) -> eyre::Result<()> {
+) -> Result<(), BodyError> {
     match mode {
         BodyWriteMode::Chunked => {
             transport
@@ -275,15 +318,17 @@ pub(crate) async fn write_h1_body_chunk(
                         .followed_by(chunk)
                         .followed_by("\r\n"),
                 )
-                .await?;
+                .await
+                .map_err(BodyError::WriteError)?;
         }
-        BodyWriteMode::ContentLength => {
-            transport.write_all_owned(chunk).await?;
+        BodyWriteMode::ContentLength(_) => {
+            transport
+                .write_all_owned(chunk)
+                .await
+                .map_err(BodyError::WriteError)?;
         }
         BodyWriteMode::Empty => {
-            return Err(BodyError::CalledWriteBodyChunkWhenNoBodyWasExpected
-                .as_err()
-                .into());
+            return Err(BodyError::CalledWriteBodyChunkWhenNoBodyWasExpected);
         }
     }
     Ok(())
@@ -292,13 +337,16 @@ pub(crate) async fn write_h1_body_chunk(
 pub(crate) async fn write_h1_body_end(
     transport: &mut impl WriteOwned,
     mode: BodyWriteMode,
-) -> eyre::Result<()> {
+) -> Result<(), BodyError> {
     debug!(?mode, "writing h1 body end");
     match mode {
         BodyWriteMode::Chunked => {
-            transport.write_all_owned("0\r\n\r\n").await?;
+            transport
+                .write_all_owned("0\r\n\r\n")
+                .await
+                .map_err(BodyError::WriteError)?;
         }
-        BodyWriteMode::ContentLength => {
+        BodyWriteMode::ContentLength(..) => {
             // nothing to do
         }
         BodyWriteMode::Empty => {

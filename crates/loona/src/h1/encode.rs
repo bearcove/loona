@@ -1,11 +1,10 @@
 use std::io::Write;
 
-use eyre::Context;
 use http::{header, StatusCode, Version};
 
 use crate::{
     types::{Headers, Request, Response},
-    Encoder, HeadersExt,
+    BodyError, Encoder, HeadersExt,
 };
 use buffet::{Piece, PieceList, RollMut, WriteOwned};
 
@@ -15,7 +14,7 @@ pub(crate) fn encode_request(
     req: Request,
     list: &mut PieceList,
     out_scratch: &mut RollMut,
-) -> eyre::Result<()> {
+) -> Result<(), std::io::Error> {
     list.push_back(req.method.into_chunk());
     list.push_back(" ");
 
@@ -26,7 +25,10 @@ pub(crate) fn encode_request(
     match req.version {
         Version::HTTP_10 => list.push_back(" HTTP/1.0\r\n"),
         Version::HTTP_11 => list.push_back(" HTTP/1.1\r\n"),
-        _ => return Err(eyre::eyre!("unsupported HTTP version {:?}", req.version)),
+        _ => panic!(
+            "passed unsupported HTTP version to HTTP/1.1 request encoder {:?}",
+            req.version
+        ),
     }
 
     // TODO: if `host` isn't set, set from request uri? which should
@@ -36,11 +38,14 @@ pub(crate) fn encode_request(
     Ok(())
 }
 
-fn encode_response(res: Response, list: &mut PieceList) -> eyre::Result<()> {
+fn encode_response(res: Response, list: &mut PieceList) -> Result<(), std::io::Error> {
     match res.version {
         Version::HTTP_10 => list.push_back(&b"HTTP/1.0 "[..]),
         Version::HTTP_11 => list.push_back(&b"HTTP/1.1 "[..]),
-        _ => return Err(eyre::eyre!("unsupported HTTP version {:?}", res.version)),
+        _ => panic!(
+            "passed unsupported HTTP version to HTTP/1.1 response encoder {:?}",
+            res.version
+        ),
     }
 
     list.push_back(encode_status_code(res.status));
@@ -52,7 +57,7 @@ fn encode_response(res: Response, list: &mut PieceList) -> eyre::Result<()> {
     Ok(())
 }
 
-pub(crate) fn encode_headers(headers: Headers, list: &mut PieceList) -> eyre::Result<()> {
+pub(crate) fn encode_headers(headers: Headers, list: &mut PieceList) -> Result<(), std::io::Error> {
     let mut last_header_name = None;
     for (name, value) in headers {
         match name {
@@ -150,6 +155,7 @@ where
 {
     pub(crate) transport_w: T,
     mode: BodyWriteMode,
+    bytes_written: u64,
 }
 
 impl<T> H1Encoder<T>
@@ -160,7 +166,42 @@ where
         Self {
             transport_w,
             mode: BodyWriteMode::Empty,
+            bytes_written: 0,
         }
+    }
+}
+
+#[derive(Debug)]
+pub enum H1EncoderError {
+    IoError(std::io::Error),
+    WrongState {
+        expected: BodyWriteMode,
+        actual: BodyWriteMode,
+    },
+    WroteMoreThanAnnouncedContentLength {
+        would_write: usize,
+        announced: usize,
+    },
+    BodyError(BodyError),
+}
+
+impl std::fmt::Display for H1EncoderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::error::Error for H1EncoderError {}
+
+impl From<BodyError> for H1EncoderError {
+    fn from(e: BodyError) -> Self {
+        H1EncoderError::BodyError(e)
+    }
+}
+
+impl From<std::io::Error> for H1EncoderError {
+    fn from(error: std::io::Error) -> Self {
+        H1EncoderError::IoError(error)
     }
 }
 
@@ -168,22 +209,18 @@ impl<T> Encoder for H1Encoder<T>
 where
     T: WriteOwned,
 {
-    async fn write_response(&mut self, mut res: Response) -> eyre::Result<()> {
-        // TODO: set BodyWriteMode here (and take it out of the Encoder trait,
-        // h2 doesn't need it)
+    type Error = H1EncoderError;
 
-        if !res.status.is_informational() {
-            // after this, we expect a body — time to determine the body write mode
-            if !res.means_empty_body() {
-                self.mode = match res.headers.content_length() {
-                    Some(0) => BodyWriteMode::Empty,
-                    Some(_) => BodyWriteMode::ContentLength,
-                    None => {
-                        res.headers
-                            .insert(header::TRANSFER_ENCODING, "chunked".into());
-                        BodyWriteMode::Chunked
-                    }
-                };
+    async fn write_response(&mut self, mut res: Response) -> Result<(), Self::Error> {
+        if !res.status.is_informational() && !res.means_empty_body() {
+            self.mode = match res.headers.content_length() {
+                Some(0) => BodyWriteMode::Empty,
+                Some(length) => BodyWriteMode::ContentLength(length),
+                None => {
+                    res.headers
+                        .insert(header::TRANSFER_ENCODING, "chunked".into());
+                    BodyWriteMode::Chunked
+                }
             };
         }
 
@@ -193,29 +230,53 @@ where
         self.transport_w
             .writev_all_owned(list)
             .await
-            .wrap_err("writing response headers upstream")?;
+            .map_err(H1EncoderError::from)?;
 
         Ok(())
     }
 
-    // TODO: move `mode` into `H1Encoder`? we don't need it for h2
-    async fn write_body_chunk(&mut self, chunk: Piece) -> eyre::Result<()> {
-        write_h1_body_chunk(&mut self.transport_w, chunk, self.mode).await
+    async fn write_body_chunk(&mut self, chunk: Piece) -> Result<(), Self::Error> {
+        if self.mode == BodyWriteMode::Empty {
+            return Err(H1EncoderError::WrongState {
+                expected: BodyWriteMode::ContentLength(0),
+                actual: self.mode,
+            });
+        }
+        if let BodyWriteMode::ContentLength(length) = self.mode {
+            if self.bytes_written + chunk.len() > length {
+                return Err(H1EncoderError::WroteMoreThanAnnouncedContentLength {
+                    would_write: self.bytes_written + chunk.len(),
+                    announced: length,
+                });
+            }
+        }
+        write_h1_body_chunk(&mut self.transport_w, chunk, self.mode)
+            .await
+            .map_err(H1EncoderError::from)
     }
 
-    async fn write_body_end(&mut self) -> eyre::Result<()> {
-        write_h1_body_end(&mut self.transport_w, self.mode).await
+    async fn write_body_end(&mut self) -> Result<(), Self::Error> {
+        if let BodyWriteMode::ContentLength(length) = self.mode {
+            if self.bytes_written < length {
+                return Err(H1EncoderError::WroteMoreThanAnnouncedContentLength {
+                    would_write: self.bytes_written,
+                    announced: length,
+                });
+            }
+        }
+        write_h1_body_end(&mut self.transport_w, self.mode)
+            .await
+            .map_err(H1EncoderError::from)
     }
 
-    async fn write_trailers(&mut self, trailers: Box<Headers>) -> eyre::Result<()> {
-        // TODO: check all preconditions
+    async fn write_trailers(&mut self, trailers: Box<Headers>) -> Result<(), Self::Error> {
         let mut list = PieceList::default();
         encode_headers(*trailers, &mut list)?;
 
         self.transport_w
             .writev_all_owned(list)
             .await
-            .wrap_err("writing response headers upstream")?;
+            .map_err(H1EncoderError::from)?;
 
         Ok(())
     }

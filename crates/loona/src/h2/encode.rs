@@ -8,7 +8,8 @@ use crate::{Encoder, Response};
 use loona_h2::StreamId;
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum EncoderState {
+#[non_exhaustive]
+pub enum EncoderState {
     ExpectResponseHeaders,
     ExpectResponseBody,
     ResponseDone,
@@ -37,25 +38,55 @@ impl H2Encoder {
         }
     }
 
-    async fn send(&self, payload: H2EventPayload) -> eyre::Result<()> {
+    async fn send(&self, payload: H2EventPayload) -> Result<(), H2EncoderError> {
         self.tx
             .send(self.event(payload))
             .await
-            .map_err(|_| eyre::eyre!("could not send event to h2 connection handler"))?;
+            .map_err(|_| H2EncoderError::StreamReset)?;
         Ok(())
     }
 }
 
+#[derive(Debug)]
+pub enum H2EncoderError {
+    /// HTTP/2 does not support informational responses
+    H2DoesNotSupportInformationalResponses {
+        status: StatusCode,
+    },
+
+    /// The encoder is in the wrong state
+    WrongState {
+        expected: EncoderState,
+        actual: EncoderState,
+    },
+
+    StreamReset,
+}
+
+impl std::fmt::Display for H2EncoderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::error::Error for H2EncoderError {}
+
 impl Encoder for H2Encoder {
-    async fn write_response(&mut self, res: Response) -> eyre::Result<()> {
-        // TODO: don't panic here
+    type Error = H2EncoderError;
+
+    async fn write_response(&mut self, res: Response) -> Result<(), Self::Error> {
+        // FIXME: HTTP/2 _does_ support informational responses, cf. https://github.com/bearcove/loona/issues/190
         assert!(
             !res.status.is_informational(),
             "http/2 does not support informational responses"
         );
 
-        // TODO: don't panic here
-        assert_eq!(self.state, EncoderState::ExpectResponseHeaders);
+        if self.state != EncoderState::ExpectResponseHeaders {
+            return Err(H2EncoderError::WrongState {
+                expected: EncoderState::ExpectResponseHeaders,
+                actual: self.state,
+            });
+        }
 
         self.send(H2EventPayload::Headers(res)).await?;
         self.state = EncoderState::ExpectResponseBody;

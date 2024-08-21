@@ -95,7 +95,7 @@ where
             // directly to a `RollMut`, without going through `format!` machinery
             req.headers
                 .insert(header::CONTENT_LENGTH, len.to_string().into_bytes().into());
-            BodyWriteMode::ContentLength
+            BodyWriteMode::ContentLength(len)
         }
         None => BodyWriteMode::Chunked,
     };
@@ -103,7 +103,8 @@ where
     let mut buf = RollMut::alloc()?;
 
     let mut list = PieceList::default();
-    encode_request(req, &mut list, &mut buf)?;
+    encode_request(req, &mut list, &mut buf)
+        .map_err(Http1ClientError::WhileWritingRequestHeaders)?;
     transport_w
         .writev_all_owned(list)
         .await

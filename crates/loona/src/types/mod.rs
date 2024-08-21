@@ -1,5 +1,6 @@
 use std::{
     convert::Infallible,
+    error::Error as StdError,
     fmt::{self, Debug},
 };
 
@@ -14,7 +15,7 @@ pub use headers::*;
 mod method;
 pub use method::*;
 
-use crate::{error::BoxError, util::ReadAndParseError};
+use crate::util::ReadAndParseError;
 
 /// An HTTP request
 #[derive(Clone)]
@@ -148,6 +149,9 @@ pub enum BodyError {
 
     /// Allocation failed
     Alloc(buffet::bufpool::Error),
+
+    /// I/O error while writing
+    WriteError(std::io::Error),
 }
 
 impl From<buffet::bufpool::Error> for BodyError {
@@ -162,8 +166,8 @@ impl fmt::Display for BodyError {
     }
 }
 
-impl std::error::Error for BodyError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl StdError for BodyError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
             BodyError::InvalidChunkTerminator(e) => Some(e),
             BodyError::ErrorWhileReadingChunkData(e) => Some(e),
