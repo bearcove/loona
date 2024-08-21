@@ -4,7 +4,7 @@ use std::{error::Error as StdError, fmt};
 ///
 /// It has `From` implementations for some libstd error types,
 /// you can derive `From<E>` for your own error types
-/// with [impl_from!]
+/// with [make_bxable!]
 pub struct BX(Box<dyn StdError>);
 
 /// A type alias where `E` defaults to `BX`.
