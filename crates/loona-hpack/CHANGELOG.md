@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/bearcove/loona/compare/loona-hpack-v0.3.2...loona-hpack-v0.4.0) - 2024-08-21
+
+### Other
+- 9 errors left
+- [ci skip] logo URL update
+- Add loona logo to a couple more readmes
+
 ## [0.3.2](https://github.com/bearcove/loona/compare/loona-hpack-v0.3.1...loona-hpack-v0.3.2) - 2024-08-14
 
 ### Fixed
