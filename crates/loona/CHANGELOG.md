@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/bearcove/loona/compare/loona-v0.2.1...loona-v0.3.0) - 2024-08-21
+
+### Other
+- Fix TLS example
+- Everything passes
+- mh
+- so close (for this batch)
+- 4
+- ahh
+- kmn
+- ohey error count back to 78?
+- 9 errors left
+- wip
+- more error-enum-ifiying
+- [ci skip] logo URL update
+- Also add logo to main crate
+
 ## [0.2.1](https://github.com/bearcove/loona/compare/loona-v0.2.0...loona-v0.2.1) - 2024-08-14
 
 ### Fixed

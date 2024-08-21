@@ -1,6 +1,6 @@
 [package]
 name = "httpwg-cli"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/bearcove/loona"
@@ -17,11 +17,11 @@ path = "src/main.rs"
 [dependencies]
 color-eyre = "0.6.3"
 eyre = "0.6.12"
-buffet = { version = "0.2.1", path = "../buffet" }
-httpwg = { version = "0.2.1", path = "../httpwg" }
+buffet = { version = "0.3.0", path = "../buffet" }
+httpwg = { version = "0.2.2", path = "../httpwg" }
 lexopt = "0.3.0"
 libc = "0.2.155"
 tokio = { version = "1.39.2", features = ["time"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18" }
-httpwg-macros = { version = "0.2.1", path = "../httpwg-macros" }
+httpwg-macros = { version = "0.2.2", path = "../httpwg-macros" }

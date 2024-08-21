@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/bearcove/loona/compare/buffet-v0.2.1...buffet-v0.3.0) - 2024-08-21
+
+### Added
+- Run miri in CI
+
+### Other
+- 4
+- 9 errors left
+- more error-enum-ifiying
+- Get rid of color-eyre dependency
+- Fix httpwg-over-tcp
+
 ## [0.2.1](https://github.com/bearcove/loona/compare/buffet-v0.2.0...buffet-v0.2.1) - 2024-08-14
 
 ### Fixed
