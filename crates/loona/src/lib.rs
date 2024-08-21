@@ -22,7 +22,6 @@ pub mod error;
 pub trait ServerDriver<OurEncoder>
 where
     OurEncoder: Encoder,
-    <OurEncoder as Encoder>::Error: AsRef<dyn StdError>,
 {
     type Error: AsRef<dyn StdError>;
 

@@ -190,10 +190,7 @@ where
         // then read the full request body
         let mut req_body_len = 0;
         loop {
-            let chunk = req_body
-                .next_chunk()
-                .await
-                .map_err(TestDriverError::RequestBodyError)?;
+            let chunk = req_body.next_chunk().await?;
             match chunk {
                 BodyChunk::Done { trailers } => {
                     // yey

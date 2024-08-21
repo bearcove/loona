@@ -4,6 +4,7 @@ use loona::{
         net::{TcpReadHalf, TcpWriteHalf},
         IntoHalves, RollMut,
     },
+    error::BoxError,
     h1, Body, BodyChunk, Encoder, ExpectResponseHeaders, HeadersExt, Responder, Response,
     ResponseDone, ServerDriver,
 };
@@ -17,7 +18,10 @@ pub struct ProxyDriver {
     pub pool: TransportPool,
 }
 
-impl<OurEncoder> ServerDriver<OurEncoder> for ProxyDriver {
+impl<OurEncoder> ServerDriver<OurEncoder> for ProxyDriver
+where
+    OurEncoder: Encoder,
+{
     type Error = BoxError;
 
     async fn handle(
@@ -65,18 +69,21 @@ impl<OurEncoder> ServerDriver<OurEncoder> for ProxyDriver {
     }
 }
 
-struct ProxyClientDriver<E>
+struct ProxyClientDriver<OurEncoder>
 where
-    E: Encoder,
+    OurEncoder: Encoder,
 {
-    respond: Responder<E, ExpectResponseHeaders>,
+    respond: Responder<OurEncoder, ExpectResponseHeaders>,
 }
 
-impl h1::ClientDriver for ProxyClientDriver<E> {
-    type Return = Responder<E, ResponseDone>;
+impl<OurEncoder> h1::ClientDriver for ProxyClientDriver<OurEncoder>
+where
+    OurEncoder: Encoder,
+{
+    type Return = Responder<OurEncoder, ResponseDone>;
     type Error = BoxError;
 
-    async fn on_informational_response(&mut self, res: Response) -> eyre::Result<()> {
+    async fn on_informational_response(&mut self, res: Response) -> Result<(), BoxError> {
         debug!("Got informational response {}", res.status);
         Ok(())
     }
@@ -85,7 +92,7 @@ impl h1::ClientDriver for ProxyClientDriver<E> {
         self,
         res: Response,
         body: &mut impl Body,
-    ) -> eyre::Result<Self::Return> {
+    ) -> Result<Self::Return, BoxError> {
         let respond = self.respond;
         let mut respond = respond.write_final_response(res).await?;
 

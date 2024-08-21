@@ -272,9 +272,15 @@ where
     BodyError(#[from] BodyError),
 }
 
-impl<OurBodyError> AsRef<dyn std::error::Error> for WriteBodyError<OurBodyError> {
+impl<OurBodyError> AsRef<dyn std::error::Error> for WriteBodyError<OurBodyError>
+where
+    OurBodyError: AsRef<dyn std::error::Error>,
+{
     fn as_ref(&self) -> &(dyn std::error::Error + 'static) {
-        self
+        match self {
+            Self::InnerBodyError(e) => e.as_ref(),
+            Self::BodyError(e) => e.as_ref(),
+        }
     }
 }
 
