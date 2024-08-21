@@ -165,6 +165,8 @@ pub fn do_main(port: u16, proto: Proto, mode: Mode) {
 struct TestDriver;
 
 impl loona::ServerDriver for TestDriver {
+    type Error = BoxError;
+
     async fn handle<E: Encoder>(
         &self,
         _req: loona::Request,

@@ -8,7 +8,6 @@ use std::{
 
 use buffet::{Piece, PieceList, PieceStr, ReadOwned, Roll, RollMut, WriteOwned};
 use byteorder::{BigEndian, WriteBytesExt};
-use eyre::Context;
 use http::{
     header,
     uri::{Authority, PathAndQuery, Scheme},
@@ -25,6 +24,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, trace};
 
 use crate::{
+    error::ServeError,
+    h1::ServeOutcome,
     h2::{
         body::{H2Body, IncomingMessagesResult, StreamIncoming},
         encode::H2Encoder,
@@ -62,7 +63,7 @@ pub async fn serve(
     conf: Rc<ServerConf>,
     client_buf: RollMut,
     driver: Rc<impl ServerDriver + 'static>,
-) -> eyre::Result<()> {
+) -> Result<(), ServeError> {
     let mut state = ConnState::default();
     state.self_settings.max_concurrent_streams = conf.max_streams;
 
@@ -94,7 +95,11 @@ pub(crate) struct ServerContext<D: ServerDriver + 'static, W: WriteOwned> {
 }
 
 impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
-    pub(crate) fn new(driver: Rc<D>, state: ConnState, transport_w: W) -> eyre::Result<Self> {
+    pub(crate) fn new(
+        driver: Rc<D>,
+        state: ConnState,
+        transport_w: W,
+    ) -> Result<Self, buffet::bufpool::Error> {
         let mut hpack_dec = loona_hpack::Decoder::new();
         hpack_dec
             .set_max_allowed_table_size(Settings::default().header_table_size.try_into().unwrap());
@@ -121,7 +126,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         &mut self,
         mut client_buf: RollMut,
         mut transport_r: impl ReadOwned,
-    ) -> eyre::Result<()> {
+    ) -> Result<ServeOutcome, ServeError> {
         // first read the preface
         {
             (client_buf, _) = match read_and_parse(
@@ -134,8 +139,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
             {
                 Some((client_buf, frame)) => (client_buf, frame),
                 None => {
-                    debug!("h2 client closed connection before sending preface");
-                    return Ok(());
+                    return Ok(ServeOutcome::ClientDidntSpeakHttp2);
                 }
             };
         }

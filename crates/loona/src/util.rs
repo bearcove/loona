@@ -1,9 +1,42 @@
-use eyre::Context;
 use nom::IResult;
 use pretty_hex::PrettyHex;
 use tracing::{debug, trace};
 
 use buffet::{ReadOwned, Roll, RollMut};
+
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum ReadAndParseError {
+    /// Allocation error
+    Alloc(buffet::bufpool::Error),
+
+    /// Read error
+    ReadError(std::io::Error),
+
+    /// Buffer limit reached while parsing
+    BufferLimitReachedWhileParsing { limit: usize },
+
+    /// Parsing error
+    // TODO: should we pass any amount of detail here?
+    ParsingError,
+}
+
+impl std::fmt::Display for ReadAndParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::error::Error for ReadAndParseError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ReadAndParseError::Alloc(e) => Some(e),
+            ReadAndParseError::ReadError(e) => Some(e),
+            ReadAndParseError::BufferLimitReachedWhileParsing { .. } => None,
+            ReadAndParseError::ParsingError => None,
+        }
+    }
+}
 
 /// Returns `None` on EOF, error if partially parsed message.
 pub(crate) async fn read_and_parse<Parser, Output>(
@@ -12,7 +45,7 @@ pub(crate) async fn read_and_parse<Parser, Output>(
     mut buf: RollMut,
     max_len: usize,
     // TODO: proper error handling, no eyre::Result
-) -> eyre::Result<Option<(RollMut, Output)>>
+) -> Result<Option<(RollMut, Output)>, ReadAndParseError>
 where
     Parser: Fn(Roll) -> IResult<Roll, Output>,
 {
@@ -37,7 +70,9 @@ where
                     let res;
                     let read_limit = max_len - buf.len();
                     if buf.len() >= max_len {
-                        return Err(SemanticError::BufferLimitReachedWhileParsing.into());
+                        return Err(ReadAndParseError::BufferLimitReachedWhileParsing {
+                            limit: max_len,
+                        });
                     }
 
                     if buf.cap() == 0 {
@@ -51,15 +86,12 @@ where
                     );
                     (res, buf) = buf.read_into(read_limit, stream).await;
 
-                    let n = res.wrap_err_with(|| {
-                        format!(
-                            "read_into for read_and_parse::<{}>",
-                            std::any::type_name::<Output>()
-                        )
-                    })?;
+                    let n = res.map_err(ReadAndParseError::ReadError)?;
                     if n == 0 {
                         if !buf.is_empty() {
-                            return Err(eyre::eyre!("unexpected EOF"));
+                            return Err(ReadAndParseError::ReadError(
+                                std::io::ErrorKind::UnexpectedEof.into(),
+                            ));
                         } else {
                             return Ok(None);
                         }
@@ -71,7 +103,7 @@ where
                         debug!(?err, "parsing error");
                         debug!(input = %e.input.to_string_lossy(), "input was");
                     }
-                    return Err(eyre::eyre!("parsing error: {err}"));
+                    return Err(ReadAndParseError::ParsingError);
                 }
             }
         };

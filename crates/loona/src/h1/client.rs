@@ -1,8 +1,11 @@
-use eyre::Context;
 use http::header;
 use tracing::debug;
 
-use crate::{types::Request, util::read_and_parse, Body, HeadersExt, Response};
+use crate::{
+    types::Request,
+    util::{read_and_parse, ReadAndParseError},
+    Body, HeadersExt, Response,
+};
 use buffet::{
     PieceList, RollMut, {ReadOwned, WriteOwned},
 };
@@ -17,13 +20,57 @@ pub struct ClientConf {}
 #[allow(async_fn_in_trait)] // we never require Send
 pub trait ClientDriver {
     type Return;
+    type Error: std::error::Error + 'static;
 
-    async fn on_informational_response(&mut self, res: Response) -> eyre::Result<()>;
+    async fn on_informational_response(&mut self, res: Response) -> Result<(), Self::Error>;
     async fn on_final_response(
         self,
         res: Response,
         body: &mut impl Body,
-    ) -> eyre::Result<Self::Return>;
+    ) -> Result<Self::Return, Self::Error>;
+}
+
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum Http1ClientError<DE> {
+    // An error occured with the client driver
+    DriverError(DE),
+
+    // We could not write the request headers
+    WhileWritingRequestHeaders(std::io::Error),
+
+    // Could not read / receive the response headers
+    ErrorReadingResponseHeaders(ReadAndParseError),
+
+    /// Server went away before sending response headers
+    ServerWentAwayBeforeSendingResponseHeaders,
+
+    /// Allocation failed
+    Alloc(buffet::bufpool::Error),
+}
+
+impl<DE> From<buffet::bufpool::Error> for Http1ClientError<DE> {
+    fn from(e: buffet::bufpool::Error) -> Self {
+        Http1ClientError::Alloc(e)
+    }
+}
+
+impl<E: std::fmt::Debug> std::fmt::Display for Http1ClientError<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl<E: std::error::Error + 'static> std::error::Error for Http1ClientError<E> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Http1ClientError::DriverError(e) => Some(e),
+            Http1ClientError::WhileWritingRequestHeaders(e) => Some(e),
+            Http1ClientError::ErrorReadingResponseHeaders(e) => Some(e),
+            Http1ClientError::ServerWentAwayBeforeSendingResponseHeaders => None,
+            Http1ClientError::Alloc(e) => Some(e),
+        }
+    }
 }
 
 /// Perform an HTTP/1.1 request against an HTTP/1.1 server
@@ -35,7 +82,7 @@ pub async fn request<R, W, D>(
     mut req: Request,
     body: &mut impl Body,
     driver: D,
-) -> eyre::Result<(Option<(R, W)>, D::Return)>
+) -> Result<(Option<(R, W)>, D::Return), Http1ClientError<D::Error>>
 where
     R: ReadOwned,
     W: WriteOwned,
@@ -60,7 +107,7 @@ where
     transport_w
         .writev_all_owned(list)
         .await
-        .wrap_err("writing request headers")?;
+        .map_err(Http1ClientError::WhileWritingRequestHeaders)?;
 
     // TODO: handle `expect: 100-continue` (don't start sending body until we get a
     // 100 response)
@@ -75,7 +122,7 @@ where
                 }
                 Ok(_) => {
                     debug!("done writing request body");
-                    Ok::<_, eyre::Report>(transport_w)
+                    Ok::<_, Http1ClientError<D::Error>>(transport_w)
                 }
             }
         }
@@ -91,8 +138,8 @@ where
                 64 * 1024,
             )
             .await
-            .map_err(|e| eyre::eyre!("error reading response headers from server: {e:?}"))?
-            .ok_or_else(|| eyre::eyre!("server went away before sending response headers"))?;
+            .map_err(Http1ClientError::ErrorReadingResponseHeaders)?
+            .ok_or(Http1ClientError::ServerWentAwayBeforeSendingResponseHeaders)?;
             debug!("client received response");
             res.debug_print();
 
@@ -119,7 +166,10 @@ where
 
             let conn_close = res.headers.is_connection_close();
 
-            let ret = driver.on_final_response(res, &mut res_body).await?;
+            let ret = driver
+                .on_final_response(res, &mut res_body)
+                .await
+                .map_err(Http1ClientError::DriverError)?;
 
             let transport_r = match (conn_close, res_body.into_inner()) {
                 // can only re-use the body if conn_close is false and the body was fully draided

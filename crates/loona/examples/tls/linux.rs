@@ -6,7 +6,6 @@ use std::{
     sync::Arc,
 };
 
-use color_eyre::eyre;
 use http::Version;
 use ktls::CorkStream;
 use loona::{
@@ -19,12 +18,11 @@ use tokio::net::TcpListener;
 use tracing::{debug, info};
 use tracing_subscriber::EnvFilter;
 
-pub(crate) fn main() -> eyre::Result<()> {
+pub(crate) fn main() {
     loona::buffet::start(async_main())
 }
 
-async fn async_main() -> eyre::Result<()> {
-    color_eyre::install()?;
+async fn async_main() {
     tracing_subscriber::fmt::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -33,10 +31,10 @@ async fn async_main() -> eyre::Result<()> {
 
     if std::env::args().any(|a| a == "--get") {
         sample_http_request().await.unwrap();
-        return Ok(());
+        return;
     }
 
-    let certified_key = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
+    let certified_key = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
     let crt = certified_key.cert.der();
     let key = certified_key.key_pair.serialize_der();
 
@@ -55,14 +53,20 @@ async fn async_main() -> eyre::Result<()> {
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
     let acceptor = Rc::new(acceptor);
 
-    let pt_h1_ln = TcpListener::bind("[::]:7080").await?;
-    info!("Serving plaintext HTTP/1.1 on {}", pt_h1_ln.local_addr()?);
+    let pt_h1_ln = TcpListener::bind("[::]:7080").await.unwrap();
+    info!(
+        "Serving plaintext HTTP/1.1 on {}",
+        pt_h1_ln.local_addr().unwrap()
+    );
 
-    let pt_h2_ln = TcpListener::bind("[::]:7082").await?;
-    info!("Serving plaintext HTTP/2 on {}", pt_h2_ln.local_addr()?);
+    let pt_h2_ln = TcpListener::bind("[::]:7082").await.unwrap();
+    info!(
+        "Serving plaintext HTTP/2 on {}",
+        pt_h2_ln.local_addr().unwrap()
+    );
 
-    let tls_ln = TcpListener::bind("[::]:7443").await?;
-    info!("Serving HTTPS on {}", tls_ln.local_addr()?);
+    let tls_ln = TcpListener::bind("[::]:7443").await.unwrap();
+    info!("Serving HTTPS on {}", tls_ln.local_addr().unwrap());
 
     let h1_conf = Rc::new(h1::ServerConf::default());
     let h2_conf = Rc::new(h2::ServerConf::default());
@@ -83,8 +87,6 @@ async fn async_main() -> eyre::Result<()> {
                     }
                 });
             }
-
-            Ok::<_, color_eyre::Report>(())
         }
     };
 
@@ -104,8 +106,6 @@ async fn async_main() -> eyre::Result<()> {
                     }
                 });
             }
-
-            Ok::<_, color_eyre::Report>(())
         }
     };
 
@@ -124,12 +124,9 @@ async fn async_main() -> eyre::Result<()> {
                 }
             });
         }
-
-        Ok::<_, color_eyre::Report>(())
     };
 
-    tokio::try_join!(pt_h1_loop, pt_h2_loop, tls_loop)?;
-    Ok(())
+    tokio::join!(pt_h1_loop, pt_h2_loop, tls_loop);
 }
 
 enum Proto {

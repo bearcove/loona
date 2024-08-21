@@ -9,6 +9,6 @@ mod non_linux;
 #[cfg(not(target_os = "linux"))]
 use non_linux as inner;
 
-fn main() -> color_eyre::Result<()> {
+fn main() {
     inner::main()
 }

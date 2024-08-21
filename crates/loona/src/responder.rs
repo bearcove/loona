@@ -1,5 +1,7 @@
+use std::fmt;
+
 use buffet::Piece;
-use http::header;
+use http::{header, StatusCode};
 
 use crate::{Body, BodyChunk, Headers, HeadersExt, Response};
 
@@ -16,6 +18,53 @@ impl ResponseState for ExpectResponseBody {}
 
 pub struct ResponseDone;
 impl ResponseState for ResponseDone {}
+
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum ResponderError<E>
+where
+    E: std::error::Error,
+{
+    /// The response status code was not 1xx
+    InterimResponseMustHaveStatusCode1xx { actual: StatusCode },
+
+    /// The response status code was not >= 200
+    FinalResponseMustHaveStatusCodeGreaterThanOrEqualTo200 { actual: StatusCode },
+
+    /// Got an encoder error
+    EncoderError(E),
+}
+
+impl<E> From<E> for ResponderError<E>
+where
+    E: std::error::Error,
+{
+    fn from(e: E) -> Self {
+        Self::EncoderError(e)
+    }
+}
+
+impl fmt::Display for ResponderError<http::Error> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InterimResponseMustHaveStatusCode1xx { actual } => {
+                write!(
+                    f,
+                    "interim response must have status code 1xx, got {actual}"
+                )
+            }
+            Self::FinalResponseMustHaveStatusCodeGreaterThanOrEqualTo200 { actual } => {
+                write!(
+                    f,
+                    "final response must have status code >= 200, got {actual}"
+                )
+            }
+            Self::EncoderError(e) => write!(f, "encoder error: {e}"),
+        }
+    }
+}
+
+impl<E> std::error::Error for ResponderError<E> where E: std::error::Error {}
 
 pub struct Responder<E, S>
 where
@@ -39,9 +88,11 @@ where
 
     /// Send an informational status code, cf. <https://httpwg.org/specs/rfc9110.html#status.1xx>
     /// Errors out if the response status is not 1xx
-    pub async fn write_interim_response(&mut self, res: Response) -> eyre::Result<()> {
+    pub async fn write_interim_response(&mut self, res: Response) -> Result<(), ResponderError> {
         if !res.status.is_informational() {
-            return Err(eyre::eyre!("interim response must have status code 1xx"));
+            return Err(ResponderError::InterimResponseMustHaveStatusCode1xx {
+                actual: res.status,
+            });
         }
 
         self.encoder.write_response(res).await?;
@@ -52,9 +103,13 @@ where
         mut self,
         res: Response,
         announced_content_length: Option<u64>,
-    ) -> eyre::Result<Responder<E, ExpectResponseBody>> {
+    ) -> Result<Responder<E, ExpectResponseBody>, ResponderError> {
         if res.status.is_informational() {
-            return Err(eyre::eyre!("final response must have status code >= 200"));
+            return Err(
+                ResponderError::FinalResponseMustHaveStatusCodeGreaterThanOrEqualTo200 {
+                    actual: res.status,
+                },
+            );
         }
         self.encoder.write_response(res).await?;
         Ok(Responder {
@@ -72,7 +127,7 @@ where
     pub async fn write_final_response(
         self,
         res: Response,
-    ) -> eyre::Result<Responder<E, ExpectResponseBody>> {
+    ) -> ResponderResult<Responder<E, ExpectResponseBody>> {
         let announced_content_length = res.headers.content_length();
         self.write_final_response_internal(res, announced_content_length)
             .await
@@ -84,7 +139,7 @@ where
         self,
         mut res: Response,
         body: &mut impl Body,
-    ) -> eyre::Result<Responder<E, ResponseDone>> {
+    ) -> ResponderResult<Responder<E, ResponseDone>> {
         if let Some(clen) = body.content_len() {
             res.headers
                 .entry(header::CONTENT_LENGTH)
@@ -123,7 +178,7 @@ where
     /// Send a response body chunk. Errors out if sending more than the
     /// announced content-length.
     #[inline]
-    pub async fn write_chunk(&mut self, chunk: Piece) -> eyre::Result<()> {
+    pub async fn write_chunk(&mut self, chunk: Piece) -> ResponderResult<()> {
         self.state.bytes_written += chunk.len() as u64;
         self.encoder.write_body_chunk(chunk).await
     }
@@ -137,7 +192,7 @@ where
     pub async fn finish_body(
         mut self,
         trailers: Option<Box<Headers>>,
-    ) -> eyre::Result<Responder<E, ResponseDone>> {
+    ) -> ResponderResult<Responder<E, ResponseDone>> {
         if let Some(announced_content_length) = self.state.announced_content_length {
             if self.state.bytes_written != announced_content_length {
                 eyre::bail!(
@@ -168,12 +223,16 @@ where
     }
 }
 
+pub type ResponderResult<T> = Result<T, ResponderError>;
+
 #[allow(async_fn_in_trait)] // we never require Send
 pub trait Encoder {
-    async fn write_response(&mut self, res: Response) -> eyre::Result<()>;
-    async fn write_body_chunk(&mut self, chunk: Piece) -> eyre::Result<()>;
-    async fn write_body_end(&mut self) -> eyre::Result<()>;
-    async fn write_trailers(&mut self, trailers: Box<Headers>) -> eyre::Result<()>;
+    type Error: std::error::Error;
+
+    async fn write_response(&mut self, res: Response) -> Result<(), Self::Error>;
+    async fn write_body_chunk(&mut self, chunk: Piece) -> Result<(), Self::Error>;
+    async fn write_body_end(&mut self) -> Result<(), Self::Error>;
+    async fn write_trailers(&mut self, trailers: Box<Headers>) -> Result<(), Self::Error>;
 }
 
 #[cfg(test)]
@@ -186,16 +245,16 @@ mod tests {
     struct MockEncoder;
 
     impl Encoder for MockEncoder {
-        async fn write_response(&mut self, _: Response) -> eyre::Result<()> {
+        async fn write_response(&mut self, _: Response) -> ResponderResult<()> {
             Ok(())
         }
-        async fn write_body_chunk(&mut self, _: Piece) -> eyre::Result<()> {
+        async fn write_body_chunk(&mut self, _: Piece) -> ResponderResult<()> {
             Ok(())
         }
-        async fn write_body_end(&mut self) -> eyre::Result<()> {
+        async fn write_body_end(&mut self) -> ResponderResult<()> {
             Ok(())
         }
-        async fn write_trailers(&mut self, _: Box<Headers>) -> eyre::Result<()> {
+        async fn write_trailers(&mut self, _: Box<Headers>) -> ResponderResult<()> {
             Ok(())
         }
     }

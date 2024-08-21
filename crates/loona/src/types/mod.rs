@@ -1,4 +1,7 @@
-use std::fmt::{self, Debug};
+use std::{
+    convert::Infallible,
+    fmt::{self, Debug},
+};
 
 use http::{StatusCode, Uri, Version};
 use tracing::debug;
@@ -10,6 +13,8 @@ pub use headers::*;
 
 mod method;
 pub use method::*;
+
+use crate::{error::BoxError, util::ReadAndParseError};
 
 /// An HTTP request
 #[derive(Clone)]
@@ -104,73 +109,65 @@ pub enum BodyChunk {
     },
 }
 
-#[derive(Debug, thiserror::Error)]
-pub struct BodyError {
-    reason: BodyErrorReason,
-    context: Option<Box<dyn Debug + Send + Sync>>,
+#[derive(Debug)]
+pub enum BodyError {
+    /// next_chunk() was called after an error was returned
+    CalledNextChunkAfterError,
+
+    /// while doing chunked transfer-encoding, we expected a chunk size
+    /// but the connection closed/errored in some way
+    ClosedWhileReadingChunkSize,
+
+    /// while doing chunked transfer-encoding, we expected a chunk size,
+    /// but what we read wasn't a hex number followed by CRLF
+    InvalidChunkSize,
+
+    /// while doing chunked transfer-encoding, the connection was closed
+    /// in the middle of reading a chunk's data
+    ClosedWhileReadingChunkData,
+
+    /// while reading a content-length body, the connection was closed
+    ClosedWhileReadingContentLength,
+
+    /// while doing chunked transfer-encoding, there was a read error
+    /// in the middle of reading a chunk's data
+    ErrorWhileReadingChunkData(std::io::Error),
+
+    /// while doing chunked transfer-encoding, the connection was closed
+    /// in the middle of reading the
+    ClosedWhileReadingChunkTerminator,
+
+    /// while doing chunked transfer-encoding, we read the chunk size,
+    /// then that much data, but then encountered something other than
+    /// a CRLF
+    InvalidChunkTerminator(ReadAndParseError),
+
+    /// `write_chunk` was called but no content-length was announced, and
+    /// no chunked transfer-encoding was announced
+    CalledWriteBodyChunkWhenNoBodyWasExpected,
+
+    /// Allocation failed
+    Alloc(buffet::bufpool::Error),
+}
+
+impl From<buffet::bufpool::Error> for BodyError {
+    fn from(err: buffet::bufpool::Error) -> Self {
+        BodyError::Alloc(err)
+    }
 }
 
 impl fmt::Display for BodyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "body error: {:?}", self.reason)?;
-        if let Some(context) = &self.context {
-            write!(f, " ({context:?})")
-        } else {
-            Ok(())
-        }
+        Debug::fmt(self, f)
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BodyErrorReason {
-    // next_chunk() was called after an error was returned
-    CalledNextChunkAfterError,
-
-    // while doing chunked transfer-encoding, we expected a chunk size
-    // but the connection closed/errored in some way
-    ClosedWhileReadingChunkSize,
-
-    // while doing chunked transfer-encoding, we expected a chunk size,
-    // but what we read wasn't a hex number followed by CRLF
-    InvalidChunkSize,
-
-    // while doing chunked transfer-encoding, the connection was closed
-    // in the middle of reading a chunk's data
-    ClosedWhileReadingChunkData,
-
-    // while reading a content-length body, the connection was closed
-    ClosedWhileReadingContentLength,
-
-    // while doing chunked transfer-encoding, there was a read error
-    // in the middle of reading a chunk's data
-    ErrorWhileReadingChunkData,
-
-    // while doing chunked transfer-encoding, the connection was closed
-    // in the middle of reading the
-    ClosedWhileReadingChunkTerminator,
-
-    // while doing chunked transfer-encoding, we read the chunk size,
-    // then that much data, but then encountered something other than
-    // a CRLF
-    InvalidChunkTerminator,
-
-    // `write_chunk` was called but no content-length was announced, and
-    // no chunked transfer-encoding was announced
-    CalledWriteBodyChunkWhenNoBodyWasExpected,
-}
-
-impl BodyErrorReason {
-    pub fn as_err(self) -> BodyError {
-        BodyError {
-            reason: self,
-            context: None,
-        }
-    }
-
-    pub fn with_cx(self, context: impl Debug + Send + Sync + 'static) -> BodyError {
-        BodyError {
-            reason: self,
-            context: Some(Box::new(context)),
+impl std::error::Error for BodyError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            BodyError::InvalidChunkTerminator(e) => Some(e),
+            BodyError::ErrorWhileReadingChunkData(e) => Some(e),
+            _ => None,
         }
     }
 }
@@ -180,12 +177,16 @@ pub trait Body: Debug
 where
     Self: Sized,
 {
+    type Error: std::error::Error + 'static;
+
     fn content_len(&self) -> Option<u64>;
     fn eof(&self) -> bool;
-    async fn next_chunk(&mut self) -> eyre::Result<BodyChunk>;
+    async fn next_chunk(&mut self) -> Result<BodyChunk, Self::Error>;
 }
 
 impl Body for () {
+    type Error = Infallible;
+
     fn content_len(&self) -> Option<u64> {
         Some(0)
     }
@@ -194,7 +195,26 @@ impl Body for () {
         true
     }
 
-    async fn next_chunk(&mut self) -> eyre::Result<BodyChunk> {
+    async fn next_chunk(&mut self) -> Result<BodyChunk, Self::Error> {
         Ok(BodyChunk::Done { trailers: None })
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServeOutcome {
+    // HTTP/1.1 only: The request we handled had a `connection: close` header
+    ClientRequestedConnectionClose,
+
+    // HTTP/1.1 only: The request we handled had a `connection: close` header
+    ServerRequestedConnectionClose,
+
+    // Client closed connection before sending a second request
+    // (without requesting connection close)
+    ClientClosedConnectionBetweenRequests,
+
+    // HTTP/1.1 only: Client didn't speak HTTP/1.1 (missing/invalid request line)
+    ClientDidntSpeakHttp11,
+
+    // HTTP/2 only: Client didn't speak HTTP/2 (missing/invalid request line)
+    ClientDidntSpeakHttp2,
 }

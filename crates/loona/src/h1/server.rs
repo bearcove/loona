@@ -4,6 +4,7 @@ use eyre::Context;
 use tracing::debug;
 
 use crate::{
+    error::ServeError,
     h1::body::{H1Body, H1BodyKind},
     util::{read_and_parse, SemanticError},
     HeadersExt, Responder, ServerDriver,
@@ -33,21 +34,12 @@ impl Default for ServerConf {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ServeOutcome {
-    ClientRequestedConnectionClose,
-    ServerRequestedConnectionClose,
-    ClientClosedConnectionBetweenRequests,
-    // TODO: return buffer there so we can see what they did write?
-    ClientDidntSpeakHttp11,
-}
-
 pub async fn serve(
     (mut transport_r, mut transport_w): (impl ReadOwned, impl WriteOwned),
     conf: Rc<ServerConf>,
     mut client_buf: RollMut,
     driver: impl ServerDriver,
-) -> eyre::Result<ServeOutcome> {
+) -> Result<ServeOutcome, ServeError> {
     loop {
         let req;
         (client_buf, req) = match read_and_parse(
@@ -70,7 +62,7 @@ pub async fn serve(
                     transport_w
                         .write_all_owned(se.as_http_response())
                         .await
-                        .wrap_err("writing error response downstream")?;
+                        .map_err(ServeError::DownstreamWrite)?;
                 }
 
                 debug!(?e, "error reading request header from downstream");
@@ -98,14 +90,14 @@ pub async fn serve(
         let resp = driver
             .handle(req, &mut req_body, responder)
             .await
-            .wrap_err("handling request")?;
+            .map_err(ServeError::ResponseHandler)?;
 
         // TODO: if we sent `connection: close` we should close now
         transport_w = resp.into_inner().transport_w;
 
         (client_buf, transport_r) = req_body
             .into_inner()
-            .ok_or_else(|| eyre::eyre!("request body not drained, have to close connection"))?;
+            .ok_or(ServeError::ResponseHandlerBodyNotDrained)?;
 
         if connection_close {
             debug!("client requested connection close");

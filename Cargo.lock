@@ -138,7 +138,6 @@ name = "buffet"
 version = "0.2.1"
 dependencies = [
  "bytemuck",
- "color-eyre",
  "eyre",
  "http",
  "io-uring",
@@ -1013,9 +1012,7 @@ dependencies = [
  "bytes",
  "cargo-husky",
  "codspeed-criterion-compat",
- "color-eyre",
  "criterion",
- "eyre",
  "futures-util",
  "http",
  "httparse",

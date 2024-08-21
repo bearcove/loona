@@ -2,7 +2,7 @@ use std::fmt;
 
 use tracing::debug;
 
-use crate::{util::read_and_parse, Body, BodyChunk, BodyErrorReason};
+use crate::{util::read_and_parse, Body, BodyChunk, BodyError};
 use buffet::{Piece, PieceList, ReadOwned, RollMut, WriteOwned};
 
 /// An HTTP/1.1 body, either chunked or content-length.
@@ -74,6 +74,8 @@ impl<T: ReadOwned> H1Body<T> {
 }
 
 impl<T: ReadOwned> Body for H1Body<T> {
+    type Error = BodyError;
+
     fn content_len(&self) -> Option<u64> {
         match &self.state {
             Decoder::Chunked(_) => None,
@@ -81,7 +83,7 @@ impl<T: ReadOwned> Body for H1Body<T> {
         }
     }
 
-    async fn next_chunk(&mut self) -> eyre::Result<BodyChunk> {
+    async fn next_chunk(&mut self) -> Result<BodyChunk, BodyError> {
         if self.buf.is_none() {
             return Ok(BodyChunk::Done { trailers: None });
         }
@@ -107,7 +109,7 @@ impl ContentLengthDecoder {
         &mut self,
         buf_slot: &mut Option<RollMut>,
         transport: &mut impl ReadOwned,
-    ) -> eyre::Result<BodyChunk> {
+    ) -> Result<BodyChunk, BodyError> {
         let remain = self.len - self.read;
         if remain == 0 {
             return Ok(BodyChunk::Done { trailers: None });
@@ -117,19 +119,19 @@ impl ContentLengthDecoder {
 
         let mut buf = buf_slot
             .take()
-            .ok_or_else(|| BodyErrorReason::CalledNextChunkAfterError.as_err())?;
+            .ok_or(BodyError::CalledNextChunkAfterError)?;
 
         if buf.is_empty() {
             buf.reserve()?;
 
             let res;
             (res, buf) = buf.read_into(usize::MAX, transport).await;
-            res.map_err(|e| BodyErrorReason::ErrorWhileReadingChunkData.with_cx(e))?;
+            res.map_err(BodyError::ErrorWhileReadingChunkData)?;
         }
 
         let chunk = buf
             .take_at_most(remain as usize)
-            .ok_or_else(|| BodyErrorReason::ClosedWhileReadingContentLength.as_err())?;
+            .ok_or(BodyError::ClosedWhileReadingContentLength)?;
         self.read += chunk.len() as u64;
         buf_slot.replace(buf);
         Ok(BodyChunk::Chunk(chunk.into()))
@@ -145,11 +147,11 @@ impl ChunkedDecoder {
         &mut self,
         buf_slot: &mut Option<RollMut>,
         transport: &mut impl ReadOwned,
-    ) -> eyre::Result<BodyChunk> {
+    ) -> Result<BodyChunk, BodyError> {
         loop {
             let mut buf = buf_slot
                 .take()
-                .ok_or_else(|| BodyErrorReason::CalledNextChunkAfterError.as_err())?;
+                .ok_or(BodyError::CalledNextChunkAfterError)?;
 
             if let ChunkedDecoder::Done = self {
                 buf_slot.replace(buf);
@@ -162,18 +164,16 @@ impl ChunkedDecoder {
                 let (next_buf, chunk_size) =
                     read_and_parse(super::parse::chunk_size, transport, buf, 16)
                         .await
-                        .map_err(|e| BodyErrorReason::InvalidChunkSize.with_cx(e))?
-                        .ok_or_else(|| BodyErrorReason::ClosedWhileReadingChunkSize.as_err())?;
+                        .map_err(|_| BodyError::InvalidChunkSize)?
+                        .ok_or(BodyError::ClosedWhileReadingChunkSize)?;
                 buf = next_buf;
 
                 if chunk_size == 0 {
                     // that's the final chunk, look for the final CRLF
                     let (next_buf, _) = read_and_parse(super::parse::crlf, transport, buf, 2)
                         .await
-                        .map_err(|e| BodyErrorReason::InvalidChunkTerminator.with_cx(e))?
-                        .ok_or_else(|| {
-                            BodyErrorReason::ClosedWhileReadingChunkTerminator.as_err()
-                        })?;
+                        .map_err(BodyError::InvalidChunkTerminator)?
+                        .ok_or(BodyError::ClosedWhileReadingChunkTerminator)?;
                     buf = next_buf;
                     *self = ChunkedDecoder::Done;
                     buf_slot.replace(buf);
@@ -190,10 +190,8 @@ impl ChunkedDecoder {
                     // look for CRLF terminator
                     let (next_buf, _) = read_and_parse(super::parse::crlf, transport, buf, 2)
                         .await
-                        .map_err(|e| BodyErrorReason::InvalidChunkTerminator.with_cx(e))?
-                        .ok_or_else(|| {
-                            BodyErrorReason::ClosedWhileReadingChunkTerminator.as_err()
-                        })?;
+                        .map_err(|_| BodyError::InvalidChunkTerminator)?
+                        .ok_or(BodyError::ClosedWhileReadingChunkTerminator)?;
                     buf = next_buf;
                     *self = ChunkedDecoder::ReadingChunkHeader;
                     buf_slot.replace(buf);
@@ -205,7 +203,7 @@ impl ChunkedDecoder {
 
                     let res;
                     (res, buf) = buf.read_into(*remain as usize, transport).await;
-                    res.map_err(|e| BodyErrorReason::ErrorWhileReadingChunkData.with_cx(e))?;
+                    res.map_err(BodyError::ErrorWhileReadingChunkData)?;
                 }
 
                 let chunk = buf.take_at_most(*remain as usize);
@@ -216,7 +214,7 @@ impl ChunkedDecoder {
                         return Ok(BodyChunk::Chunk(chunk.into()));
                     }
                     None => {
-                        return Err(BodyErrorReason::ClosedWhileReadingChunkData.as_err().into());
+                        return Err(BodyError::ClosedWhileReadingChunkData.into());
                     }
                 }
             } else {
@@ -247,7 +245,7 @@ pub(crate) async fn write_h1_body(
     transport: &mut impl WriteOwned,
     body: &mut impl Body,
     mode: BodyWriteMode,
-) -> eyre::Result<()> {
+) -> Result<(), BodyError> {
     loop {
         match body.next_chunk().await? {
             BodyChunk::Chunk(chunk) => write_h1_body_chunk(transport, chunk, mode).await?,
@@ -283,7 +281,7 @@ pub(crate) async fn write_h1_body_chunk(
             transport.write_all_owned(chunk).await?;
         }
         BodyWriteMode::Empty => {
-            return Err(BodyErrorReason::CalledWriteBodyChunkWhenNoBodyWasExpected
+            return Err(BodyError::CalledWriteBodyChunkWhenNoBodyWasExpected
                 .as_err()
                 .into());
         }
