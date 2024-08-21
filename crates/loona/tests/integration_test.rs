@@ -587,15 +587,8 @@ fn curl_echo_body(typ: BodyType) {
             cmd.arg("--header").arg("transfer-encoding: chunked");
         }
 
-        let output = cmd.output().await?;
-        let res_body = if output.status.success() {
-            output.stdout
-        } else {
-            return Err(BX::from_string(format!(
-                "command failed with status: {:?}",
-                output.status
-            )));
-        };
+        let output = cmd.output_assert_success().await;
+        let res_body = output.stdout;
 
         debug!("Got body: {:?}", res_body.hex_dump());
         assert_eq!(res_body.len(), req_body.len());
@@ -645,15 +638,8 @@ fn curl_echo_body_noproxy(typ: BodyType) {
             cmd.arg("--header").arg("transfer-encoding: chunked");
         }
 
-        let output = cmd.output().await?;
-        let res_body = if output.status.success() {
-            output.stdout
-        } else {
-            return Err(BX::from_string(format!(
-                "command failed with status: {:?}",
-                output.status
-            )));
-        };
+        let output = cmd.output_assert_success().await;
+        let res_body = output.stdout;
 
         debug!("Got body: {:?}", res_body.hex_dump());
         assert_eq!(res_body.len(), req_body.len());
@@ -790,15 +776,8 @@ fn h2_basic_post() {
         cmd.arg("--header")
             .arg("content-type: application/octet-stream");
 
-        let output = cmd.output().await?;
-        let res_body = if output.status.success() {
-            output.stdout
-        } else {
-            return Err(BX::from_string(format!(
-                "command failed with status: {:?}",
-                output.status
-            )));
-        };
+        let output = cmd.output_assert_success().await;
+        let res_body = output.stdout;
 
         debug!("Got body: {:?}", res_body.hex_dump());
         assert_eq!(res_body.len(), req_body.len());
@@ -911,7 +890,7 @@ fn h2_basic_post() {
 
     helpers::run(async move {
         let (ln_addr, guard, server_fut) = start_server().await?;
-        let client_fut = tokio::task::spawn_blocking(move || client(ln_addr, guard)).await?;
+        let client_fut = client(ln_addr, guard);
 
         tokio::try_join!(server_fut, client_fut)?;
         debug!("everything has been joined");
@@ -969,15 +948,9 @@ fn h2_basic_get() {
         cmd.arg("--http2-prior-knowledge");
         cmd.arg(format!("http://{ln_addr}/stream-big-body"));
 
-        let output = cmd.output().await?;
-        let res_body = if output.status.success() {
-            output.stdout
-        } else {
-            return Err(BX::from_string(format!(
-                "command failed with status: {:?}",
-                output.status
-            )));
-        };
+        let output = cmd.output_assert_success().await;
+        let res_body = output.stdout;
+
         let ref_body = "this is a big chunk".repeat(256).repeat(128);
         assert_eq!(res_body.len(), ref_body.len());
         assert_eq!(String::from_utf8(res_body).unwrap(), ref_body);
@@ -1099,12 +1072,12 @@ fn h2_basic_get() {
 }
 
 trait CommandExt {
-    fn output_assert_success(&mut self) -> std::process::Output;
+    async fn output_assert_success(&mut self) -> std::process::Output;
 }
 
 impl CommandExt for Command {
-    fn output_assert_success(&mut self) -> std::process::Output {
-        let output = self.output().unwrap();
+    async fn output_assert_success(&mut self) -> std::process::Output {
+        let output = self.output().await.unwrap();
         if !output.status.success() {
             // print stderr
             eprintln!("command failed with status: {:?}", output.status);
