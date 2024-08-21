@@ -21,7 +21,7 @@ pub(crate) enum ChunkPosition {
 }
 
 pub(crate) struct StreamIncoming {
-    tx: mpsc::Sender<IncomingMessagesResult>,
+    tx: mpsc::Sender<IncomingMessageResult>,
 
     // total bytes received, which we keep track of, because if the client
     // announces a content-length and sends fewer or more bytes, we will
@@ -34,14 +34,20 @@ pub(crate) struct StreamIncoming {
     pub(crate) capacity: i64,
 }
 
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum StreamIncomingError {
+    StreamReset,
+}
+
 impl StreamIncoming {
     pub(crate) fn new(
         initial_window_size: u32,
         content_length: Option<u64>,
-        piece_tx: mpsc::Sender<Result<IncomingMessage, eyre::Error>>,
+        tx: mpsc::Sender<IncomingMessageResult>,
     ) -> Self {
         Self {
-            tx: piece_tx,
+            tx,
             total_received: 0,
             content_length,
             capacity: initial_window_size as i64,
@@ -108,25 +114,43 @@ impl StreamIncoming {
         Ok(())
     }
 
-    pub(crate) async fn send_error(&mut self, err: eyre::Report) {
+    pub(crate) async fn send_error(&mut self, err: StreamIncomingError) {
         let _ = self.tx.send(Err(err)).await;
     }
 }
 
-// FIXME: don't use eyre, do proper error handling
-pub(crate) type IncomingMessagesResult = eyre::Result<IncomingMessage>;
+pub(crate) type IncomingMessageResult = Result<IncomingMessage, StreamIncomingError>;
 
 #[derive(Debug)]
 pub(crate) struct H2Body {
     pub(crate) content_length: Option<u64>,
-
     pub(crate) eof: bool,
+    pub(crate) rx: mpsc::Receiver<IncomingMessageResult>,
+}
 
-    // TODO: more specific error handling
-    pub(crate) rx: mpsc::Receiver<IncomingMessagesResult>,
+#[derive(Debug)]
+#[non_exhaustive]
+pub(crate) enum H2BodyError {
+    StreamReset,
+
+    UnexpectedEof,
+}
+
+impl fmt::Display for H2BodyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::error::Error for H2BodyError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        None
+    }
 }
 
 impl Body for H2Body {
+    type Error = H2BodyError;
+
     fn content_len(&self) -> Option<u64> {
         self.content_length
     }
@@ -135,21 +159,21 @@ impl Body for H2Body {
         self.eof
     }
 
-    async fn next_chunk(&mut self) -> eyre::Result<BodyChunk> {
+    async fn next_chunk(&mut self) -> Result<BodyChunk, H2BodyError> {
         let chunk = if self.eof {
             BodyChunk::Done { trailers: None }
         } else {
             match self.rx.recv().await {
-                Some(msg) => match msg? {
-                    IncomingMessage::Piece(piece) => BodyChunk::Chunk(piece),
-                    IncomingMessage::Trailers(trailers) => {
+                Some(msg) => match msg {
+                    Ok(IncomingMessage::Piece(piece)) => BodyChunk::Chunk(piece),
+                    Ok(IncomingMessage::Trailers(trailers)) => {
                         self.eof = true;
                         BodyChunk::Done {
                             trailers: Some(trailers),
                         }
                     }
+                    Err(StreamIncomingError::StreamReset) => return Err(H2BodyError::StreamReset),
                 },
-                // TODO: handle trailers
                 None => {
                     self.eof = true;
                     BodyChunk::Done { trailers: None }
@@ -194,15 +218,17 @@ impl SinglePieceBody {
 }
 
 impl Body for SinglePieceBody {
+    type Error = std::convert::Infallible;
+
     fn content_len(&self) -> Option<u64> {
-        self.piece.as_ref().map(|piece| piece.len() as u64)
+        Some(self.content_len)
     }
 
     fn eof(&self) -> bool {
         self.piece.is_none()
     }
 
-    async fn next_chunk(&mut self) -> eyre::Result<BodyChunk> {
+    async fn next_chunk(&mut self) -> Result<BodyChunk, Self::Error> {
         tracing::trace!( has_piece = %self.piece.is_some(), "SinglePieceBody::next_chunk");
         if let Some(piece) = self.piece.take() {
             Ok(BodyChunk::Chunk(piece))

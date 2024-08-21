@@ -4,8 +4,8 @@ use tracing::{debug, trace};
 
 use buffet::{ReadOwned, Roll, RollMut};
 
-#[non_exhaustive]
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ReadAndParseError {
     /// Allocation error
     Alloc(buffet::bufpool::Error),
@@ -18,7 +18,7 @@ pub enum ReadAndParseError {
 
     /// Parsing error
     // TODO: should we pass any amount of detail here?
-    ParsingError,
+    ParsingError { parser: &'static str },
 }
 
 impl std::fmt::Display for ReadAndParseError {
@@ -33,13 +33,14 @@ impl std::error::Error for ReadAndParseError {
             ReadAndParseError::Alloc(e) => Some(e),
             ReadAndParseError::ReadError(e) => Some(e),
             ReadAndParseError::BufferLimitReachedWhileParsing { .. } => None,
-            ReadAndParseError::ParsingError => None,
+            ReadAndParseError::ParsingError { .. } => None,
         }
     }
 }
 
 /// Returns `None` on EOF, error if partially parsed message.
 pub(crate) async fn read_and_parse<Parser, Output>(
+    parser_name: &'static str,
     parser: Parser,
     stream: &mut impl ReadOwned,
     mut buf: RollMut,
@@ -103,17 +104,13 @@ where
                         debug!(?err, "parsing error");
                         debug!(input = %e.input.to_string_lossy(), "input was");
                     }
-                    return Err(ReadAndParseError::ParsingError);
+                    return Err(ReadAndParseError::ParsingError {
+                        parser: parser_name,
+                    });
                 }
             }
         };
     }
-}
-
-#[derive(thiserror::Error, Debug)]
-pub(crate) enum SemanticError {
-    #[error("buffering limit reached while parsing")]
-    BufferLimitReachedWhileParsing,
 }
 
 impl SemanticError {

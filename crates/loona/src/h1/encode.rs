@@ -155,7 +155,6 @@ where
 {
     pub(crate) transport_w: T,
     mode: BodyWriteMode,
-    bytes_written: u64,
 }
 
 impl<T> H1Encoder<T>
@@ -166,21 +165,17 @@ where
         Self {
             transport_w,
             mode: BodyWriteMode::Empty,
-            bytes_written: 0,
         }
     }
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum H1EncoderError {
     IoError(std::io::Error),
     WrongState {
         expected: BodyWriteMode,
         actual: BodyWriteMode,
-    },
-    WroteMoreThanAnnouncedContentLength {
-        would_write: usize,
-        announced: usize,
     },
     BodyError(BodyError),
 }
@@ -236,34 +231,15 @@ where
     }
 
     async fn write_body_chunk(&mut self, chunk: Piece) -> Result<(), Self::Error> {
-        if self.mode == BodyWriteMode::Empty {
-            return Err(H1EncoderError::WrongState {
-                expected: BodyWriteMode::ContentLength(0),
-                actual: self.mode,
-            });
-        }
-        if let BodyWriteMode::ContentLength(length) = self.mode {
-            if self.bytes_written + chunk.len() > length {
-                return Err(H1EncoderError::WroteMoreThanAnnouncedContentLength {
-                    would_write: self.bytes_written + chunk.len(),
-                    announced: length,
-                });
-            }
-        }
+        // note: we don't check content length here, because it's done by the Responder,
+        // note by encoders.
+
         write_h1_body_chunk(&mut self.transport_w, chunk, self.mode)
             .await
             .map_err(H1EncoderError::from)
     }
 
     async fn write_body_end(&mut self) -> Result<(), Self::Error> {
-        if let BodyWriteMode::ContentLength(length) = self.mode {
-            if self.bytes_written < length {
-                return Err(H1EncoderError::WroteMoreThanAnnouncedContentLength {
-                    would_write: self.bytes_written,
-                    announced: length,
-                });
-            }
-        }
         write_h1_body_end(&mut self.transport_w, self.mode)
             .await
             .map_err(H1EncoderError::from)

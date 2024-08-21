@@ -25,17 +25,16 @@ use tracing::{debug, trace};
 
 use crate::{
     error::ServeError,
-    h1::ServeOutcome,
     h2::{
-        body::{H2Body, IncomingMessagesResult, StreamIncoming},
+        body::{H2Body, IncomingMessageResult, StreamIncoming, StreamIncomingError},
         encode::H2Encoder,
         types::{
             BodyOutgoing, ConnState, H2ConnectionError, H2Event, H2EventPayload, H2RequestError,
             H2StreamError, HeadersOrTrailers, HeadersOutgoing, StreamOutgoing, StreamState,
         },
     },
-    util::read_and_parse,
-    Headers, Method, Request, Responder, ServerDriver,
+    util::{read_and_parse, ReadAndParseError},
+    Headers, Method, Request, Responder, ServeOutcome, ServerDriver,
 };
 
 use super::{
@@ -58,16 +57,20 @@ impl Default for ServerConf {
     }
 }
 
-pub async fn serve(
+pub async fn serve<Driver>(
     (transport_r, transport_w): (impl ReadOwned, impl WriteOwned),
     conf: Rc<ServerConf>,
     client_buf: RollMut,
-    driver: Rc<impl ServerDriver + 'static>,
-) -> Result<(), ServeError> {
+    driver: Rc<Driver>,
+) -> Result<(), ServeError<Driver::Error>>
+where
+    Driver: ServerDriver + 'static,
+{
     let mut state = ConnState::default();
     state.self_settings.max_concurrent_streams = conf.max_streams;
 
-    let mut cx = ServerContext::new(driver.clone(), state, transport_w)?;
+    let mut cx =
+        ServerContext::new(driver.clone(), state, transport_w).map_err(ServeError::Alloc)?;
     cx.work(client_buf, transport_r).await?;
 
     debug!("finished serving");
@@ -94,11 +97,15 @@ pub(crate) struct ServerContext<D: ServerDriver + 'static, W: WriteOwned> {
     ev_rx: mpsc::Receiver<H2Event>,
 }
 
-impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
+impl<Driver, Write> ServerContext<Driver, Write>
+where
+    Driver: ServerDriver + 'static,
+    Write: WriteOwned,
+{
     pub(crate) fn new(
-        driver: Rc<D>,
+        driver: Rc<Driver>,
         state: ConnState,
-        transport_w: W,
+        transport_w: Write,
     ) -> Result<Self, buffet::bufpool::Error> {
         let mut hpack_dec = loona_hpack::Decoder::new();
         hpack_dec
@@ -126,16 +133,18 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         &mut self,
         mut client_buf: RollMut,
         mut transport_r: impl ReadOwned,
-    ) -> Result<ServeOutcome, ServeError> {
+    ) -> Result<ServeOutcome, ServeError<Driver::Error>> {
         // first read the preface
         {
             (client_buf, _) = match read_and_parse(
+                "Http2Preface",
                 parse::preface,
                 &mut transport_r,
                 client_buf,
                 parse::PREFACE.len(),
             )
-            .await?
+            .await
+            .map_err(|e| H2ConnectionError::ReadAndParse(e))?
             {
                 Some((client_buf, frame)) => (client_buf, frame),
                 None => {
@@ -160,7 +169,8 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     (Setting::MaxFrameSize, s.max_frame_size),
                     (Setting::MaxHeaderListSize, s.max_header_list_size),
                 ])
-                .into_piece(&mut self.out_scratch)?
+                .into_piece(&mut self.out_scratch)
+                .map_err(ServeError::DownstreamWrite)?
             };
             let frame = Frame::new(
                 FrameType::Settings(Default::default()),
@@ -196,11 +206,11 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
                     if let Err(e) = res {
                         match e {
-                            H2ConnectionError::ReadError(e) => {
+                            H2ConnectionError::ReadAndParse(e) => {
                                 let mut should_ignore_err = false;
 
                                 // if this is a connection reset and we've sent a goaway, ignore it
-                                if let Some(io_error) = e.root_cause().downcast_ref::<std::io::Error>() {
+                                if let ReadAndParseError::ReadError(io_error) = &e {
                                     if io_error.kind() == std::io::ErrorKind::ConnectionReset {
                                         should_ignore_err = true;
                                     }
@@ -208,7 +218,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
                                 debug!(%should_ignore_err, "deciding whether or not to propagate deframer error");
                                 if !should_ignore_err {
-                                    return Err(e.wrap_err("h2 io"));
+                                    return Err(H2ConnectionError::ReadAndParse(e).into());
                                 }
                             },
                             e => {
@@ -222,7 +232,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         // what about the GOAWAY?
 
                         debug!("h2 process task finished with error: {e}");
-                        return Err(e).wrap_err("h2 process");
+                        return Err(e.into());
                     }
                 }
                 res = &mut process_task => {
@@ -244,6 +254,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
             // TODO: figure out graceful shutdown: this would involve sending a goaway
             // before this point, and processing all the connections we've accepted
+            // FIXME: we have a GoAway encoder, why are we doing this manually
             debug!(last_stream_id = %self.state.last_stream_id, ?error_code, "Sending GoAway");
             let payload =
                 self.out_scratch
@@ -256,10 +267,12 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     })?;
 
             let frame = Frame::new(FrameType::GoAway, StreamId::CONNECTION);
-            self.write_frame(frame, PieceList::single(payload)).await?;
+            self.write_frame(frame, PieceList::single(payload))
+                .await
+                .map_err(ServeError::H2ConnectionError)?;
         }
 
-        Ok(())
+        Ok(ServeOutcome::SuccessfulHttp2GracefulShutdown)
     }
 
     async fn deframe_loop(
@@ -273,6 +286,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
             let frame;
             trace!("Reading frame... Buffer length: {}", client_buf.len());
             let frame_res = read_and_parse(
+                "Http2Frame",
                 Frame::parse,
                 &mut transport_r,
                 client_buf,
@@ -282,7 +296,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
             let maybe_frame = match frame_res {
                 Ok(inner) => inner,
-                Err(e) => return Err(H2ConnectionError::ReadError(e)),
+                Err(e) => return Err(H2ConnectionError::ReadAndParse(e)),
             };
             (client_buf, frame) = match maybe_frame {
                 Some((client_buf, frame)) => (client_buf, frame),
@@ -313,12 +327,14 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
             );
             let mut payload;
             (client_buf, payload) = match read_and_parse(
+                "FramePayload",
                 nom::bytes::streaming::take(frame.len as usize),
                 &mut transport_r,
                 client_buf,
                 frame.len as usize,
             )
-            .await?
+            .await
+            .map_err(|e| H2ConnectionError::ReadAndParse(e))?
             {
                 Some((client_buf, payload)) => (client_buf, payload),
                 None => {
@@ -786,7 +802,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
         debug!(?frame, ">");
         let frame_roll = frame
             .into_piece(&mut self.out_scratch)
-            .map_err(|e| eyre::eyre!(e))?;
+            .map_err(H2ConnectionError::WriteError)?;
 
         if payload.is_empty() {
             trace!("Writing frame without payload");
@@ -875,9 +891,11 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
             FrameType::Headers(flags) => {
                 if flags.contains(HeadersFlags::Priority) {
                     let pri_spec;
-                    (payload, pri_spec) = PrioritySpec::parse(payload)
-                        .finish()
-                        .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
+                    (payload, pri_spec) = PrioritySpec::parse(payload).finish().map_err(|_| {
+                        H2ConnectionError::ReadAndParse(ReadAndParseError::ParsingError {
+                            parser: "PrioritySpec",
+                        })
+                    })?;
                     debug!(exclusive = %pri_spec.exclusive, stream_dependency = ?pri_spec.stream_dependency, weight = %pri_spec.weight, "received priority, exclusive");
 
                     if pri_spec.stream_dependency == frame.stream_id {
@@ -1075,9 +1093,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                         match ss {
                             StreamState::Open { mut incoming, .. }
                             | StreamState::HalfClosedLocal { mut incoming, .. } => {
-                                incoming
-                                    .send_error(eyre::eyre!("Received RST_STREAM from peer"))
-                                    .await;
+                                incoming.send_error(StreamIncomingError::StreamReset).await;
                             }
                             StreamState::HalfClosedRemote { .. } => {
                                 // good
@@ -1209,9 +1225,11 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
                     });
                 }
 
-                let (_, update) = WindowUpdate::parse(payload)
-                    .finish()
-                    .map_err(|err| eyre::eyre!("parsing error: {err:?}"))?;
+                let (_, update) = WindowUpdate::parse(payload).finish().map_err(|_| {
+                    H2ConnectionError::ReadAndParse(ReadAndParseError::ParsingError {
+                        parser: "WindowUpdate",
+                    })
+                })?;
                 debug!(?update, "Received window update");
 
                 if update.increment == 0 {
@@ -1771,7 +1789,7 @@ impl<D: ServerDriver + 'static, W: WriteOwned> ServerContext<D, W> {
 
                 let responder = Responder::new(H2Encoder::new(stream_id, self.ev_tx.clone()));
 
-                let (piece_tx, piece_rx) = mpsc::channel::<IncomingMessagesResult>(1); // TODO: is 1 a sensible value here?
+                let (piece_tx, piece_rx) = mpsc::channel::<IncomingMessageResult>(1); // TODO: is 1 a sensible value here?
 
                 let req_body = H2Body {
                     content_length,

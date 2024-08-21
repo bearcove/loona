@@ -6,4 +6,4 @@ pub use server::*;
 
 mod body;
 mod encode;
-mod types;
+pub(crate) mod types;

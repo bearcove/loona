@@ -111,6 +111,7 @@ pub enum BodyChunk {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum BodyError {
     /// next_chunk() was called after an error was returned
     CalledNextChunkAfterError,
@@ -206,19 +207,28 @@ impl Body for () {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServeOutcome {
-    // HTTP/1.1 only: The request we handled had a `connection: close` header
+    /// HTTP/1.1 only: The request we handled had a `connection: close` header
     ClientRequestedConnectionClose,
 
-    // HTTP/1.1 only: The request we handled had a `connection: close` header
+    /// HTTP/1.1 only: The request we handled had a `connection: close` header
     ServerRequestedConnectionClose,
 
     // Client closed connection before sending a second request
-    // (without requesting connection close)
+    /// (without requesting connection close)
     ClientClosedConnectionBetweenRequests,
 
-    // HTTP/1.1 only: Client didn't speak HTTP/1.1 (missing/invalid request line)
+    /// HTTP/1.1 only: Client didn't speak HTTP/1.1 (missing/invalid request
+    /// line)
     ClientDidntSpeakHttp11,
 
-    // HTTP/2 only: Client didn't speak HTTP/2 (missing/invalid request line)
+    // We refused to service a request because it was too large. Because it's HTTP/1.1,
+    /// we had to close the entire connection.
+    RequestHeadersTooLargeOnHttp1Conn,
+
+    /// HTTP/2 only: Client didn't speak HTTP/2 (missing/invalid request line)
     ClientDidntSpeakHttp2,
+
+    /// HTTP/2 only: Client sent a GOAWAY frame, and we've sent a response to
+    /// the client
+    SuccessfulHttp2GracefulShutdown,
 }

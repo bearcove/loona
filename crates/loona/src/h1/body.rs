@@ -161,19 +161,30 @@ impl ChunkedDecoder {
             }
 
             if let ChunkedDecoder::ReadingChunkHeader = self {
-                let (next_buf, chunk_size) =
-                    read_and_parse(super::parse::chunk_size, transport, buf, 16)
-                        .await
-                        .map_err(|_| BodyError::InvalidChunkSize)?
-                        .ok_or(BodyError::ClosedWhileReadingChunkSize)?;
+                let (next_buf, chunk_size) = read_and_parse(
+                    "Http1BodyChunk",
+                    super::parse::chunk_size,
+                    transport,
+                    buf,
+                    16,
+                )
+                .await
+                .map_err(|_| BodyError::InvalidChunkSize)?
+                .ok_or(BodyError::ClosedWhileReadingChunkSize)?;
                 buf = next_buf;
 
                 if chunk_size == 0 {
                     // that's the final chunk, look for the final CRLF
-                    let (next_buf, _) = read_and_parse(super::parse::crlf, transport, buf, 2)
-                        .await
-                        .map_err(BodyError::InvalidChunkTerminator)?
-                        .ok_or(BodyError::ClosedWhileReadingChunkTerminator)?;
+                    let (next_buf, _) = read_and_parse(
+                        "Http1BodyChunkFinalTerminator",
+                        super::parse::crlf,
+                        transport,
+                        buf,
+                        2,
+                    )
+                    .await
+                    .map_err(BodyError::InvalidChunkTerminator)?
+                    .ok_or(BodyError::ClosedWhileReadingChunkTerminator)?;
                     buf = next_buf;
                     *self = ChunkedDecoder::Done;
                     buf_slot.replace(buf);
@@ -188,10 +199,16 @@ impl ChunkedDecoder {
             if let ChunkedDecoder::ReadingChunk { remain } = self {
                 if *remain == 0 {
                     // look for CRLF terminator
-                    let (next_buf, _) = read_and_parse(super::parse::crlf, transport, buf, 2)
-                        .await
-                        .map_err(BodyError::InvalidChunkTerminator)?
-                        .ok_or(BodyError::ClosedWhileReadingChunkTerminator)?;
+                    let (next_buf, _) = read_and_parse(
+                        "Http1BodyChunkTerminator",
+                        super::parse::crlf,
+                        transport,
+                        buf,
+                        2,
+                    )
+                    .await
+                    .map_err(BodyError::InvalidChunkTerminator)?
+                    .ok_or(BodyError::ClosedWhileReadingChunkTerminator)?;
                     buf = next_buf;
                     *self = ChunkedDecoder::ReadingChunkHeader;
                     buf_slot.replace(buf);

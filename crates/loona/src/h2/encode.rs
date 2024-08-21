@@ -7,7 +7,7 @@ use super::types::{H2Event, H2EventPayload};
 use crate::{Encoder, Response};
 use loona_h2::StreamId;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[non_exhaustive]
 pub enum EncoderState {
     ExpectResponseHeaders,
@@ -48,6 +48,7 @@ impl H2Encoder {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum H2EncoderError {
     /// HTTP/2 does not support informational responses
     H2DoesNotSupportInformationalResponses {
@@ -95,16 +96,26 @@ impl Encoder for H2Encoder {
     }
 
     // TODO: BodyWriteMode is not relevant for h2
-    async fn write_body_chunk(&mut self, chunk: Piece) -> eyre::Result<()> {
-        assert!(matches!(self.state, EncoderState::ExpectResponseBody));
+    async fn write_body_chunk(&mut self, chunk: Piece) -> Result<(), Self::Error> {
+        if self.state != EncoderState::ExpectResponseBody {
+            return Err(H2EncoderError::WrongState {
+                expected: EncoderState::ExpectResponseBody,
+                actual: self.state,
+            });
+        }
 
         self.send(H2EventPayload::BodyChunk(chunk)).await?;
         Ok(())
     }
 
     // TODO: BodyWriteMode is not relevant for h2
-    async fn write_body_end(&mut self) -> eyre::Result<()> {
-        assert!(matches!(self.state, EncoderState::ExpectResponseBody));
+    async fn write_body_end(&mut self) -> Result<(), Self::Error> {
+        if self.state != EncoderState::ExpectResponseBody {
+            return Err(H2EncoderError::WrongState {
+                expected: EncoderState::ExpectResponseBody,
+                actual: self.state,
+            });
+        }
 
         self.send(H2EventPayload::BodyEnd).await?;
         self.state = EncoderState::ResponseDone;
@@ -113,8 +124,13 @@ impl Encoder for H2Encoder {
     }
 
     // TODO: handle trailers
-    async fn write_trailers(&mut self, _trailers: Box<crate::Headers>) -> eyre::Result<()> {
-        assert!(matches!(self.state, EncoderState::ResponseDone));
+    async fn write_trailers(&mut self, _trailers: Box<crate::Headers>) -> Result<(), Self::Error> {
+        if self.state != EncoderState::ResponseDone {
+            return Err(H2EncoderError::WrongState {
+                expected: EncoderState::ResponseDone,
+                actual: self.state,
+            });
+        }
 
         todo!("write trailers")
     }

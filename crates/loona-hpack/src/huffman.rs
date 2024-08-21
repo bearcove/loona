@@ -26,6 +26,7 @@ impl HuffmanCodeSymbol {
 }
 
 #[derive(thiserror::Error, PartialEq, Copy, Clone, Debug)]
+#[non_exhaustive]
 pub enum HuffmanDecoderError {
     /// Any padding strictly larger than 7 bits MUST be interpreted as an error
     #[error("Padding too large")]

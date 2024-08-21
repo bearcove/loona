@@ -1,7 +1,6 @@
 mod types;
 mod util;
 
-use error::BoxError;
 pub use types::*;
 
 pub mod h1;

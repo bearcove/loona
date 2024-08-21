@@ -132,6 +132,7 @@ where
     let recv_res_fut = {
         async move {
             let (buf, res) = read_and_parse(
+                "Http1Response",
                 super::parse::response,
                 &mut transport_r,
                 buf,
