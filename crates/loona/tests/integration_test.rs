@@ -12,9 +12,10 @@ use loona::{
 };
 use pretty_assertions::assert_eq;
 use pretty_hex::PrettyHex;
-use std::{future::Future, net::SocketAddr, process::Command, rc::Rc, time::Duration};
+use std::{future::Future, net::SocketAddr, rc::Rc, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::process::Command;
 use tracing::debug;
 
 mod proxy;
@@ -568,7 +569,7 @@ fn curl_echo_body_chunked() {
 
 fn curl_echo_body(typ: BodyType) {
     #[allow(drop_bounds)]
-    fn client(typ: BodyType, ln_addr: SocketAddr, _guard: impl Drop) -> b_x::Result<()> {
+    async fn client(typ: BodyType, ln_addr: SocketAddr, _guard: impl Drop) -> b_x::Result<()> {
         let req_body = "Please return to sender";
         let mut cmd = Command::new("curl");
 
@@ -586,7 +587,15 @@ fn curl_echo_body(typ: BodyType) {
             cmd.arg("--header").arg("transfer-encoding: chunked");
         }
 
-        let res_body = cmd.output_assert_success().stdout;
+        let output = cmd.output().await?;
+        let res_body = if output.status.success() {
+            output.stdout
+        } else {
+            return Err(BX::from_string(format!(
+                "command failed with status: {:?}",
+                output.status
+            )));
+        };
 
         debug!("Got body: {:?}", res_body.hex_dump());
         assert_eq!(res_body.len(), req_body.len());
@@ -598,12 +607,7 @@ fn curl_echo_body(typ: BodyType) {
     helpers::run(async move {
         let (upstream_addr, _upstream_guard) = testbed::start().await?;
         let (ln_addr, guard, proxy_fut) = proxy::start(upstream_addr).await?;
-        let client_fut = async move {
-            tokio::task::spawn_blocking(move || client(typ, ln_addr, guard))
-                .await
-                .unwrap()
-        };
-
+        let client_fut = client(typ, ln_addr, guard);
         tokio::try_join!(proxy_fut, client_fut)?;
         debug!("everything has been joined");
 
@@ -623,9 +627,9 @@ fn curl_echo_body_noproxy_chunked() {
 
 fn curl_echo_body_noproxy(typ: BodyType) {
     #[allow(drop_bounds)]
-    fn client(typ: BodyType, ln_addr: SocketAddr, _guard: impl Drop) -> b_x::Result<()> {
+    async fn client(typ: BodyType, ln_addr: SocketAddr, _guard: impl Drop) -> b_x::Result<()> {
         let req_body = "Please return to sender";
-        let mut cmd = Command::new("curl");
+        let mut cmd = tokio::process::Command::new("curl");
 
         cmd.arg("--silent");
         cmd.arg("--fail-with-body");
@@ -641,7 +645,15 @@ fn curl_echo_body_noproxy(typ: BodyType) {
             cmd.arg("--header").arg("transfer-encoding: chunked");
         }
 
-        let res_body = cmd.output_assert_success().stdout;
+        let output = cmd.output().await?;
+        let res_body = if output.status.success() {
+            output.stdout
+        } else {
+            return Err(BX::from_string(format!(
+                "command failed with status: {:?}",
+                output.status
+            )));
+        };
 
         debug!("Got body: {:?}", res_body.hex_dump());
         assert_eq!(res_body.len(), req_body.len());
@@ -754,11 +766,7 @@ fn curl_echo_body_noproxy(typ: BodyType) {
 
     helpers::run(async move {
         let (ln_addr, guard, server_fut) = start_server().await?;
-        let client_fut = async move {
-            tokio::task::spawn_blocking(move || client(typ, ln_addr, guard))
-                .await
-                .unwrap()
-        };
+        let client_fut = client(typ, ln_addr, guard);
 
         tokio::try_join!(server_fut, client_fut)?;
         debug!("everything has been joined");
@@ -770,9 +778,9 @@ fn curl_echo_body_noproxy(typ: BodyType) {
 #[test]
 fn h2_basic_post() {
     #[allow(drop_bounds)]
-    fn client(ln_addr: SocketAddr, _guard: impl Drop) -> b_x::Result<()> {
+    async fn client(ln_addr: SocketAddr, _guard: impl Drop) -> b_x::Result<()> {
         let req_body = "Please return to sender";
-        let mut cmd = Command::new("curl");
+        let mut cmd = tokio::process::Command::new("curl");
 
         cmd.arg("--silent");
         cmd.arg("--fail-with-body");
@@ -782,7 +790,15 @@ fn h2_basic_post() {
         cmd.arg("--header")
             .arg("content-type: application/octet-stream");
 
-        let res_body = cmd.output_assert_success().stdout;
+        let output = cmd.output().await?;
+        let res_body = if output.status.success() {
+            output.stdout
+        } else {
+            return Err(BX::from_string(format!(
+                "command failed with status: {:?}",
+                output.status
+            )));
+        };
 
         debug!("Got body: {:?}", res_body.hex_dump());
         assert_eq!(res_body.len(), req_body.len());
@@ -895,11 +911,7 @@ fn h2_basic_post() {
 
     helpers::run(async move {
         let (ln_addr, guard, server_fut) = start_server().await?;
-        let client_fut = async move {
-            tokio::task::spawn_blocking(move || client(ln_addr, guard))
-                .await
-                .unwrap()
-        };
+        let client_fut = tokio::task::spawn_blocking(move || client(ln_addr, guard)).await?;
 
         tokio::try_join!(server_fut, client_fut)?;
         debug!("everything has been joined");
@@ -949,15 +961,23 @@ impl Body for SampleBody {
 #[test]
 fn h2_basic_get() {
     #[allow(drop_bounds)]
-    fn client(ln_addr: SocketAddr, _guard: impl Drop) -> b_x::Result<()> {
-        let mut cmd = Command::new("curl");
+    async fn client(ln_addr: SocketAddr, _guard: impl Drop) -> b_x::Result<()> {
+        let mut cmd = tokio::process::Command::new("curl");
 
         cmd.arg("--silent");
         cmd.arg("--fail-with-body");
         cmd.arg("--http2-prior-knowledge");
         cmd.arg(format!("http://{ln_addr}/stream-big-body"));
 
-        let res_body = cmd.output_assert_success().stdout;
+        let output = cmd.output().await?;
+        let res_body = if output.status.success() {
+            output.stdout
+        } else {
+            return Err(BX::from_string(format!(
+                "command failed with status: {:?}",
+                output.status
+            )));
+        };
         let ref_body = "this is a big chunk".repeat(256).repeat(128);
         assert_eq!(res_body.len(), ref_body.len());
         assert_eq!(String::from_utf8(res_body).unwrap(), ref_body);
@@ -1069,11 +1089,7 @@ fn h2_basic_get() {
 
     helpers::run(async move {
         let (ln_addr, guard, server_fut) = start_server().await?;
-        let client_fut = async move {
-            tokio::task::spawn_blocking(move || client(ln_addr, guard))
-                .await
-                .unwrap()
-        };
+        let client_fut = client(ln_addr, guard);
 
         tokio::try_join!(server_fut, client_fut)?;
         debug!("everything has been joined");

@@ -20,6 +20,11 @@ impl BX {
     pub fn from_boxed(e: Box<dyn StdError + 'static>) -> Self {
         Self(e)
     }
+
+    /// Create a new `BX` from a String
+    pub fn from_string(s: String) -> Self {
+        Self(s.into())
+    }
 }
 
 pub fn box_error(e: impl StdError + 'static) -> BX {
