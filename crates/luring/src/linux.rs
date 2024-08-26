@@ -10,7 +10,7 @@ thread_local! {
     // for op cancellations.
     static URING: Rc<IoUringAsync> = {
         // FIXME: magic values
-        Rc::new(IoUringAsync::new(8).unwrap())
+        Rc::new(IoUringAsync::new(512).unwrap())
     };
 }
 

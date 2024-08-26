@@ -110,6 +110,8 @@ async fn main() {
     println!("Using {proto:?} protocol (export TEST_PROTO=h1 or TEST_PROTO=h2 to override)");
 
     while let Ok((stream, _)) = ln.accept().await {
+        stream.set_nodelay(true).unwrap();
+
         tokio::spawn(async move {
             let mut builder = auto::Builder::new(TokioExecutor::new());
 
