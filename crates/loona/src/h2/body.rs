@@ -1,8 +1,6 @@
-use core::fmt;
-
 use tokio::sync::mpsc;
 
-use crate::{error::NeverError, Body, BodyChunk, Headers};
+use crate::{Body, BodyChunk, Headers};
 use buffet::Piece;
 
 use super::types::H2StreamError;
@@ -175,59 +173,5 @@ impl Body for H2Body {
             }
         };
         Ok(chunk)
-    }
-}
-
-pub(crate) struct SinglePieceBody {
-    content_len: u64,
-    piece: Option<Piece>,
-}
-
-impl fmt::Debug for SinglePieceBody {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut debug_struct = f.debug_struct("SinglePieceBody");
-        debug_struct.field("content_len", &self.content_len);
-
-        if let Some(piece) = &self.piece {
-            match std::str::from_utf8(piece.as_ref()) {
-                Ok(utf8_str) => debug_struct.field("piece", &utf8_str),
-                Err(_) => debug_struct.field("piece", &"(non-utf8 string)"),
-            };
-        } else {
-            debug_struct.field("piece", &"(none)");
-        }
-
-        debug_struct.finish()
-    }
-}
-
-impl SinglePieceBody {
-    pub(crate) fn new(piece: Piece) -> Self {
-        let content_len = piece.len() as u64;
-        Self {
-            content_len,
-            piece: Some(piece),
-        }
-    }
-}
-
-impl Body for SinglePieceBody {
-    type Error = NeverError;
-
-    fn content_len(&self) -> Option<u64> {
-        Some(self.content_len)
-    }
-
-    fn eof(&self) -> bool {
-        self.piece.is_none()
-    }
-
-    async fn next_chunk(&mut self) -> Result<BodyChunk, Self::Error> {
-        tracing::trace!( has_piece = %self.piece.is_some(), "SinglePieceBody::next_chunk");
-        if let Some(piece) = self.piece.take() {
-            Ok(BodyChunk::Chunk(piece))
-        } else {
-            Ok(BodyChunk::Done { trailers: None })
-        }
     }
 }

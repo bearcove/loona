@@ -34,13 +34,10 @@ use crate::{
         },
     },
     util::{read_and_parse, ReadAndParseError},
-    Headers, Method, Request, Responder, ResponderOrBodyError, ServeOutcome, ServerDriver,
+    Headers, Method, Request, Responder, ResponderOrBodyError, ServeOutcome, ServerDriver, SinglePieceBody,
 };
 
-use super::{
-    body::{ChunkPosition, SinglePieceBody},
-    types::H2ErrorLevel,
-};
+use super::{body::ChunkPosition, types::H2ErrorLevel};
 
 pub const MAX_WINDOW_SIZE: i64 = u32::MAX as i64;
 
