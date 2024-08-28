@@ -9,8 +9,7 @@ thread_local! {
     // This is a thread-local for now, but it shouldn't be. This is only the case
     // for op cancellations.
     static URING: Rc<IoUringAsync> = {
-        // FIXME: magic values
-        Rc::new(IoUringAsync::new(512).unwrap())
+        Rc::new(IoUringAsync::new_default().unwrap())
     };
 }
 
@@ -161,9 +160,44 @@ impl<S: squeue::Entry, C: cqueue::Entry> AsRawFd for IoUringAsync<S, C> {
 }
 
 impl IoUringAsync<io_uring::squeue::Entry, io_uring::cqueue::Entry> {
+    pub fn new_default() -> std::io::Result<Self> {
+        let mut entries = 512;
+        if let Ok(env_entries) = std::env::var("IO_URING_ENTRIES") {
+            entries = env_entries
+                .parse()
+                .expect("$IO_URING_ENTRIES must be a number");
+        }
+        eprintln!(
+            "==== IO_URING RING SIZE: {} (override with $IO_URING_ENTRIES)",
+            entries
+        );
+        Self::new(entries)
+    }
+
     pub fn new(entries: u32) -> std::io::Result<Self> {
+        let mut builder = io_uring::IoUring::builder();
+        let sqpoll_enabled = matches!(
+            std::env::var("IO_URING_SQPOLL").as_deref(),
+            Ok("1") | Ok("true")
+        );
+        eprintln!("==== SQPOLL: {sqpoll_enabled} (override with $IO_URING_SQPOLL=1)");
+
+        let mut sqpoll_idle_ms = 200;
+        if let Ok(env_sqpoll_idle_ms) = std::env::var("IO_URING_SQPOLL_IDLE_MS") {
+            sqpoll_idle_ms = env_sqpoll_idle_ms
+                .parse()
+                .expect("$IO_URING_SQPOLL_IDLE_MS must be a number");
+        }
+        eprintln!(
+            "==== SQPOLL_IDLE_MS: {} (override with $IO_URING_SQPOLL_IDLE_MS)",
+            sqpoll_idle_ms
+        );
+        if sqpoll_enabled {
+            builder.setup_sqpoll(sqpoll_idle_ms);
+        }
+
         Ok(Self {
-            uring: Rc::new(io_uring::IoUring::builder().build(entries)?),
+            uring: Rc::new(builder.build(entries)?),
             slab: Rc::new(RefCell::new(slab::Slab::new())),
         })
     }
