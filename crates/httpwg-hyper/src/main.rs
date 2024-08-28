@@ -36,12 +36,12 @@ where
 
     fn call(&self, req: Request<B>) -> Self::Future {
         Box::pin(async move {
-            let (parts, body) = req.into_parts();
+            let (parts, mut req_body) = req.into_parts();
 
             let path = parts.uri.path();
             match path {
                 "/echo-body" => {
-                    let body: BoxBody<E> = Box::pin(body);
+                    let body: BoxBody<E> = Box::pin(req_body);
                     let res = Response::builder().body(body).unwrap();
                     Ok(res)
                 }
@@ -64,6 +64,12 @@ where
                 }
                 _ => {
                     let parts = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
+
+                    // read everything from req body
+                    while let Some(_frame) = req_body.frame().await {
+                        // got frame, nice
+                    }
+
                     let body: BoxBody<E> =
                         Box::pin(http_body_util::Empty::new().map_err(|_| unreachable!()));
 

@@ -142,6 +142,7 @@ pub struct TcpWriteHalf(Rc<TcpStream>);
 
 impl WriteOwned for TcpWriteHalf {
     async fn write_owned(&mut self, buf: impl Into<Piece>) -> BufResult<usize, Piece> {
+        tracing::trace!("making new sqe");
         let buf = buf.into();
         let sqe = Write::new(
             io_uring::types::Fd(self.0.fd),
@@ -149,11 +150,14 @@ impl WriteOwned for TcpWriteHalf {
             buf.len().try_into().expect("usize -> u32"),
         )
         .build();
+        tracing::trace!("pushing sqe");
         let cqe = get_ring().push(sqe).await;
+        tracing::trace!("pushing sqe.. done!");
         let ret = match cqe.error_for_errno() {
             Ok(ret) => ret,
             Err(e) => return (Err(std::io::Error::from(e)), buf),
         };
+        tracing::trace!("pushing sqe.. done! (it even succeeded)");
         (Ok(ret as usize), buf)
     }
 

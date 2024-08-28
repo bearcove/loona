@@ -232,6 +232,7 @@ impl fmt::Display for StreamId {
 }
 
 /// See <https://httpwg.org/specs/rfc9113.html#FrameHeader>
+#[derive(Clone, Copy)]
 pub struct Frame {
     pub frame_type: FrameType,
     pub reserved: u8,

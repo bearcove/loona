@@ -29,7 +29,7 @@ pub fn initialize_allocator() -> Result<()> {
 
     let mem_usage_in_mb: f64 = num_bufs as f64 * (BUF_SIZE as usize) as f64 / 1024.0 / 1024.0;
     eprintln!(
-        "===== Initializing buffer pool with {} buffers, will use {:.2} MiB (override with $BUFFET_NUM_BUFS)",
+        "==== buffet will use {} buffers, for a constant {:.2} MiB usage (override with $BUFFET_NUM_BUFS)",
         num_bufs, mem_usage_in_mb
     );
     initialize_allocator_with_num_bufs(default_num_bufs as _)

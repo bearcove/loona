@@ -34,7 +34,8 @@ use crate::{
         },
     },
     util::{read_and_parse, ReadAndParseError},
-    Headers, Method, Request, Responder, ResponderOrBodyError, ServeOutcome, ServerDriver, SinglePieceBody,
+    Headers, Method, Request, Responder, ResponderOrBodyError, ServeOutcome, ServerDriver,
+    SinglePieceBody,
 };
 
 use super::{body::ChunkPosition, types::H2ErrorLevel};
@@ -1334,7 +1335,13 @@ where
 
         let frame = Frame::new(FrameType::RstStream, stream_id)
             .with_len((payload.len()).try_into().unwrap());
-        self.write_frame(frame, PieceList::single(payload)).await?;
+
+        for i in 0..15 {
+            tracing::trace!("Sending rst {i}");
+            self.write_frame(frame, PieceList::single(payload.clone()))
+                .await?;
+        }
+        tracing::trace!("All rsts sent");
 
         Ok(())
     }

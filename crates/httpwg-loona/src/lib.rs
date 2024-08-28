@@ -258,8 +258,12 @@ where
                 .await
                 .bx()?
             }
-            _ => res
-                .write_final_response_with_body(
+            _ => {
+                while (req_body.next_chunk().await).is_ok() {
+                    // got a chunk, nice
+                }
+
+                res.write_final_response_with_body(
                     Response {
                         status: StatusCode::OK,
                         ..Default::default()
@@ -267,7 +271,8 @@ where
                     &mut SinglePieceBody::from("it's less dire to lose, than to lose oneself"),
                 )
                 .await
-                .bx()?,
+                .bx()?
+            }
         };
         Ok(res)
     }

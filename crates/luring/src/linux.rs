@@ -105,14 +105,19 @@ impl<C: cqueue::Entry> Future for OpInner<C> {
         let lifecycle = &mut guard[self.index];
         match lifecycle {
             Lifecycle::Submitted => {
+                tracing::trace!("polling OpInner {}... submitted!", self.index);
                 *lifecycle = Lifecycle::Waiting(cx.waker().clone());
                 std::task::Poll::Pending
             }
             Lifecycle::Waiting(_) => {
+                tracing::trace!("polling OpInner {}... waiting!", self.index);
                 *lifecycle = Lifecycle::Waiting(cx.waker().clone());
                 std::task::Poll::Pending
             }
-            Lifecycle::Completed(cqe) => std::task::Poll::Ready(cqe.clone()),
+            Lifecycle::Completed(cqe) => {
+                tracing::trace!("polling OpInner {}... completed!", self.index);
+                std::task::Poll::Ready(cqe.clone())
+            }
         }
     }
 }
@@ -207,7 +212,13 @@ impl<S: squeue::Entry, C: cqueue::Entry> IoUringAsync<S, C> {
     pub async fn listen(uring: Rc<IoUringAsync<S, C>>) {
         let async_fd = AsyncFd::new(uring).unwrap();
         loop {
+            let start = std::time::Instant::now();
+            tracing::trace!("waiting for uring fd to be ready...");
             let mut guard = async_fd.readable().await.unwrap();
+            tracing::trace!(
+                "waiting for uring fd to be ready... it is! (took {:?})",
+                start.elapsed()
+            );
             guard.get_inner().handle_cqe();
             guard.clear_ready();
         }
@@ -239,6 +250,7 @@ impl<S: squeue::Entry, C: cqueue::Entry> IoUringAsync<S, C> {
         let mut guard = self.slab.borrow_mut();
         while let Some(cqe) = unsafe { self.uring.completion_shared() }.next() {
             let index = cqe.user_data();
+            tracing::trace!("received cqe for index {}", index);
             let lifecycle = &mut guard[index.try_into().unwrap()];
             match lifecycle {
                 Lifecycle::Submitted => {

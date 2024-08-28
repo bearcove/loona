@@ -44,7 +44,13 @@ pub fn start<F: Future>(task: F) -> F::Output {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .on_thread_park(move || {
+            let start = std::time::Instant::now();
+            tracing::trace!("thread park, submitting...");
             u.submit().unwrap();
+            tracing::trace!(
+                "thread park, submitting... done! (took {:?})",
+                start.elapsed()
+            );
         })
         .build()
         .unwrap();

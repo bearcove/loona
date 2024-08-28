@@ -335,7 +335,7 @@ impl<IO: IntoHalves> Conn<IO> {
                             {
                                 Ok(res) => res,
                                 Err(_) => {
-                                    debug!("timed out reading frame header");
+                                    debug!("timed out reading frame header (re-filling)");
                                     break 'read;
                                 }
                             };
