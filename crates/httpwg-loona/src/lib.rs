@@ -32,7 +32,7 @@ pub enum Mode {
     H2Load,
 }
 
-pub fn do_main(port: u16, proto: Proto, mode: Mode) {
+pub fn do_main(addr: String, port: u16, proto: Proto, mode: Mode) {
     let server_start = std::time::Instant::now();
 
     let (ready_tx, cancel_rx, is_h2load) = match mode {
@@ -44,7 +44,7 @@ pub fn do_main(port: u16, proto: Proto, mode: Mode) {
     };
 
     let server_fut = async move {
-        let ln = buffet::net::TcpListener::bind(format!("127.0.0.1:{port}").parse().unwrap())
+        let ln = buffet::net::TcpListener::bind(format!("{addr}:{port}").parse().unwrap())
             .await
             .unwrap();
         let port = ln.local_addr().unwrap().port();

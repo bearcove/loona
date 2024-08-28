@@ -4,7 +4,7 @@ use httpwg_loona::{Mode, Proto};
 pub fn h2load(c: &mut Criterion) {
     c.bench_function("h2load", |b| {
         b.iter(|| {
-            httpwg_loona::do_main(0, Proto::H2, Mode::H2Load);
+            httpwg_loona::do_main("127.0.0.1".to_string(), 0, Proto::H2, Mode::H2Load);
         })
     });
 }

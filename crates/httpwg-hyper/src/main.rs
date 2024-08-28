@@ -87,7 +87,8 @@ where
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let port = std::env::var("PORT").unwrap_or("0".to_string());
-    let ln = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port))
+    let addr = std::env::var("ADDR").unwrap_or("127.0.0.1".to_string());
+    let ln = tokio::net::TcpListener::bind(format!("{addr}:{port}"))
         .await
         .unwrap();
     let upstream_addr = ln.local_addr().unwrap();

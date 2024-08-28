@@ -9,6 +9,7 @@ fn main() {
         .unwrap_or("8001".to_string())
         .parse()
         .unwrap();
+    let addr = std::env::var("ADDR").unwrap_or_else(|_| "127.0.0.1".to_string());
     let proto = match std::env::var("TEST_PROTO")
         .unwrap_or("h1".to_string())
         .as_str()
@@ -24,6 +25,7 @@ fn main() {
 
     let server_handle = std::thread::spawn(move || {
         httpwg_loona::do_main(
+            addr,
             port,
             proto,
             httpwg_loona::Mode::Server {
