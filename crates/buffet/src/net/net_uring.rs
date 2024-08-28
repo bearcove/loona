@@ -67,8 +67,8 @@ impl TcpListener {
         socket.set_nodelay(true)?;
 
         // FIXME: don't hardcode
-        socket.set_reuse_port(true)?;
-        socket.set_reuse_address(true)?;
+        // socket.set_reuse_port(true)?;
+        // socket.set_reuse_address(true)?;
         socket.bind(&addr)?;
 
         // FIXME: magic values
@@ -129,6 +129,12 @@ impl ReadOwned for TcpReadHalf {
             buf.io_buf_mut_capacity() as u32,
         )
         .build();
+        tracing::trace!(
+            "submitting read_owned, reading from fd {} to {:p} with capacity {}",
+            self.0.fd,
+            buf.io_buf_mut_stable_mut_ptr(),
+            buf.io_buf_mut_capacity()
+        );
         let cqe = get_ring().push(sqe).await;
         let ret = match cqe.error_for_errno() {
             Ok(ret) => ret,
@@ -142,7 +148,6 @@ pub struct TcpWriteHalf(Rc<TcpStream>);
 
 impl WriteOwned for TcpWriteHalf {
     async fn write_owned(&mut self, buf: impl Into<Piece>) -> BufResult<usize, Piece> {
-        tracing::trace!("making new sqe");
         let buf = buf.into();
         let sqe = Write::new(
             io_uring::types::Fd(self.0.fd),
@@ -150,14 +155,11 @@ impl WriteOwned for TcpWriteHalf {
             buf.len().try_into().expect("usize -> u32"),
         )
         .build();
-        tracing::trace!("pushing sqe");
         let cqe = get_ring().push(sqe).await;
-        tracing::trace!("pushing sqe.. done!");
         let ret = match cqe.error_for_errno() {
             Ok(ret) => ret,
             Err(e) => return (Err(std::io::Error::from(e)), buf),
         };
-        tracing::trace!("pushing sqe.. done! (it even succeeded)");
         (Ok(ret as usize), buf)
     }
 

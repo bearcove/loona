@@ -19,7 +19,7 @@ use nom::{
 #[macro_export]
 macro_rules! trace {
     ($($tt:tt)*) => {
-        // tracing::trace!($($tt)*)
+        tracing::trace!($($tt)*)
     };
 }
 

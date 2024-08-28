@@ -70,8 +70,7 @@ impl<C: cqueue::Entry> Drop for Op<C> {
                     Lifecycle::Waiting(_) => "Waiting",
                     Lifecycle::Completed(_) => "Completed",
                 };
-                tracing::debug!("dropping op {index} ({})", state_name);
-
+                tracing::debug!(%index, "dropping op in state {state_name}");
                 drop(guard);
 
                 // submit cancel op
@@ -105,17 +104,17 @@ impl<C: cqueue::Entry> Future for OpInner<C> {
         let lifecycle = &mut guard[self.index];
         match lifecycle {
             Lifecycle::Submitted => {
-                tracing::trace!("polling OpInner {}... submitted!", self.index);
+                tracing::trace!(index = %self.index, "poll: submitted!");
                 *lifecycle = Lifecycle::Waiting(cx.waker().clone());
                 std::task::Poll::Pending
             }
             Lifecycle::Waiting(_) => {
-                tracing::trace!("polling OpInner {}... waiting!", self.index);
+                tracing::trace!(index = %self.index, "poll: waiting!");
                 *lifecycle = Lifecycle::Waiting(cx.waker().clone());
                 std::task::Poll::Pending
             }
             Lifecycle::Completed(cqe) => {
-                tracing::trace!("polling OpInner {}... completed!", self.index);
+                tracing::trace!(index = %self.index, "poll: completed!");
                 std::task::Poll::Ready(cqe.clone())
             }
         }
@@ -234,6 +233,7 @@ impl<S: squeue::Entry, C: cqueue::Entry> IoUringAsync<S, C> {
     pub fn push(&self, entry: impl Into<S>) -> Op<C> {
         let mut guard = self.slab.borrow_mut();
         let index = guard.insert(Lifecycle::Submitted);
+        tracing::trace!(%index, "pushing op with index");
         let entry = entry.into().user_data(index.try_into().unwrap());
         while unsafe { self.uring.submission_shared().push(&entry).is_err() } {
             self.uring.submit().unwrap();
@@ -250,7 +250,7 @@ impl<S: squeue::Entry, C: cqueue::Entry> IoUringAsync<S, C> {
         let mut guard = self.slab.borrow_mut();
         while let Some(cqe) = unsafe { self.uring.completion_shared() }.next() {
             let index = cqe.user_data();
-            tracing::trace!("received cqe for index {}", index);
+            tracing::trace!(%index, "received cqe for index");
             let lifecycle = &mut guard[index.try_into().unwrap()];
             match lifecycle {
                 Lifecycle::Submitted => {
