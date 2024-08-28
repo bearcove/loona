@@ -201,6 +201,25 @@ where
                 .await
                 .bx()?,
             "/stream-big-body" => {
+                // then read the full request body
+                let mut req_body_len = 0;
+                loop {
+                    let chunk = req_body.next_chunk().await.bx()?;
+                    match chunk {
+                        BodyChunk::Done { trailers } => {
+                            // yey
+                            if let Some(trailers) = trailers {
+                                tracing::debug!(trailers_len = %trailers.len(), "received trailers");
+                            }
+                            break;
+                        }
+                        BodyChunk::Chunk(chunk) => {
+                            req_body_len += chunk.len();
+                        }
+                    }
+                }
+                tracing::debug!(%req_body_len, "read request body");
+
                 let mut roll = RollMut::alloc().bx()?;
                 for _ in 0..256 {
                     roll.write_all("this is a big chunk".as_bytes()).bx()?;
@@ -259,9 +278,24 @@ where
                 .bx()?
             }
             _ => {
-                while (req_body.next_chunk().await).is_ok() {
-                    // got a chunk, nice
+                // then read the full request body
+                let mut req_body_len = 0;
+                loop {
+                    let chunk = req_body.next_chunk().await.bx()?;
+                    match chunk {
+                        BodyChunk::Done { trailers } => {
+                            // yey
+                            if let Some(trailers) = trailers {
+                                tracing::debug!(trailers_len = %trailers.len(), "received trailers");
+                            }
+                            break;
+                        }
+                        BodyChunk::Chunk(chunk) => {
+                            req_body_len += chunk.len();
+                        }
+                    }
                 }
+                tracing::debug!(%req_body_len, "read request body");
 
                 res.write_final_response_with_body(
                     Response {
