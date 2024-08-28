@@ -1,4 +1,4 @@
-use httpwg_loona::Proto;
+use httpwg_loona::{Proto, Ready};
 use tracing::Level;
 use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -22,24 +22,22 @@ fn main() {
 
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+    std::mem::forget(cancel_tx);
 
-    let server_handle = std::thread::spawn(move || {
-        httpwg_loona::do_main(
-            addr,
-            port,
-            proto,
-            httpwg_loona::Mode::Server {
-                ready_tx,
-                cancel_rx,
-            },
-        );
+    std::thread::spawn(move || {
+        let ready: Ready = ready_rx.blocking_recv().unwrap();
+        eprintln!("I listen on {}", ready.port);
     });
 
-    let ready = ready_rx.blocking_recv().unwrap();
-    eprintln!("I listen on {}", ready.port);
-
-    server_handle.join().unwrap();
-    drop(cancel_tx);
+    httpwg_loona::do_main(
+        addr,
+        port,
+        proto,
+        httpwg_loona::Mode::Server {
+            ready_tx,
+            cancel_rx,
+        },
+    );
 }
 
 fn setup_tracing_and_error_reporting() {
