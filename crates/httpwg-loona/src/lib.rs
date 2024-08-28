@@ -4,7 +4,8 @@ use tokio::{process::Command, sync::oneshot};
 
 use buffet::{IntoHalves, Piece, RollMut};
 use loona::{
-    error::NeverError,
+    error::{NeverError, ServeError},
+    h2::types::H2ConnectionError,
     http::{self, StatusCode},
     Body, BodyChunk, Encoder, ExpectResponseHeaders, Responder, Response, ResponseDone,
     ServerDriver, SinglePieceBody,
@@ -127,7 +128,23 @@ pub fn do_main(addr: String, port: u16, proto: Proto, mode: Mode) {
                             if let Err(e) =
                                 loona::h2::serve(io, server_conf, client_buf, driver).await
                             {
-                                tracing::warn!("http/2 server error: {e:?}");
+                                let mut should_ignore = false;
+                                match &e {
+                                    ServeError::H2ConnectionError(
+                                        H2ConnectionError::WriteError(e),
+                                    ) => {
+                                        if e.kind() == std::io::ErrorKind::BrokenPipe {
+                                            should_ignore = true;
+                                        }
+                                    }
+                                    _ => {
+                                        // okay
+                                    }
+                                }
+
+                                if !should_ignore {
+                                    tracing::warn!("http/2 server error: {e:?}");
+                                }
                             }
                             tracing::debug!("http/2 server done");
                         }

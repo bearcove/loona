@@ -66,9 +66,10 @@ impl TcpListener {
 
         socket.set_nodelay(true)?;
 
-        // FIXME: don't hardcode
-        // socket.set_reuse_port(true)?;
-        // socket.set_reuse_address(true)?;
+        // FIXME: don't hardcode, but we get test failures on Linux otherwise for some
+        // reason
+        socket.set_reuse_port(true)?;
+        socket.set_reuse_address(true)?;
         socket.bind(&addr)?;
 
         // FIXME: magic values

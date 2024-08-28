@@ -8,4 +8,4 @@ mod body;
 mod encode;
 pub use encode::H2EncoderError;
 
-pub(crate) mod types;
+pub mod types;
