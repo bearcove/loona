@@ -73,7 +73,7 @@ pub fn start<F: Future>(task: F) -> F::Output {
         if (tokio::time::timeout(cancel_submit_timeout, &mut lset).await).is_err() {
             drop(cancel_tx);
 
-            // during this second poll, the async cancellations hopefuly finish
+            // during this second poll, the async cancellations hopefully finish
             let cleanup_timeout = std::time::Duration::from_millis(500);
             if (tokio::time::timeout(cleanup_timeout, lset).await).is_err() {
                 tracing::warn!(
