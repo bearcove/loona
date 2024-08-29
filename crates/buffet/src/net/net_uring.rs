@@ -5,13 +5,14 @@ use std::{
     rc::Rc,
 };
 
-use io_uring::opcode::{Accept, Read, Write};
+use io_uring::opcode::{Accept, Read, Write, Writev};
+use libc::iovec;
 use nix::errno::Errno;
 
 use crate::{
     get_ring,
     io::{IntoHalves, ReadOwned, WriteOwned},
-    BufResult, IoBufMut, Piece,
+    BufResult, IoBufMut, Piece, PieceList,
 };
 
 pub struct TcpStream {
@@ -156,6 +157,7 @@ impl WriteOwned for TcpWriteHalf {
             buf.len().try_into().expect("usize -> u32"),
         )
         .build();
+
         let cqe = get_ring().push(sqe).await;
         let ret = match cqe.error_for_errno() {
             Ok(ret) => ret,
@@ -165,6 +167,35 @@ impl WriteOwned for TcpWriteHalf {
     }
 
     // TODO: implement writev
+
+    async fn writev_owned(&mut self, list: &PieceList) -> std::io::Result<usize> {
+        let mut iovecs: Vec<iovec> = vec![];
+        for piece in list.pieces.iter() {
+            let iov = iovec {
+                iov_base: piece.as_ref().as_ptr() as *mut libc::c_void,
+                iov_len: piece.len(),
+            };
+            iovecs.push(iov);
+        }
+        let iovecs = iovecs.into_boxed_slice();
+        let iov_cnt = iovecs.len();
+        // FIXME: don't leak, duh
+        let iovecs = Box::leak(iovecs);
+
+        let sqe = Writev::new(
+            io_uring::types::Fd(self.0.fd),
+            iovecs.as_ptr() as *const _,
+            iov_cnt as u32,
+        )
+        .build();
+
+        let cqe = get_ring().push(sqe).await;
+        let ret = match cqe.error_for_errno() {
+            Ok(ret) => ret,
+            Err(e) => return Err(std::io::Error::from(e)),
+        };
+        Ok(ret as usize)
+    }
 
     async fn shutdown(&mut self) -> std::io::Result<()> {
         tracing::debug!("requesting shutdown");

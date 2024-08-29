@@ -7,11 +7,17 @@ mod privatepool;
 
 pub type BufResult<T, B> = (std::io::Result<T>, B);
 
-pub use privatepool::{initialize_allocator_with_num_bufs, num_free, Error, Result, BUF_SIZE};
+pub use privatepool::{
+    initialize_allocator_with_num_bufs, is_allocator_initialized, num_free, Error, Result, BUF_SIZE,
+};
 
 /// Initialize the allocator. Must be called before any other
 /// allocation function.
 pub fn initialize_allocator() -> Result<()> {
+    if is_allocator_initialized() {
+        return Ok(());
+    }
+
     // 64 * 1024 * 4096 bytes = 256 MiB
     #[cfg(not(feature = "miri"))]
     let default_num_bufs = 64 * 1024;

@@ -73,6 +73,10 @@ fn with<T>(f: impl FnOnce(&mut Inner) -> T) -> T {
 /// The size of a buffer, in bytes (4 KiB)
 pub const BUF_SIZE: u16 = 4096;
 
+pub fn is_allocator_initialized() -> bool {
+    POOL.with(|pool| unsafe { (*pool.inner.get()).is_some() })
+}
+
 /// Initializes the allocator with the given number of buffers
 pub fn initialize_allocator_with_num_bufs(num_bufs: u32) -> Result<()> {
     POOL.with(|pool| {

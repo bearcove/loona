@@ -58,7 +58,7 @@ pub fn do_main(addr: String, port: u16, proto: Proto, mode: Mode) {
             if is_h2load {
                 let mut child = Command::new("h2load")
                     .arg("-n")
-                    .arg("100")
+                    .arg("2500")
                     .arg("-c")
                     .arg("10")
                     .arg(format!("http://127.0.0.1:{}", port))
