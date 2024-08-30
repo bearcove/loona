@@ -17,11 +17,13 @@ cargo build --release --manifest-path="$LOONA_DIR/Cargo.toml" -F tracing/release
 export TEST_PROTO=h2 ADDR=0.0.0.0 PORT=8001
 "$LOONA_DIR/target/release/httpwg-hyper" &
 HYPER_PID=$!
+echo "Hyper PID: $HYPER_PID"
 
 # Launch loona server
 export TEST_PROTO=h2 ADDR=0.0.0.0 PORT=8002
 "$LOONA_DIR/target/release/httpwg-loona" &
 LOONA_PID=$!
+echo "Loona PID: $LOONA_PID"
 
 HYPER_ADDR="http://localhost:8001"
 LOONA_ADDR="http://localhost:8002"
