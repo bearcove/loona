@@ -96,6 +96,7 @@ RPS="${RPS:-2}"
 CONNS="${CONNS:-40}"
 STREAMS="${STREAMS:-8}"
 NUM_REQUESTS="${NUM_REQUESTS:-100}"
+TIMES="${TIMES:-1}"
 
 # Set MODE to 'stat' if not specified
 MODE=${MODE:-stat}
@@ -125,6 +126,11 @@ for server in "${!servers[@]}"; do
         kill -INT $SAMPLY_PID
         wait $SAMPLY_PID
     else
-        perf stat -e "$PERF_EVENTS" -p "$PID" -- ssh brat "${remote_command[@]}"
+        for ((i=1; i<=$TIMES; i++)); do
+            echo "===================="
+            echo -e "\033[1;35m🏃 Run $i of $TIMES 🏃\033[0m"
+            echo "===================="
+            perf stat -e "$PERF_EVENTS" -p "$PID" -- ssh brat "${remote_command[@]}"
+        done
     fi
 done
