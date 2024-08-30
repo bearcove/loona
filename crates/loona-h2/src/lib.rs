@@ -6,7 +6,6 @@
 use std::{fmt, io::Write, ops::RangeInclusive};
 
 use byteorder::{BigEndian, WriteBytesExt};
-use enum_repr::EnumRepr;
 
 pub use enumflags2;
 use enumflags2::{bitflags, BitFlags};
@@ -35,8 +34,7 @@ pub trait IntoPiece {
 }
 
 /// See <https://httpwg.org/specs/rfc9113.html#FrameTypes>
-#[EnumRepr(type = "u8")]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RawFrameType {
     Data = 0x00,
     Headers = 0x01,
@@ -48,6 +46,53 @@ pub enum RawFrameType {
     GoAway = 0x07,
     WindowUpdate = 0x08,
     Continuation = 0x09,
+}
+
+impl RawFrameType {
+    pub fn repr(&self) -> u8 {
+        *self as u8
+    }
+
+    pub fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0x00 => Some(RawFrameType::Data),
+            0x01 => Some(RawFrameType::Headers),
+            0x02 => Some(RawFrameType::Priority),
+            0x03 => Some(RawFrameType::RstStream),
+            0x04 => Some(RawFrameType::Settings),
+            0x05 => Some(RawFrameType::PushPromise),
+            0x06 => Some(RawFrameType::Ping),
+            0x07 => Some(RawFrameType::GoAway),
+            0x08 => Some(RawFrameType::WindowUpdate),
+            0x09 => Some(RawFrameType::Continuation),
+            _ => None,
+        }
+    }
+}
+
+#[test]
+fn test_raw_frame_type_roundtrip() {
+    let variants = [
+        RawFrameType::Data,
+        RawFrameType::Headers,
+        RawFrameType::Priority,
+        RawFrameType::RstStream,
+        RawFrameType::Settings,
+        RawFrameType::PushPromise,
+        RawFrameType::Ping,
+        RawFrameType::GoAway,
+        RawFrameType::WindowUpdate,
+        RawFrameType::Continuation,
+    ];
+
+    for &variant in &variants {
+        let repr = variant as u8;
+        let roundtripped = RawFrameType::from_repr(repr).unwrap();
+        assert_eq!(variant, roundtripped, "Failed to roundtrip {:?}", variant);
+    }
+
+    // Test that an invalid repr returns None
+    assert_eq!(RawFrameType::from_repr(0xFF), None);
 }
 
 /// Typed flags for various frame types
@@ -551,7 +596,6 @@ impl From<KnownErrorCode> for ErrorCode {
     }
 }
 
-#[EnumRepr(type = "u32")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KnownErrorCode {
     /// The associated condition is not a result of an error. For example, a
@@ -609,6 +653,61 @@ pub enum KnownErrorCode {
 
     /// The endpoint requires that HTTP/1.1 be used instead of HTTP/2.
     Http1_1Required = 0x0d,
+}
+
+impl KnownErrorCode {
+    pub fn from_repr(value: u32) -> Option<Self> {
+        match value {
+            0x00 => Some(KnownErrorCode::NoError),
+            0x01 => Some(KnownErrorCode::ProtocolError),
+            0x02 => Some(KnownErrorCode::InternalError),
+            0x03 => Some(KnownErrorCode::FlowControlError),
+            0x04 => Some(KnownErrorCode::SettingsTimeout),
+            0x05 => Some(KnownErrorCode::StreamClosed),
+            0x06 => Some(KnownErrorCode::FrameSizeError),
+            0x07 => Some(KnownErrorCode::RefusedStream),
+            0x08 => Some(KnownErrorCode::Cancel),
+            0x09 => Some(KnownErrorCode::CompressionError),
+            0x0a => Some(KnownErrorCode::ConnectError),
+            0x0b => Some(KnownErrorCode::EnhanceYourCalm),
+            0x0c => Some(KnownErrorCode::InadequateSecurity),
+            0x0d => Some(KnownErrorCode::Http1_1Required),
+            _ => None,
+        }
+    }
+
+    pub fn repr(&self) -> u32 {
+        *self as u32
+    }
+}
+
+#[test]
+fn test_known_error_code_roundtrip() {
+    let error_codes = [
+        KnownErrorCode::NoError,
+        KnownErrorCode::ProtocolError,
+        KnownErrorCode::InternalError,
+        KnownErrorCode::FlowControlError,
+        KnownErrorCode::SettingsTimeout,
+        KnownErrorCode::StreamClosed,
+        KnownErrorCode::FrameSizeError,
+        KnownErrorCode::RefusedStream,
+        KnownErrorCode::Cancel,
+        KnownErrorCode::CompressionError,
+        KnownErrorCode::ConnectError,
+        KnownErrorCode::EnhanceYourCalm,
+        KnownErrorCode::InadequateSecurity,
+        KnownErrorCode::Http1_1Required,
+    ];
+
+    for &original in &error_codes {
+        let repr = original.repr();
+        let roundtripped = KnownErrorCode::from_repr(repr).unwrap();
+        assert_eq!(original, roundtripped, "Failed to roundtrip {:?}", original);
+    }
+
+    // Test that an invalid repr returns None
+    assert_eq!(KnownErrorCode::from_repr(0xFF), None);
 }
 
 impl TryFrom<ErrorCode> for KnownErrorCode {
@@ -761,8 +860,7 @@ pub enum SettingsError {
     SettingsMaxFrameSizeInvalid { actual: u32 },
 }
 
-#[EnumRepr(type = "u16")]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Setting {
     HeaderTableSize = 0x01,
     EnablePush = 0x02,
@@ -770,6 +868,45 @@ pub enum Setting {
     InitialWindowSize = 0x04,
     MaxFrameSize = 0x05,
     MaxHeaderListSize = 0x06,
+}
+
+impl Setting {
+    pub fn repr(&self) -> u16 {
+        *self as u16
+    }
+
+    pub fn from_repr(value: u16) -> Option<Self> {
+        match value {
+            0x01 => Some(Setting::HeaderTableSize),
+            0x02 => Some(Setting::EnablePush),
+            0x03 => Some(Setting::MaxConcurrentStreams),
+            0x04 => Some(Setting::InitialWindowSize),
+            0x05 => Some(Setting::MaxFrameSize),
+            0x06 => Some(Setting::MaxHeaderListSize),
+            _ => None,
+        }
+    }
+}
+
+#[test]
+fn test_setting_roundtrip() {
+    let settings = [
+        Setting::HeaderTableSize,
+        Setting::EnablePush,
+        Setting::MaxConcurrentStreams,
+        Setting::InitialWindowSize,
+        Setting::MaxFrameSize,
+        Setting::MaxHeaderListSize,
+    ];
+
+    for &setting in &settings {
+        let repr = setting.repr();
+        let roundtripped = Setting::from_repr(repr).unwrap();
+        assert_eq!(setting, roundtripped, "Failed to roundtrip {:?}", setting);
+    }
+
+    // Test that an invalid repr returns None
+    assert_eq!(Setting::from_repr(0x07), None);
 }
 
 impl Settings {
