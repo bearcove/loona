@@ -72,6 +72,18 @@ impl Settings {
         server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         Ok(server_config)
     }
+
+    pub fn message_for_404() -> &'static str {
+        r#"404 Not Found
+
+This server serves the following routes:
+
+/echo-body — Echoes back the request body.
+/status/{code} — Returns a response with the specified status code.
+/repeat-4k-blocks/{repeat} — Streams the specified number of 4KB blocks (from memory)
+/stream-file/{name} — Streams the contents of a file from `/tmp/stream-file/{name}` — see `scripts/mkfiles.sh`
+/"#
+    }
 }
 
 /// A sample block of 4KiB of data.

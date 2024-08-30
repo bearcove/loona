@@ -9,7 +9,7 @@
 //! - Any other path: Returns a 404 Not Found response.
 
 use http_body_util::{BodyExt, StreamBody};
-use httpwg_harness::SAMPLE_4K_BLOCK;
+use httpwg_harness::{Settings, SAMPLE_4K_BLOCK};
 use tokio::io::AsyncReadExt;
 
 use std::{convert::Infallible, fmt::Debug, pin::Pin};
@@ -46,23 +46,24 @@ where
             let path = parts.uri.path();
             let parts = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
 
-            if let ["echo-body"] = parts.as_slice() {
-                let body: BoxBody<E> = Box::pin(req_body);
-                let res = Response::builder().body(body).unwrap();
-                Ok(res)
-            } else {
-                let body: BoxBody<E> =
-                    Box::pin(http_body_util::Empty::new().map_err(|_| unreachable!()));
-
-                if let ["status", code] = parts.as_slice() {
+            match parts.as_slice() {
+                ["echo-body"] => {
+                    let body: BoxBody<E> = Box::pin(req_body);
+                    let res = Response::builder().body(body).unwrap();
+                    Ok(res)
+                }
+                ["status", code] => {
                     // drain body
                     while let Some(_frame) = req_body.frame().await {}
 
                     let code = code.parse::<u16>().unwrap();
+                    let body: BoxBody<E> =
+                        Box::pin(http_body_util::Empty::new().map_err(|_| unreachable!()));
                     let res = Response::builder().status(code).body(body).unwrap();
                     debug!("Replying with {:?} {:?}", res.status(), res.headers());
                     Ok(res)
-                } else if let ["repeat-4k-blocks", repeat] = parts.as_slice() {
+                }
+                ["repeat-4k-blocks", repeat] => {
                     // drain body
                     while let Some(_frame) = req_body.frame().await {}
 
@@ -83,7 +84,8 @@ where
                     let body: BoxBody<E> = Box::pin(StreamBody::new(rx));
                     let res = Response::builder().body(body).unwrap();
                     Ok(res)
-                } else if let ["stream-file", name] = parts.as_slice() {
+                }
+                ["stream-file", name] => {
                     // drain body
                     while let Some(_frame) = req_body.frame().await {}
 
@@ -110,20 +112,22 @@ where
                     let body: BoxBody<E> = Box::pin(StreamBody::new(rx));
                     let res = Response::builder().body(body).unwrap();
                     Ok(res)
-                } else if parts.as_slice().is_empty() {
+                }
+                [""] => {
                     // drain body
                     while let Some(_frame) = req_body.frame().await {}
 
-                    let body = "it's less dire to lose, than to lose oneself".to_string();
+                    let body = "See /help for a list of routes".to_string();
                     let body: BoxBody<E> = Box::pin(body.map_err(|_| unreachable!()));
                     let res = Response::builder().status(200).body(body).unwrap();
                     Ok(res)
-                } else {
+                }
+                _ => {
                     // drain body
                     while let Some(_frame) = req_body.frame().await {}
 
                     // return a 404
-                    let body = "404 Not Found".to_string();
+                    let body = Settings::message_for_404().to_string();
                     let body: BoxBody<E> = Box::pin(body.map_err(|_| unreachable!()));
                     let res = Response::builder().status(404).body(body).unwrap();
                     Ok(res)

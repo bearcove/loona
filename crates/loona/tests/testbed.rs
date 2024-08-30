@@ -28,6 +28,7 @@ pub async fn start() -> b_x::Result<(SocketAddr, impl Any)> {
     eprintln!("Using testbed binary: {}", binary_path.display());
     let mut cmd = Command::new(binary_path);
     cmd.stdout(Stdio::piped());
+    cmd.env("PROTO", "h1");
 
     // Only Linux gets the nice "I'm taking you with me" feature for now.
     #[cfg(target_os = "linux")]
@@ -48,13 +49,8 @@ pub async fn start() -> b_x::Result<(SocketAddr, impl Any)> {
         let stdout = BufReader::new(stdout);
         let mut lines = stdout.lines();
         while let Some(line) = lines.next_line().await.unwrap() {
-            if let Some(rest) = line.strip_prefix("🌎🦊👉 ") {
-                let addr = rest
-                    .split_whitespace()
-                    .next()
-                    .unwrap()
-                    .parse::<SocketAddr>()
-                    .unwrap();
+            let settings = httpwg_harness::Settings::from_env().unwrap();
+            if let Ok(Some(addr)) = settings.decode_listen_line(&line) {
                 if let Some(addr_tx) = addr_tx.take() {
                     addr_tx.send(addr).unwrap();
                 }

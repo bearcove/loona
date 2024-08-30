@@ -22,22 +22,37 @@ trap 'kill -TERM -$$' EXIT
 pkill -9 -f httpwg-hyper
 pkill -9 -f httpwg-loona
 
+# Set protocol, default to h2c
+PROTO=${PROTO:-h2c}
+export PROTO
+
 # Launch hyper server
-export TEST_PROTO=h2 ADDR=0.0.0.0 PORT=8001
-"$LOONA_DIR/target/release/httpwg-hyper" &
+ADDR=0.0.0.0 PORT=8001 "$LOONA_DIR/target/release/httpwg-hyper" &
 HYPER_PID=$!
-echo "Hyper PID: $HYPER_PID"
+echo "hyper PID: $HYPER_PID"
+HYPER_ADDR="http://localhost:8001"
 
 # Launch loona server
-export TEST_PROTO=h2 ADDR=0.0.0.0 PORT=8002
-"$LOONA_DIR/target/release/httpwg-loona" &
+ADDR=0.0.0.0 PORT=8002 "$LOONA_DIR/target/release/httpwg-loona" &
 LOONA_PID=$!
-echo "Loona PID: $LOONA_PID"
-
-HYPER_ADDR="http://localhost:8001"
+echo "loona PID: $LOONA_PID"
 LOONA_ADDR="http://localhost:8002"
 
 ENDPOINT="${ENDPOINT:-/repeat-4k-blocks/128}"
+
+# Declare h2load args based on PROTO
+declare -a H2LOAD_ARGS
+if [[ "$PROTO" == "h1" ]]; then
+    H2LOAD_ARGS=()
+elif [[ "$PROTO" == "h2c" ]]; then
+    H2LOAD_ARGS=(--h1)
+elif [[ "$PROTO" == "tls" ]]; then
+    ALPN_LIST=${ALPN_LIST:-"h2,http/1.1"}
+    H2LOAD_ARGS=(--alpn-list="$ALPN_LIST")
+else
+    echo "Error: Unknown PROTO '$PROTO'"
+    exit 1
+fi
 
 declare -A servers=(
     [hyper]="$HYPER_PID $HYPER_ADDR"
@@ -59,7 +74,7 @@ for server in "${!servers[@]}"; do
     echo -e "\033[1;36mLoona Git SHA: $(cd ~/bearcove/loona && git rev-parse --short HEAD)\033[0m"
     echo -e "\033[1;33m🚀 Benchmarking \033[1;32m$(cat /proc/$PID/cmdline | tr '\0' ' ')\033[0m"
     echo -e "\033[1;34m📊 Benchmark parameters: RPS=${RPS:-2}, CONNS=${CONNS:-40}, STREAMS=${STREAMS:-8}, NUM_REQUESTS=${NUM_REQUESTS:-100}, ENDPOINT=${ENDPOINT:-/stream-big-body}\033[0m"
-    perf stat -e "$PERF_EVENTS" -p "$PID" -- h2load --rps "${RPS:-2}" -c "${CONNS:-40}" -m "${STREAMS:-8}" -n "${NUM_REQUESTS:-100}" "${ADDR}${ENDPOINT}"
+    perf stat -e "$PERF_EVENTS" -p "$PID" -- h2load "${H2LOAD_ARGS[@]}" --rps "${RPS:-2}" -c "${CONNS:-40}" -m "${STREAMS:-8}" -n "${NUM_REQUESTS:-100}" "${ADDR}${ENDPOINT}"
 done
 
 # Kill the servers

@@ -1,5 +1,5 @@
 use b_x::{BxForResults, BX};
-use httpwg_harness::SAMPLE_4K_BLOCK;
+use httpwg_harness::{Settings, SAMPLE_4K_BLOCK};
 
 use buffet::Piece;
 use loona::{
@@ -93,6 +93,21 @@ where
                 .await
                 .bx()?
             }
+            // apparently `/` gives us that
+            [""] => {
+                drain_body(req_body).await?;
+
+                let body = "See /help for a list of routes";
+                res.write_final_response_with_body(
+                    Response {
+                        status: StatusCode::OK,
+                        ..Default::default()
+                    },
+                    &mut SinglePieceBody::from(body),
+                )
+                .await
+                .bx()?
+            }
             _ => {
                 drain_body(req_body).await?;
 
@@ -102,7 +117,7 @@ where
                         status: StatusCode::NOT_FOUND,
                         ..Default::default()
                     },
-                    &mut SinglePieceBody::from("404 Not Found"),
+                    &mut SinglePieceBody::from(Settings::message_for_404()),
                 )
                 .await
                 .bx()?

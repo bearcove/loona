@@ -1,27 +1,22 @@
 use driver::TestDriver;
-use httpwg_harness::{Proto, Settings};
-use ktls::CorkStream;
-use std::{
-    mem::ManuallyDrop,
-    os::fd::{AsRawFd, FromRawFd, IntoRawFd},
-    rc::Rc,
-    sync::Arc,
-};
-use tokio_rustls::TlsAcceptor;
+use httpwg_harness::Proto;
+use httpwg_harness::Settings;
+use std::rc::Rc;
 
-use buffet::{
-    net::{TcpListener, TcpStream},
-    IntoHalves, RollMut,
-};
-use loona::{
-    error::ServeError,
-    h1,
-    h2::{self, types::H2ConnectionError},
-};
+use buffet::net::TcpListener;
+use buffet::IntoHalves;
+use buffet::RollMut;
+use loona::error::ServeError;
+use loona::h1;
+use loona::h2;
+use loona::h2::types::H2ConnectionError;
 use tracing::Level;
 use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::SubscriberInitExt};
 
 mod driver;
+
+#[cfg(target_os = "linux")]
+mod tls;
 
 fn main() {
     setup_tracing_and_error_reporting();
@@ -87,48 +82,9 @@ async fn real_main() {
 
                 #[cfg(target_os = "linux")]
                 Proto::TLS => {
-                    let mut server_config = Settings::gen_rustls_server_config().unwrap();
-                    server_config.enable_secret_extraction = true;
-                    let driver = TestDriver;
-                    let h1_conf = Rc::new(h1::ServerConf::default());
-                    let h2_conf = Rc::new(h2::ServerConf::default());
-
-                    // until we come up with `loona-rustls`, we need to temporarily go through a
-                    // tokio TcpStream
-                    let acceptor = TlsAcceptor::from(Arc::new(server_config));
-                    let stream = unsafe { std::net::TcpStream::from_raw_fd(stream.into_raw_fd()) };
-                    stream.set_nonblocking(true).unwrap();
-                    let stream = tokio::net::TcpStream::from_std(stream)?;
-                    let stream = CorkStream::new(stream);
-                    let stream = acceptor.accept(stream).await?;
-
-                    let is_h2 = matches!(stream.get_ref().1.alpn_protocol(), Some(b"h2"));
-                    tracing::debug!(%is_h2, "Performed TLS handshake");
-
-                    let stream = ktls::config_ktls_server(stream).await?;
-
-                    tracing::debug!("Set up kTLS");
-                    let (drained, stream) = stream.into_raw();
-                    let drained = drained.unwrap_or_default();
-                    tracing::debug!("{} bytes already decoded by rustls", drained.len());
-
-                    // and back to a buffet TcpStream
-                    let stream = stream.to_uring_tcp_stream()?;
-
-                    let mut client_buf = RollMut::alloc()?;
-                    client_buf.put(&drained[..])?;
-
-                    if is_h2 {
-                        tracing::info!("Using HTTP/2");
-                        h2::serve(stream.into_halves(), h2_conf, client_buf, Rc::new(driver))
-                            .await
-                            .map_err(|e| eyre::eyre!("h2 server error: {e:?}"))?;
-                    } else {
-                        tracing::info!("Using HTTP/1.1");
-                        h1::serve(stream.into_halves(), h1_conf, client_buf, driver)
-                            .await
-                            .map_err(|e| eyre::eyre!("h1 server error: {e:?}"))?;
-                    }
+                    tls::handle_tls_conn(stream)
+                        .await
+                        .map_err(|e| eyre::eyre!("tls error: {e:?}"))?;
                 }
             }
             Ok::<_, eyre::Report>(())
@@ -163,22 +119,4 @@ fn setup_tracing_and_error_reporting() {
         .with(targets)
         .with(fmt_layer)
         .init();
-}
-
-pub trait ToUringTcpStream {
-    fn to_uring_tcp_stream(self) -> std::io::Result<TcpStream>;
-}
-
-impl ToUringTcpStream for tokio::net::TcpStream {
-    fn to_uring_tcp_stream(self) -> std::io::Result<TcpStream> {
-        {
-            let sock = ManuallyDrop::new(unsafe { socket2::Socket::from_raw_fd(self.as_raw_fd()) });
-            // tokio needs the socket to be "non-blocking" (as in: return EAGAIN)
-            // buffet needs it to be "blocking" (as in: let io_uring do the op async)
-            sock.set_nonblocking(false)?;
-        }
-        let stream = unsafe { TcpStream::from_raw_fd(self.as_raw_fd()) };
-        std::mem::forget(self);
-        Ok(stream)
-    }
 }
