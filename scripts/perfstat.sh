@@ -45,7 +45,8 @@ fi
 
 for server in "${!servers[@]}"; do
     read -r PID ADDR <<< "${servers[$server]}"
-    echo -e "\033[1;33m🚀 Benchmarking \033[1;32m$(cat /proc/$PID/cmdline | tr '\0' ' ')\033[0m \033[1;36mLoona Git SHA: $(cd ~/bearcove/loona && git rev-parse --short HEAD)\033[0m"
+    echo -e "\033[1;36mLoona Git SHA: $(cd ~/bearcove/loona && git rev-parse --short HEAD)\033[0m"
+    echo -e "\033[1;33m🚀 Benchmarking \033[1;32m$(cat /proc/$PID/cmdline | tr '\0' ' ')\033[0m"
     echo -e "\033[1;34m📊 Benchmark parameters: RPS=${RPS:-2}, CONNS=${CONNS:-40}, STREAMS=${STREAMS:-8}, NUM_REQUESTS=${NUM_REQUESTS:-100}, ENDPOINT=${ENDPOINT:-/stream-big-body}\033[0m"
     perf stat -e "$PERF_EVENTS" -p "$PID" -- h2load --rps "${RPS:-2}" -c "${CONNS:-40}" -m "${STREAMS:-8}" -n "${NUM_REQUESTS:-100}" "${ADDR}${ENDPOINT}"
 done
