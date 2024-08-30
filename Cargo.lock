@@ -794,7 +794,6 @@ version = "0.2.0"
 dependencies = [
  "b-x",
  "buffet",
- "codspeed-criterion-compat",
  "color-eyre",
  "eyre",
  "httpwg-harness",

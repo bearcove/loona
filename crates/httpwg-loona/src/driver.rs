@@ -93,6 +93,20 @@ where
                 .await
                 .bx()?
             }
+            [] => {
+                drain_body(req_body).await?;
+
+                let body = "it's less dire to lose, than to lose oneself";
+                res.write_final_response_with_body(
+                    Response {
+                        status: StatusCode::OK,
+                        ..Default::default()
+                    },
+                    &mut SinglePieceBody::from(body),
+                )
+                .await
+                .bx()?
+            }
             _ => {
                 drain_body(req_body).await?;
 
