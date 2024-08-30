@@ -49,10 +49,10 @@ pub(super) async fn handle_tls_conn(stream: TcpStream) -> b_x::Result<()> {
     client_buf.put(&drained[..])?;
 
     if is_h2 {
-        tracing::info!("Using HTTP/2");
+        tracing::debug!("Using HTTP/2");
         h2::serve(stream.into_halves(), h2_conf, client_buf, Rc::new(driver)).await?;
     } else {
-        tracing::info!("Using HTTP/1.1");
+        tracing::debug!("Using HTTP/1.1");
         h1::serve(stream.into_halves(), h1_conf, client_buf, driver).await?;
     }
     Ok(())
