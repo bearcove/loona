@@ -82,7 +82,9 @@ async fn real_main() {
 
                 #[cfg(target_os = "linux")]
                 Proto::TLS => {
-                    tls::handle_tls_conn(stream).await?;
+                    tls::handle_tls_conn(stream)
+                        .await
+                        .map_err(|e| eyre::eyre!("tls error: {e:?}"))?;
                 }
             }
             Ok::<_, eyre::Report>(())

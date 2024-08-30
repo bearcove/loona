@@ -1,19 +1,22 @@
+use b_x::BxForResults;
+use buffet::net::TcpStream;
+use buffet::IntoHalves;
+use buffet::RollMut;
+use httpwg_harness::Settings;
+use ktls::CorkStream;
+use loona::h1;
+use loona::h2;
 use std::mem::ManuallyDrop;
 use std::os::fd::AsRawFd;
 use std::os::fd::FromRawFd;
+use std::os::fd::IntoRawFd;
+use std::rc::Rc;
+use std::sync::Arc;
+use tokio_rustls::TlsAcceptor;
 
-async fn handle_tls_conn(
-    acceptor: Rc<tokio_rustls::TlsAcceptor>,
-    stream: tokio::net::TcpStream,
-    remote_addr: std::net::SocketAddr,
-    h1_conf: Rc<h1::ServerConf>,
-    h2_conf: Rc<h2::ServerConf>,
-) -> b_x::Result<()> {
-    use ktls::CorkStream;
-    use std::os::fd::IntoRawFd;
-    use std::sync::Arc;
-    use tokio_rustls::TlsAcceptor;
+use crate::driver::TestDriver;
 
+pub(super) async fn handle_tls_conn(stream: TcpStream) -> b_x::Result<()> {
     let mut server_config = Settings::gen_rustls_server_config().unwrap();
     server_config.enable_secret_extraction = true;
     let driver = TestDriver;
@@ -32,7 +35,7 @@ async fn handle_tls_conn(
     let is_h2 = matches!(stream.get_ref().1.alpn_protocol(), Some(b"h2"));
     tracing::debug!(%is_h2, "Performed TLS handshake");
 
-    let stream = ktls::config_ktls_server(stream).await?;
+    let stream = ktls::config_ktls_server(stream).await.bx()?;
 
     tracing::debug!("Set up kTLS");
     let (drained, stream) = stream.into_raw();
@@ -47,15 +50,12 @@ async fn handle_tls_conn(
 
     if is_h2 {
         tracing::info!("Using HTTP/2");
-        h2::serve(stream.into_halves(), h2_conf, client_buf, Rc::new(driver))
-            .await
-            .map_err(|e| eyre::eyre!("h2 server error: {e:?}"))?;
+        h2::serve(stream.into_halves(), h2_conf, client_buf, Rc::new(driver)).await?;
     } else {
         tracing::info!("Using HTTP/1.1");
-        h1::serve(stream.into_halves(), h1_conf, client_buf, driver)
-            .await
-            .map_err(|e| eyre::eyre!("h1 server error: {e:?}"))?;
+        h1::serve(stream.into_halves(), h1_conf, client_buf, driver).await?;
     }
+    Ok(())
 }
 
 pub trait ToUringTcpStream {

@@ -23,6 +23,6 @@ rcgen = { version = "0.13.1", default-features = false, features = [
 httpwg-harness = { version = "0.1.0", path = "../httpwg-harness" }
 socket2 = "0.5.7"
 
-[target.'cfg(target_os = "linux")'.dev-dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 ktls = "6.0.0"
 tokio-rustls = "0.26.0"
