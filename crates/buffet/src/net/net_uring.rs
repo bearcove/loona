@@ -1,18 +1,17 @@
 use std::{
     mem::ManuallyDrop,
     net::SocketAddr,
-    os::fd::{AsRawFd, FromRawFd, RawFd},
+    os::fd::{AsRawFd, FromRawFd, IntoRawFd, RawFd},
     rc::Rc,
 };
 
-use io_uring::opcode::{Accept, Read, Write, Writev};
-use libc::iovec;
+use io_uring::opcode::{Accept, Read, Write};
 use nix::errno::Errno;
 
 use crate::{
     get_ring,
     io::{IntoHalves, ReadOwned, WriteOwned},
-    BufResult, IoBufMut, Piece, PieceList,
+    BufResult, IoBufMut, Piece,
 };
 
 pub struct TcpStream {
@@ -51,6 +50,14 @@ impl Drop for TcpStream {
         unsafe {
             libc::close(self.fd);
         }
+    }
+}
+
+impl IntoRawFd for TcpStream {
+    fn into_raw_fd(self) -> RawFd {
+        let fd = self.fd;
+        std::mem::forget(self);
+        fd
     }
 }
 

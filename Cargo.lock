@@ -772,12 +772,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "httpwg-harness"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "rcgen",
+ "rustls",
+]
+
+[[package]]
 name = "httpwg-hyper"
 version = "0.2.0"
 dependencies = [
  "bytes",
  "futures",
  "http-body-util",
+ "httpwg-harness",
  "hyper",
  "hyper-util",
  "pin-project-lite",
@@ -798,9 +808,11 @@ dependencies = [
  "codspeed-criterion-compat",
  "color-eyre",
  "eyre",
+ "httpwg-harness",
  "ktls",
  "loona",
  "rcgen",
+ "socket2",
  "tokio",
  "tokio-rustls",
  "tracing",
@@ -1027,6 +1039,7 @@ dependencies = [
  "http",
  "httparse",
  "httpwg",
+ "httpwg-harness",
  "httpwg-macros",
  "itoa",
  "ktls",

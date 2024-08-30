@@ -1,43 +1,143 @@
-use httpwg_loona::{Proto, Ready};
+use driver::TestDriver;
+use httpwg_harness::{Proto, Settings};
+use ktls::CorkStream;
+use std::{
+    mem::ManuallyDrop,
+    os::fd::{AsRawFd, FromRawFd, IntoRawFd},
+    rc::Rc,
+    sync::Arc,
+};
+use tokio_rustls::TlsAcceptor;
+
+use buffet::{
+    net::{TcpListener, TcpStream},
+    IntoHalves, RollMut,
+};
+use loona::{
+    error::ServeError,
+    h1,
+    h2::{self, types::H2ConnectionError},
+};
 use tracing::Level;
 use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::SubscriberInitExt};
 
+mod driver;
+
 fn main() {
     setup_tracing_and_error_reporting();
+    buffet::start(real_main());
+}
 
-    let port: u16 = std::env::var("PORT")
-        .unwrap_or("8001".to_string())
-        .parse()
-        .unwrap();
-    let addr = std::env::var("ADDR").unwrap_or_else(|_| "127.0.0.1".to_string());
-    let proto = match std::env::var("TEST_PROTO")
-        .unwrap_or("h1".to_string())
-        .as_str()
-    {
-        "h1" => Proto::H1,
-        "h2" => Proto::H2,
-        _ => panic!("TEST_PROTO must be either 'h1' or 'h2'"),
-    };
-    eprintln!("Using {proto:?} protocol (export TEST_PROTO=h1 or TEST_PROTO=h2 to override)");
+async fn real_main() {
+    let settings = Settings::from_env().unwrap();
+    let ln = TcpListener::bind(settings.listen_addr).await.unwrap();
+    let listen_addr = ln.local_addr().unwrap();
+    settings.print_listen_line(listen_addr);
 
-    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
-    std::mem::forget(cancel_tx);
+    loop {
+        tracing::debug!("Accepting...");
+        let (stream, _addr) = ln.accept().await.unwrap();
 
-    std::thread::spawn(move || {
-        let ready: Ready = ready_rx.blocking_recv().unwrap();
-        eprintln!("I listen on {}", ready.port);
-    });
+        let conn_fut = async move {
+            let client_buf = RollMut::alloc().unwrap();
 
-    httpwg_loona::do_main(
-        addr,
-        port,
-        proto,
-        httpwg_loona::Mode::Server {
-            ready_tx,
-            cancel_rx,
-        },
-    );
+            match settings.proto {
+                Proto::H1 => {
+                    let driver = TestDriver;
+                    let server_conf = Rc::new(h1::ServerConf {
+                        ..Default::default()
+                    });
+                    let io = stream.into_halves();
+
+                    if let Err(e) = h1::serve(io, server_conf, client_buf, driver).await {
+                        tracing::warn!("http/1 server error: {e:?}");
+                    }
+                    tracing::debug!("http/1 server done");
+                }
+                Proto::H2C => {
+                    let driver = Rc::new(TestDriver);
+                    let server_conf = Rc::new(h2::ServerConf {
+                        ..Default::default()
+                    });
+                    let io = stream.into_halves();
+
+                    if let Err(e) = h2::serve(io, server_conf, client_buf, driver).await {
+                        let mut should_ignore = false;
+                        match &e {
+                            ServeError::H2ConnectionError(H2ConnectionError::WriteError(e)) => {
+                                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                                    should_ignore = true;
+                                }
+                            }
+                            _ => {
+                                // okay
+                            }
+                        }
+
+                        if !should_ignore {
+                            tracing::warn!("http/2 server error: {e:?}");
+                        }
+                    }
+                    tracing::debug!("http/2 server done");
+                }
+                #[cfg(not(target_os = "linux"))]
+                Proto::TLS => {
+                    panic!("TLS support is provided through kTLS, which we only support the Linux variant of right now");
+                }
+
+                #[cfg(target_os = "linux")]
+                Proto::TLS => {
+                    let mut server_config = Settings::gen_rustls_server_config().unwrap();
+                    server_config.enable_secret_extraction = true;
+                    let driver = TestDriver;
+                    let h1_conf = Rc::new(h1::ServerConf::default());
+                    let h2_conf = Rc::new(h2::ServerConf::default());
+
+                    // until we come up with `loona-rustls`, we need to temporarily go through a
+                    // tokio TcpStream
+                    let acceptor = TlsAcceptor::from(Arc::new(server_config));
+                    let stream = unsafe { std::net::TcpStream::from_raw_fd(stream.into_raw_fd()) };
+                    stream.set_nonblocking(true).unwrap();
+                    let stream = tokio::net::TcpStream::from_std(stream)?;
+                    let stream = CorkStream::new(stream);
+                    let stream = acceptor.accept(stream).await?;
+
+                    let is_h2 = matches!(stream.get_ref().1.alpn_protocol(), Some(b"h2"));
+                    tracing::debug!(%is_h2, "Performed TLS handshake");
+
+                    let stream = ktls::config_ktls_server(stream).await?;
+
+                    tracing::debug!("Set up kTLS");
+                    let (drained, stream) = stream.into_raw();
+                    let drained = drained.unwrap_or_default();
+                    tracing::debug!("{} bytes already decoded by rustls", drained.len());
+
+                    // and back to a buffet TcpStream
+                    let stream = stream.to_uring_tcp_stream()?;
+
+                    let mut client_buf = RollMut::alloc()?;
+                    client_buf.put(&drained[..])?;
+
+                    if is_h2 {
+                        tracing::info!("Using HTTP/2");
+                        h2::serve(stream.into_halves(), h2_conf, client_buf, Rc::new(driver))
+                            .await
+                            .map_err(|e| eyre::eyre!("h2 server error: {e:?}"))?;
+                    } else {
+                        tracing::info!("Using HTTP/1.1");
+                        h1::serve(stream.into_halves(), h1_conf, client_buf, driver)
+                            .await
+                            .map_err(|e| eyre::eyre!("h1 server error: {e:?}"))?;
+                    }
+                }
+            }
+            Ok::<_, eyre::Report>(())
+        };
+
+        let before_spawn = std::time::Instant::now();
+        buffet::spawn(conn_fut);
+        tracing::debug!("spawned connection in {:?}", before_spawn.elapsed());
+    }
 }
 
 fn setup_tracing_and_error_reporting() {
@@ -63,4 +163,22 @@ fn setup_tracing_and_error_reporting() {
         .with(targets)
         .with(fmt_layer)
         .init();
+}
+
+pub trait ToUringTcpStream {
+    fn to_uring_tcp_stream(self) -> std::io::Result<TcpStream>;
+}
+
+impl ToUringTcpStream for tokio::net::TcpStream {
+    fn to_uring_tcp_stream(self) -> std::io::Result<TcpStream> {
+        {
+            let sock = ManuallyDrop::new(unsafe { socket2::Socket::from_raw_fd(self.as_raw_fd()) });
+            // tokio needs the socket to be "non-blocking" (as in: return EAGAIN)
+            // buffet needs it to be "blocking" (as in: let io_uring do the op async)
+            sock.set_nonblocking(false)?;
+        }
+        let stream = unsafe { TcpStream::from_raw_fd(self.as_raw_fd()) };
+        std::mem::forget(self);
+        Ok(stream)
+    }
 }

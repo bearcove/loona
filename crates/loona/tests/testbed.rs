@@ -48,8 +48,13 @@ pub async fn start() -> b_x::Result<(SocketAddr, impl Any)> {
         let stdout = BufReader::new(stdout);
         let mut lines = stdout.lines();
         while let Some(line) = lines.next_line().await.unwrap() {
-            if let Some(rest) = line.strip_prefix("I listen on ") {
-                let addr = rest.parse::<SocketAddr>().unwrap();
+            if let Some(rest) = line.strip_prefix("🌎🦊👉 ") {
+                let addr = rest
+                    .split_whitespace()
+                    .next()
+                    .unwrap()
+                    .parse::<SocketAddr>()
+                    .unwrap();
                 if let Some(addr_tx) = addr_tx.take() {
                     addr_tx.send(addr).unwrap();
                 }

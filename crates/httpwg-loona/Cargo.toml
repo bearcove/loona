@@ -8,18 +8,6 @@ description = """
 A reference HTTP 1+2 server for httpwg, powered by loona
 """
 
-[lib]
-name = "httpwg_loona"
-path = "src/lib.rs"
-
-[[bin]]
-name = "httpwg-loona"
-path = "src/main.rs"
-
-[[bench]]
-name = "h2load"
-harness = false
-
 [dependencies]
 color-eyre = "0.6.3"
 loona = { version = "0.3.0", path = "../loona" }
@@ -32,6 +20,8 @@ b-x = { version = "1.0.0", path = "../b-x" }
 rcgen = { version = "0.13.1", default-features = false, features = ["aws_lc_rs"] }
 tokio-rustls = "0.26.0"
 ktls = "6.0.0"
+httpwg-harness = { version = "0.1.0", path = "../httpwg-harness" }
+socket2 = "0.5.7"
 
 [dev-dependencies]
 codspeed-criterion-compat = "2.6.0"
