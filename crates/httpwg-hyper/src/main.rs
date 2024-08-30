@@ -162,13 +162,14 @@ async fn main() {
             let crt = certified_key.cert.der();
             let key = certified_key.key_pair.serialize_der();
 
-            let server_config = ServerConfig::builder()
+            let mut server_config = ServerConfig::builder()
                 .with_no_client_auth()
                 .with_single_cert(
                     vec![crt.clone()],
                     PrivatePkcs8KeyDer::from(key.clone()).into(),
                 )
                 .unwrap();
+            server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
 
             let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
 
@@ -177,7 +178,17 @@ async fn main() {
                 let acceptor = acceptor.clone();
                 tokio::spawn(async move {
                     let stream = acceptor.accept(stream).await.unwrap();
-                    let builder = auto::Builder::new(TokioExecutor::new());
+
+                    let mut builder = auto::Builder::new(TokioExecutor::new());
+                    match stream.get_ref().1.alpn_protocol() {
+                        Some(b"h2") => {
+                            builder = builder.http2_only();
+                        }
+                        Some(b"http/1.1") => {
+                            builder = builder.http1_only();
+                        }
+                        _ => {}
+                    }
                     builder
                         .serve_connection(TokioIo::new(stream), TestService)
                         .await
