@@ -29,6 +29,9 @@ tracing-subscriber = "0.3.18"
 tokio = { version = "1.39.2", features = ["macros", "sync", "process"] }
 eyre = { version = "0.6.12", default-features = false }
 b-x = { version = "1.0.0", path = "../b-x" }
+rcgen = { version = "0.13.1", default-features = false, features = ["aws_lc_rs"] }
+tokio-rustls = "0.26.0"
+ktls = "6.0.0"
 
 [dev-dependencies]
 codspeed-criterion-compat = "2.6.0"

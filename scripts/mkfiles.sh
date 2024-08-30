@@ -5,10 +5,17 @@ cd "$(dirname "$0")"
 
 # Define an array of file names and sizes
 declare -A files=(
+    ["1M"]="1M"
     ["4M"]="4M"
+    ["8M"]="8M"
     ["16M"]="16M"
+    ["32M"]="32M"
+    ["64M"]="64M"
+    ["128M"]="128M"
     ["256M"]="256M"
+    ["512M"]="512M"
     ["1GB"]="1G"
+    ["2GB"]="2G"
 )
 
 # Print summary and ask for consent

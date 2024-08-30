@@ -59,6 +59,7 @@ dependencies = [
  "aws-lc-sys",
  "mirai-annotations",
  "paste",
+ "untrusted 0.7.1",
  "zeroize",
 ]
 
@@ -95,12 +96,6 @@ dependencies = [
  "object",
  "rustc-demangle",
 ]
-
-[[package]]
-name = "base64"
-version = "0.22.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bindgen"
@@ -786,7 +781,9 @@ dependencies = [
  "hyper",
  "hyper-util",
  "pin-project-lite",
+ "rcgen",
  "tokio",
+ "tokio-rustls",
  "tokio-stream",
  "tokio-util",
  "tracing",
@@ -801,8 +798,11 @@ dependencies = [
  "codspeed-criterion-compat",
  "color-eyre",
  "eyre",
+ "ktls",
  "loona",
+ "rcgen",
  "tokio",
+ "tokio-rustls",
  "tracing",
  "tracing-subscriber",
 ]
@@ -1282,16 +1282,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
-name = "pem"
-version = "3.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e459365e590736a54c3fa561947c84837534b8e9af6fc5bf781307e82658fae"
-dependencies = [
- "base64",
- "serde",
-]
-
-[[package]]
 name = "pin-project-lite"
 version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1416,8 +1406,7 @@ version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54077e1872c46788540de1ea3d7f4ccb1983d12f9aa909b234468676c1a36779"
 dependencies = [
- "pem",
- "ring",
+ "aws-lc-rs",
  "rustls-pki-types",
  "time",
  "yasna",
@@ -1487,7 +1476,7 @@ dependencies = [
  "getrandom",
  "libc",
  "spin",
- "untrusted",
+ "untrusted 0.9.0",
  "windows-sys 0.52.0",
 ]
 
@@ -1546,7 +1535,7 @@ dependencies = [
  "aws-lc-rs",
  "ring",
  "rustls-pki-types",
- "untrusted",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -1913,6 +1902,12 @@ name = "unicode-ident"
 version = "1.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3354b9ac3fae1ff6755cb6db53683adb661634f67557942dea4facebec0fee4b"
+
+[[package]]
+name = "untrusted"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
 name = "untrusted"

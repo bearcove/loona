@@ -2,12 +2,13 @@ use http_body_util::{BodyExt, StreamBody};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use tokio::io::AsyncReadExt;
-use tokio_stream::StreamExt;
-use tokio_util::io::ReaderStream;
 
 use hyper_util::server::conn::auto;
+use std::sync::Arc;
 use std::{convert::Infallible, fmt::Debug, pin::Pin};
 use tokio::sync::mpsc;
+use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
+use tokio_rustls::rustls::ServerConfig;
 
 use bytes::Bytes;
 use futures::Future;
@@ -71,8 +72,7 @@ where
                         let (tx, rx) = mpsc::channel::<Result<Frame<Bytes>, E>>(1);
 
                         tokio::spawn(async move {
-                            let block = "this is a fairly large block".repeat(4096);
-                            let block = Bytes::from(block);
+                            let block = Bytes::copy_from_slice(BLOCK);
                             for _ in 0..repeat {
                                 let frame = Frame::data(block.clone());
                                 let _ = tx.send(Ok(frame)).await;
@@ -86,6 +86,7 @@ where
                     } else if let ["stream-file", name] = parts.as_slice() {
                         let name = name.to_string();
 
+                        // TODO: custom impl of the Body trait to avoid channel overhead
                         // stream 64KB blocks of the file
                         let (tx, rx) = mpsc::channel::<Result<Frame<Bytes>, E>>(1);
                         tokio::spawn(async move {
@@ -93,14 +94,13 @@ where
                                 tokio::fs::File::open(format!("/tmp/stream-file/{name}"))
                                     .await
                                     .unwrap();
-                            let mut buf = Vec::with_capacity(64 * 1024);
+                            let mut buf = vec![0u8; 64 * 1024];
                             while let Ok(n) = file.read(&mut buf).await {
                                 if n == 0 {
                                     break;
                                 }
                                 let frame = Frame::data(Bytes::copy_from_slice(&buf[..n]));
                                 let _ = tx.send(Ok(frame)).await;
-                                buf.drain(..n);
                             }
                         });
 
@@ -108,10 +108,16 @@ where
                         let body: BoxBody<E> = Box::pin(StreamBody::new(rx));
                         let res = Response::builder().body(body).unwrap();
                         Ok(res)
-                    } else {
+                    } else if parts.as_slice().is_empty() {
                         let body = "it's less dire to lose, than to lose oneself".to_string();
                         let body: BoxBody<E> = Box::pin(body.map_err(|_| unreachable!()));
                         let res = Response::builder().status(200).body(body).unwrap();
+                        Ok(res)
+                    } else {
+                        // return a 404
+                        let body = "404 Not Found".to_string();
+                        let body: BoxBody<E> = Box::pin(body.map_err(|_| unreachable!()));
+                        let res = Response::builder().status(404).body(body).unwrap();
                         Ok(res)
                     }
                 }
@@ -131,38 +137,76 @@ async fn main() {
     println!("I listen on {upstream_addr}");
 
     #[derive(Debug, Clone, Copy)]
+    #[allow(clippy::upper_case_acronyms)]
     enum Proto {
         H1,
-        H2,
+        H2C,
+        TLS,
     }
 
-    let proto = match std::env::var("TEST_PROTO")
-        .unwrap_or("h1".to_string())
-        .as_str()
-    {
+    let proto = match std::env::var("PROTO").unwrap_or("h1".to_string()).as_str() {
+        // plaintext HTTP/1.1
         "h1" => Proto::H1,
-        "h2" => Proto::H2,
-        _ => panic!("TEST_PROTO must be either 'h1' or 'h2'"),
+        // HTTP/2 with prior knowledge
+        "h2c" => Proto::H2C,
+        // TLS with ALPN
+        "tls" => Proto::TLS,
+        _ => panic!("PROTO must be one of 'h1', 'h2c', or 'tls'"),
     };
-    println!("Using {proto:?} protocol (export TEST_PROTO=h1 or TEST_PROTO=h2 to override)");
+    println!("Using {proto:?} (use PROTO=[h1,h2c,tls])");
 
-    while let Ok((stream, _)) = ln.accept().await {
-        stream.set_nodelay(true).unwrap();
+    match proto {
+        Proto::TLS => {
+            let certified_key =
+                rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+            let crt = certified_key.cert.der();
+            let key = certified_key.key_pair.serialize_der();
 
-        tokio::spawn(async move {
-            let mut builder = auto::Builder::new(TokioExecutor::new());
+            let server_config = ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(
+                    vec![crt.clone()],
+                    PrivatePkcs8KeyDer::from(key.clone()).into(),
+                )
+                .unwrap();
 
-            match proto {
-                Proto::H1 => {
-                    builder = builder.http1_only();
-                }
-                Proto::H2 => {
-                    builder = builder.http2_only();
-                }
+            let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
+
+            while let Ok((stream, _)) = ln.accept().await {
+                stream.set_nodelay(true).unwrap();
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    let stream = acceptor.accept(stream).await.unwrap();
+                    let builder = auto::Builder::new(TokioExecutor::new());
+                    builder
+                        .serve_connection(TokioIo::new(stream), TestService)
+                        .await
+                });
             }
-            builder
-                .serve_connection(TokioIo::new(stream), TestService)
-                .await
-        });
+        }
+        _ => {
+            while let Ok((stream, _)) = ln.accept().await {
+                stream.set_nodelay(true).unwrap();
+
+                tokio::spawn(async move {
+                    let mut builder = auto::Builder::new(TokioExecutor::new());
+
+                    match proto {
+                        Proto::H1 => {
+                            builder = builder.http1_only();
+                        }
+                        Proto::H2C => {
+                            builder = builder.http2_only();
+                        }
+                        _ => {
+                            // nothing
+                        }
+                    }
+                    builder
+                        .serve_connection(TokioIo::new(stream), TestService)
+                        .await
+                });
+            }
+        }
     }
 }

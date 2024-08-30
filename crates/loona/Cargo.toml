@@ -71,7 +71,7 @@ cargo-husky = { version = "1", features = ["user-hooks"] }
 criterion = "0.5.1"
 codspeed-criterion-compat = "2.6.0"
 itoa = "1.0.11"
-rcgen = "0.13.1"
+rcgen = { version = "0.13.1", default-features = false, features = ["aws_lc_rs"] }
 socket2 = "0.5.7"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]

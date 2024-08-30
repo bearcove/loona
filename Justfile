@@ -63,7 +63,7 @@ httpwg-over-tcp *args='':
     cargo build --release \
         --package httpwg-loona \
         --package httpwg-cli
-    export TEST_PROTO=h2
+    export PROTO=h2
     export PORT=8001
     export RUST_LOG=${RUST_LOG:-info}
     ./target/release/httpwg --frame-timeout 2000 --connect-timeout 2000 --address localhost:8001 "$@" -- ./target/release/httpwg-loona
@@ -84,7 +84,7 @@ samply:
         --package httpwg-loona \
         --profile profiling \
         --features tracing/release_max_level_info
-    export TEST_PROTO=h2
+    export PROTO=h2
     export PORT=8002
     target/profiling/httpwg-loona
 
