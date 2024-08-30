@@ -1,4 +1,8 @@
 #!/usr/bin/env -S bash -euo pipefail
+
+# Change to the script's directory
+cd "$(dirname "$0")"
+
 #PERF_EVENTS="cpu-clock,context-switches,cycles,instructions,branches,branch-misses,cache-references,cache-misses,page-faults,$(paste -sd ',' syscalls)"
 PERF_EVENTS="cpu-clock,cycles,branch-misses,cache-misses,page-faults,$(paste -sd ',' syscalls)"
 
