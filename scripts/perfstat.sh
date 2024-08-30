@@ -1,5 +1,7 @@
 #!/usr/bin/env -S bash -euo pipefail
 
+. /root/.cargo/env
+
 # Change to the script's directory
 cd "$(dirname "$0")"
 
