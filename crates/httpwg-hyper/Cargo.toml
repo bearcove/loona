@@ -19,6 +19,8 @@ hyper-util = { version = "0.1.7", features = [
     "http2",
     "tokio",
 ] }
+pin-project-lite = "0.2.14"
 tokio = { version = "1.39.2", features = ["full"] }
 tokio-stream = "0.1.15"
+tokio-util = { version = "0.7.11", features = ["io"] }
 tracing = "0.1.40"

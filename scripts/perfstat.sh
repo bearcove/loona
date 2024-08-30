@@ -13,6 +13,15 @@ LOONA_DIR=~/bearcove/loona
 # Build the servers
 cargo build --release --manifest-path="$LOONA_DIR/Cargo.toml" -F tracing/release_max_level_info
 
+# Create a new process group
+set -m
+
+# Set trap to kill the process group on script exit
+trap 'kill -TERM -$$' EXIT
+
+pkill -9 -f httpwg-hyper
+pkill -9 -f httpwg-loona
+
 # Launch hyper server
 export TEST_PROTO=h2 ADDR=0.0.0.0 PORT=8001
 "$LOONA_DIR/target/release/httpwg-hyper" &
@@ -28,7 +37,7 @@ echo "Loona PID: $LOONA_PID"
 HYPER_ADDR="http://localhost:8001"
 LOONA_ADDR="http://localhost:8002"
 
-ENDPOINT="${ENDPOINT:-/stream-big-body}"
+ENDPOINT="${ENDPOINT:-/repeat-4k-blocks/128}"
 
 declare -A servers=(
     [hyper]="$HYPER_PID $HYPER_ADDR"
