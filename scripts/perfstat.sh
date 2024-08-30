@@ -15,7 +15,7 @@ trap 'kill -TERM -$$' EXIT
 mkdir -p /tmp/loona-perfstat
 
 # Kill older processes
-for pidfile in /tmp/loona-perfstat/{hyper,loona}.PID; do
+for pidfile in /tmp/loona-perfstat/*.PID; do
     if [ -f "$pidfile" ]; then
         pid=$(cat "$pidfile")
         if [ "$pid" != "$$" ]; then
@@ -97,11 +97,34 @@ CONNS="${CONNS:-40}"
 STREAMS="${STREAMS:-8}"
 NUM_REQUESTS="${NUM_REQUESTS:-100}"
 
+# Set MODE to 'stat' if not specified
+MODE=${MODE:-stat}
+
+if [[ "$MODE" == "record" ]]; then
+    PERF_CMD="perf record -F 99 -e $PERF_EVENTS -p"
+elif [[ "$MODE" == "stat" ]]; then
+    PERF_CMD="perf stat -e $PERF_EVENTS -p"
+else
+    echo "Error: Unknown MODE '$MODE'"
+    exit 1
+fi
+
 echo -e "\033[1;34m📊 Benchmark parameters: RPS=$RPS, CONNS=$CONNS, STREAMS=$STREAMS, NUM_REQUESTS=$NUM_REQUESTS, ENDPOINT=$ENDPOINT\033[0m"
 
 for server in "${!servers[@]}"; do
     read -r PID ADDR <<< "${servers[$server]}"
     echo -e "\033[1;36mLoona Git SHA: $(cd ~/bearcove/loona && git rev-parse --short HEAD)\033[0m"
     echo -e "\033[1;33m🚀 Benchmarking \033[1;32m$(cat /proc/$PID/cmdline | tr '\0' ' ')\033[0m"
-    perf stat -e "$PERF_EVENTS" -p "$PID" -- ssh brat "$H2LOAD" "${H2LOAD_ARGS[@]}" --rps "$RPS" -c "$CONNS" -m "$STREAMS" -n "$NUM_REQUESTS" "${ADDR}${ENDPOINT}"
+    remote_command=("$H2LOAD" "${H2LOAD_ARGS[@]}" --rps "$RPS" -c "$CONNS" -m "$STREAMS" -n "$NUM_REQUESTS" "${ADDR}${ENDPOINT}")
+
+    if [[ "$MODE" == "record" ]]; then
+        samply record -p "$PID" &
+        SAMPLY_PID=$!
+        echo $SAMPLY_PID > /tmp/loona-perfstat/samply.PID
+        ssh brat "${remote_command[@]}"
+        kill -INT $SAMPLY_PID
+        wait $SAMPLY_PID
+    else
+        perf stat -e "$PERF_EVENTS" -p "$PID" -- ssh brat "${remote_command[@]}"
+    fi
 done

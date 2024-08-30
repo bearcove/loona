@@ -187,7 +187,6 @@ where
         let mut goaway_err: Option<H2ConnectionError> = None;
 
         {
-            // read frames and send them into an mpsc buffer of size 1
             let (tx, rx) = mpsc::channel::<(Frame, Roll)>(32);
 
             // store max frame size setting as an atomic so we can share it across tasks
