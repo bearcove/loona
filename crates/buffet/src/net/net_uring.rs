@@ -179,22 +179,20 @@ impl WriteOwned for TcpWriteHalf {
         use libc::iovec;
         use io_uring::opcode::Writev;
 
-        let mut iovecs: Vec<iovec> = vec![];
-        for piece in list.pieces.iter() {
-            let iov = iovec {
+        let mut iovecs = Vec::with_capacity(list.pieces.len());
+        for piece in &list.pieces {
+            iovecs.push(iovec {
                 iov_base: piece.as_ref().as_ptr() as *mut libc::c_void,
                 iov_len: piece.len(),
-            };
-            iovecs.push(iov);
+            });
         }
-        let iovecs = iovecs.into_boxed_slice();
+        let iov_ptr = iovecs.as_ptr();
         let iov_cnt = iovecs.len();
-        // FIXME: don't leak, duh
-        let iovecs = Box::leak(iovecs);
+        std::mem::forget(iovecs); // FIXME: don't leak memory
 
         let sqe = Writev::new(
             io_uring::types::Fd(self.0.fd),
-            iovecs.as_ptr() as *const _,
+            iov_ptr,
             iov_cnt as u32,
         )
         .build();
