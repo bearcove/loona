@@ -95,7 +95,8 @@ ENDPOINT="${ENDPOINT:-/repeat-4k-blocks/128}"
 RPS="${RPS:-2}"
 CONNS="${CONNS:-40}"
 STREAMS="${STREAMS:-8}"
-NUM_REQUESTS="${NUM_REQUESTS:-100}"
+WARM_UP_TIME="${WARM_UP_TIME:-5}"
+DURATION="${DURATION:-20}"
 TIMES="${TIMES:-1}"
 
 # Set MODE to 'stat' if not specified
@@ -110,13 +111,13 @@ else
     exit 1
 fi
 
-echo -e "\033[1;34m📊 Benchmark parameters: RPS=$RPS, CONNS=$CONNS, STREAMS=$STREAMS, NUM_REQUESTS=$NUM_REQUESTS, ENDPOINT=$ENDPOINT\033[0m"
+echo -e "\033[1;34m📊 Benchmark parameters: RPS=$RPS, CONNS=$CONNS, STREAMS=$STREAMS, WARM_UP_TIME=$WARM_UP_TIME, DURATION=$DURATION, TIMES=$TIMES\033[0m"
 
 for server in "${!servers[@]}"; do
     read -r PID ADDR <<< "${servers[$server]}"
     echo -e "\033[1;36mLoona Git SHA: $(cd ~/bearcove/loona && git rev-parse --short HEAD)\033[0m"
     echo -e "\033[1;33m🚀 Benchmarking \033[1;32m$(cat /proc/$PID/cmdline | tr '\0' ' ')\033[0m"
-    remote_command=("$H2LOAD" "${H2LOAD_ARGS[@]}" --rps "$RPS" -c "$CONNS" -m "$STREAMS" -n "$NUM_REQUESTS" "${ADDR}${ENDPOINT}")
+    remote_command=("$H2LOAD" "${H2LOAD_ARGS[@]}" --rps "$RPS" -c "$CONNS" -m "$STREAMS" --duration "$DURATION" "${ADDR}${ENDPOINT}")
 
     if [[ "$MODE" == "record" ]]; then
         samply record -p "$PID" &
@@ -127,10 +128,17 @@ for server in "${!servers[@]}"; do
         wait $SAMPLY_PID
     else
         for ((i=1; i<=$TIMES; i++)); do
-            echo "===================="
-            echo -e "\033[1;35m🏃 Run $i of $TIMES 🏃\033[0m"
-            echo "===================="
-            perf stat -e "$PERF_EVENTS" -p "$PID" -- ssh brat "${remote_command[@]}"
+        echo "==================================================="
+        echo -e "\033[1;35m🏃 Run $i of $TIMES for $server server 🏃\033[0m"
+        echo "==================================================="
+            ssh brat "${remote_command[@]}" &
+            SSH_PID=$!
+            sleep "$WARM_UP_TIME"
+            ACTUAL_DURATION=$((DURATION - WARM_UP_TIME - 1))
+            echo "Starting perf for $ACTUAL_DURATION seconds..."
+            perf stat -e "$PERF_EVENTS" -p "$PID" -- sleep "$ACTUAL_DURATION"
+            echo "Starting perf... done!"
+            wait $SSH_PID
         done
     fi
 done

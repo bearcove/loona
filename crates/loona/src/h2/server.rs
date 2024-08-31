@@ -117,7 +117,8 @@ where
 
         let hpack_enc = loona_hpack::Encoder::new();
 
-        let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<H2Event>(32);
+        let h2_server_chan_size: usize = std::env::var("H2_SERVER_CHAN_SIZE").unwrap_or("32".to_string()).parse().unwrap();
+        let (ev_tx, ev_rx) = tokio::sync::mpsc::channel::<H2Event>(h2_server_chan_size);
 
         Ok(Self {
             driver,
