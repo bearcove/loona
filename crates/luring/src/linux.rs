@@ -211,13 +211,7 @@ impl<S: squeue::Entry, C: cqueue::Entry> IoUringAsync<S, C> {
     pub async fn listen(uring: Rc<IoUringAsync<S, C>>) {
         let async_fd = AsyncFd::new(uring).unwrap();
         loop {
-            let start = std::time::Instant::now();
-            tracing::trace!("waiting for uring fd to be ready...");
             let mut guard = async_fd.readable().await.unwrap();
-            tracing::trace!(
-                "waiting for uring fd to be ready... it is! (took {:?})",
-                start.elapsed()
-            );
             guard.get_inner().handle_cqe();
             guard.clear_ready();
         }

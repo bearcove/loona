@@ -45,15 +45,7 @@ pub trait WriteOwned {
         for buf in list.pieces.iter().cloned() {
             let buf_len = buf.len();
 
-            let before_write = std::time::Instant::now();
-            tracing::trace!("doing write with buf of len {}", buf_len);
             let (res, _) = self.write_owned(buf).await;
-            tracing::trace!(
-                "doing write with buf of len {}... done in {:?}",
-                buf_len,
-                before_write.elapsed()
-            );
-
             match res {
                 Ok(0) => {
                     return Err(std::io::Error::new(
@@ -80,14 +72,8 @@ pub trait WriteOwned {
     /// Write a list of buffers, re-trying the write if the kernel does a
     /// partial write.
     async fn writev_all_owned(&mut self, mut list: PieceList) -> std::io::Result<()> {
-        tracing::trace!("writev_all_owned starts...");
-        let start = std::time::Instant::now();
-
         while !list.is_empty() {
-            tracing::trace!("doing writev_owned with {} pieces", list.len());
-            let before_writev = std::time::Instant::now();
             let n = self.writev_owned(&list).await?;
-            tracing::trace!("writev_owned took {:?}", before_writev.elapsed());
 
             if n == 0 {
                 return Err(std::io::Error::new(
@@ -116,11 +102,6 @@ pub trait WriteOwned {
                 }
             }
         }
-        tracing::trace!(
-            "writev_all_owned starts... and succeeds! took {:?}",
-            start.elapsed()
-        );
-
         Ok(())
     }
 
