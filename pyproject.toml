@@ -1,7 +1,7 @@
 [project]
 name = "loona"
 version = "0.1.0"
-description = "Scripts"
+description = "Benchmarking rig for the loona Rust HTTP implementation"
 requires-python = ">=3.11"
 dependencies = [
     "termcolor~=2.4.0",

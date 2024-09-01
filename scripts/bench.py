@@ -190,7 +190,7 @@ try:
                         data[label] = value
 
                 # Create a DataFrame from the dictionary
-                df = pd.DataFrame(data, index=[0]).T
+                df = pd.DataFrame([data]).T
                 df.columns = ['Value']
                 df.index.name = 'Event'
 
