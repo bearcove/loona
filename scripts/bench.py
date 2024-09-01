@@ -33,6 +33,10 @@ def abort_and_cleanup(signum, frame):
     kill_group()
     sys.exit(1)
 
+# Register signal handlers
+signal.signal(signal.SIGINT, abort_and_cleanup)
+signal.signal(signal.SIGTERM, abort_and_cleanup)
+
 # Create directory if it doesn't exist
 Path("/tmp/loona-perfstat").mkdir(parents=True, exist_ok=True)
 
@@ -97,7 +101,7 @@ HTTP_OR_HTTPS = "https" if PROTO == "tls" else "http"
 # Launch hyper server
 hyper_env = os.environ.copy()
 hyper_env.update({"ADDR": "0.0.0.0", "PORT": "8001"})
-hyper_process = subprocess.Popen([f"{LOONA_DIR}/target/release/httpwg-hyper"], env=hyper_env, preexec_fn=os.setpgrp)
+hyper_process = subprocess.Popen([f"{LOONA_DIR}/target/release/httpwg-hyper"], env=hyper_env, preexec_fn=set_pdeathsig)
 HYPER_PID = hyper_process.pid
 with open("/tmp/loona-perfstat/hyper.PID", "w") as f:
     f.write(str(HYPER_PID))
@@ -105,7 +109,7 @@ with open("/tmp/loona-perfstat/hyper.PID", "w") as f:
 # Launch loona server
 loona_env = os.environ.copy()
 loona_env.update({"ADDR": "0.0.0.0", "PORT": "8002"})
-loona_process = subprocess.Popen([f"{LOONA_DIR}/target/release/httpwg-loona"], env=loona_env, preexec_fn=os.setpgrp)
+loona_process = subprocess.Popen([f"{LOONA_DIR}/target/release/httpwg-loona"], env=loona_env, preexec_fn=set_pdeathsig)
 LOONA_PID = loona_process.pid
 with open("/tmp/loona-perfstat/loona.PID", "w") as f:
     f.write(str(LOONA_PID))
@@ -163,7 +167,7 @@ try:
         h2load_cmd = [H2LOAD] + H2LOAD_ARGS + ["--rps", RPS, "-c", CONNS, "-m", STREAMS, "--duration", str(DURATION), f"{ADDR}{ENDPOINT}"]
 
         if MODE == "record":
-            samply_process = subprocess.Popen(["samply", "record", "-p", str(PID)])
+            samply_process = subprocess.Popen(["samply", "record", "-p", str(PID)], preexec_fn=set_pdeathsig)
             with open("/tmp/loona-perfstat/samply.PID", "w") as f:
                 f.write(str(samply_process.pid))
             subprocess.run(["ssh", "brat"] + h2load_cmd, check=True)
@@ -172,11 +176,11 @@ try:
         else:
             for i in range(1, TIMES + 1):
                 print(colored(f"🏃 Run {i} of {TIMES} for {server} server 🏃 (will take {DURATION} seconds)", "magenta"))
-                ssh_process = subprocess.Popen(["ssh", "brat"] + h2load_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=os.setpgrp)
+                ssh_process = subprocess.Popen(["ssh", "brat"] + h2load_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=set_pdeathsig)
                 time.sleep(WARMUP)
                 MEASURE_DURATION = DURATION - WARMUP - 1
                 perf_cmd = ["perf", "stat", "-x", ",", "-e", ",".join(PERF_EVENTS), "-p", str(PID), "--", "sleep", str(MEASURE_DURATION)]
-                perf_process = subprocess.Popen(perf_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=os.setpgrp)
+                perf_process = subprocess.Popen(perf_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=set_pdeathsig)
                 perf_stdout, perf_stderr = perf_process.communicate()
 
                 perf_output = perf_stdout.decode('utf-8') + perf_stderr.decode('utf-8')
