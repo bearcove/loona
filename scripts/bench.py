@@ -6,6 +6,9 @@ import signal
 import subprocess
 import sys
 import time
+import openpyxl
+from openpyxl.styles import Alignment
+
 from pathlib import Path
 from termcolor import colored
 import pandas as pd
@@ -225,8 +228,21 @@ def do_perfstat():
         print(perf_output)
 
         # Clean up the data
-        perf_output['event'] = perf_output['event'].str.strip().str.replace('^syscalls:', '', regex=True)
+        perf_output['event'] = perf_output['event'].str.strip()
         perf_output['value'] = pd.to_numeric(perf_output['value'], errors='coerce')
+
+        # Format values as billions for specific events
+        for index, row in perf_output.iterrows():
+            event = row['event']
+            if isinstance(event, str) and event != 'page-faults' and not event.startswith('syscalls:'):
+                perf_output.loc[index, 'value'] /= 1e9
+                perf_output.loc[index, 'unit'] = 'B'
+
+        # Round values to 3 decimal places
+        perf_output['value'] = perf_output['value'].round(3)
+
+        # Strip 'syscalls:sys_enter_' prefix from event names
+        perf_output['event'] = perf_output['event'].str.replace('syscalls:sys_enter_', '', regex=False)
 
         print("Performance Output (cleaned):")
         print(perf_output)
@@ -242,17 +258,12 @@ def do_perfstat():
     # Reorder columns to group value, unit, stddev for each server
     new_columns = []
     for server in servers.keys():
-        new_columns.extend([(server, 'value'), (server, 'stddev')])
+        new_columns.extend([(server, 'value'), (server, 'unit'), (server, 'stddev')])
     combined_df = combined_df.reindex(columns=pd.MultiIndex.from_tuples(new_columns))
 
     # Generate sheet name with current date, loona git hash, and benchmark params
     current_date = pd.Timestamp.now().strftime('%Y-%m-%d_%H-%M-%S')
     sheet_name = f"{current_date}_{loona_git_sha}_{benchmark_params.replace(', ', '_')}"
-
-    # Truncate sheet name if it's too long
-    max_sheet_name_length = 31  # Excel limitation
-    if len(sheet_name) > max_sheet_name_length:
-        sheet_name = sheet_name[:max_sheet_name_length]
 
     print(f"Sheet name: {sheet_name}")
 
@@ -263,6 +274,7 @@ def do_perfstat():
     excel_filename = f"/tmp/loona-perfstat/combined_performance.xlsx"
     with pd.ExcelWriter(excel_filename, engine='openpyxl') as writer:
         combined_df.to_excel(writer, sheet_name=sheet_name)
+        worksheet = writer.sheets[sheet_name]
 
     print(colored(f"Saved combined performance data to {excel_filename}", "green"))
 
