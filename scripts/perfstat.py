@@ -1,24 +1,24 @@
-#!/usr/bin/env -S uv run --with 'termcolor'
-
-import os
+#!/usr/bin/env -S uv run --with 'termcolor~=2.4.0' --with 'pandas~=2.2.2' --with 'openpyxl~=3.1.5'
+ import os
 import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 from termcolor import colored
+import pandas as pd
 
 # Change to the script's directory
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
-
-# Create a new process group
-os.setpgrp()
 
 # Set trap to kill the process group on script exit
 def kill_group():
     os.killpg(0, signal.SIGTERM)
 
-signal.signal(signal.SIGTERM, lambda signum, frame: kill_group())
+def abort_and_cleanup(signum, frame):
+    print(colored("\nAborting and cleaning up...", "red"))
+    kill_group()
+    sys.exit(1)
 
 # Create directory if it doesn't exist
 Path("/tmp/loona-perfstat").mkdir(parents=True, exist_ok=True)
@@ -55,7 +55,7 @@ HTTP_OR_HTTPS = "https" if PROTO == "tls" else "http"
 # Launch hyper server
 hyper_env = os.environ.copy()
 hyper_env.update({"ADDR": "0.0.0.0", "PORT": "8001"})
-hyper_process = subprocess.Popen([f"{LOONA_DIR}/target/release/httpwg-hyper"], env=hyper_env)
+hyper_process = subprocess.Popen([f"{LOONA_DIR}/target/release/httpwg-hyper"], env=hyper_env, preexec_fn=os.setpgrp)
 HYPER_PID = hyper_process.pid
 with open("/tmp/loona-perfstat/hyper.PID", "w") as f:
     f.write(str(HYPER_PID))
@@ -64,7 +64,7 @@ print(f"hyper PID: {HYPER_PID}")
 # Launch loona server
 loona_env = os.environ.copy()
 loona_env.update({"ADDR": "0.0.0.0", "PORT": "8002"})
-loona_process = subprocess.Popen([f"{LOONA_DIR}/target/release/httpwg-loona"], env=loona_env)
+loona_process = subprocess.Popen([f"{LOONA_DIR}/target/release/httpwg-loona"], env=loona_env, preexec_fn=os.setpgrp)
 LOONA_PID = loona_process.pid
 with open("/tmp/loona-perfstat/loona.PID", "w") as f:
     f.write(str(LOONA_PID))
@@ -113,37 +113,50 @@ TIMES = int(os.environ.get("TIMES", "1"))
 # Set MODE to 'stat' if not specified
 MODE = os.environ.get("MODE", "stat")
 
-if MODE == "record":
-    PERF_CMD = f"perf record -F 99 -e {PERF_EVENTS} -p"
-elif MODE == "stat":
-    PERF_CMD = f"perf stat -e {PERF_EVENTS} -p"
-else:
-    print(f"Error: Unknown MODE '{MODE}'")
-    sys.exit(1)
-
 print(colored(f"📊 Benchmark parameters: RPS={RPS}, CONNS={CONNS}, STREAMS={STREAMS}, WARMUP={WARMUP}, DURATION={DURATION}, TIMES={TIMES}", "blue"))
 
-for server, (PID, ADDR) in servers.items():
-    print(colored(f"Loona Git SHA: {subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=os.path.expanduser('~/bearcove/loona')).decode().strip()}", "cyan"))
-    print(colored(f"🚀 Benchmarking {open(f'/proc/{PID}/cmdline').read().replace(chr(0), ' ').strip()}", "yellow"))
-    remote_command = [H2LOAD] + H2LOAD_ARGS + ["--rps", RPS, "-c", CONNS, "-m", STREAMS, "--duration", str(DURATION), f"{ADDR}{ENDPOINT}"]
+try:
+    for server, (PID, ADDR) in servers.items():
+        print(colored(f"Loona Git SHA: {subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=os.path.expanduser('~/bearcove/loona')).decode().strip()}", "cyan"))
+        print(colored(f"🚀 Benchmarking {open(f'/proc/{PID}/cmdline').read().replace(chr(0), ' ').strip()}", "yellow"))
+        h2load_cmd = [H2LOAD] + H2LOAD_ARGS + ["--rps", RPS, "-c", CONNS, "-m", STREAMS, "--duration", str(DURATION), f"{ADDR}{ENDPOINT}"]
 
-    if MODE == "record":
-        samply_process = subprocess.Popen(["samply", "record", "-p", str(PID)])
-        with open("/tmp/loona-perfstat/samply.PID", "w") as f:
-            f.write(str(samply_process.pid))
-        subprocess.run(["ssh", "brat"] + remote_command, check=True)
-        samply_process.send_signal(signal.SIGINT)
-        samply_process.wait()
-    else:
-        for i in range(1, TIMES + 1):
-            print("===================================================")
-            print(colored(f"🏃 Run {i} of {TIMES} for {server} server 🏃", "magenta"))
-            print("===================================================")
-            ssh_process = subprocess.Popen(["ssh", "brat"] + remote_command)
-            time.sleep(WARMUP)
-            MEASURE_DURATION = DURATION - WARMUP - 1
-            print(f"Starting perf for {MEASURE_DURATION} seconds...")
-            subprocess.run(["perf", "stat", "-e", PERF_EVENTS, "-p", str(PID), "--", "sleep", str(MEASURE_DURATION)], check=True)
-            print("Starting perf... done!")
-            ssh_process.wait()
+        if MODE == "record":
+            samply_process = subprocess.Popen(["samply", "record", "-p", str(PID)])
+            with open("/tmp/loona-perfstat/samply.PID", "w") as f:
+                f.write(str(samply_process.pid))
+            subprocess.run(["ssh", "brat"] + h2load_cmd, check=True)
+            samply_process.send_signal(signal.SIGINT)
+            samply_process.wait()
+        else:
+            for i in range(1, TIMES + 1):
+                print(colored(f"🏃 Run {i} of {TIMES} for {server} server 🏃 (will take {DURATION} seconds)", "magenta"))
+                ssh_process = subprocess.Popen(["ssh", "brat"] + h2load_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=os.setpgrp)
+                time.sleep(WARMUP)
+                MEASURE_DURATION = DURATION - WARMUP - 1
+                perf_cmd = ["perf", "stat", "-e", PERF_EVENTS, "-p", str(PID), "--", "sleep", str(MEASURE_DURATION)]
+                perf_process = subprocess.Popen(perf_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=os.setpgrp)
+                _, perf_stderr = perf_process.communicate()
+                perf_output = perf_stderr.decode('utf-8')
+                perf_lines = [line.strip().split() for line in perf_output.split('\n') if line.strip() and not line.startswith('#')]
+                perf_csv = ','.join([line[-1] for line in perf_lines if len(line) > 1])
+
+                # Create a DataFrame from the CSV string
+                df = pd.DataFrame([perf_csv.split(',')], columns=[line[-1] for line in perf_lines if len(line) > 1])
+
+                # Save the DataFrame as an Excel file
+                excel_filename = f"/tmp/loona-perfstat/{server}_run_{i}.xlsx"
+                df.to_excel(excel_filename, index=False)
+                print(colored(f"Saved performance data to {excel_filename}", "green"))
+
+                ssh_process.wait()
+
+                if ssh_process.returncode != 0:
+                    output, error = ssh_process.communicate()
+                    print("h2load command failed. Output:")
+                    print(output.decode())
+                    print("Error:")
+                    print(error.decode())
+except KeyboardInterrupt:
+    print(colored("\nKeyboard interrupt detected. Cleaning up...", "red"))
+    abort_and_cleanup(None, None)
