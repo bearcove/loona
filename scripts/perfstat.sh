@@ -26,7 +26,8 @@ for pidfile in /tmp/loona-perfstat/*.PID; do
 done
 
 #PERF_EVENTS="cpu-clock,context-switches,cycles,instructions,branches,branch-misses,cache-references,cache-misses,page-faults,$(paste -sd ',' syscalls)"
-PERF_EVENTS="cpu-clock,cycles,branch-misses,cache-misses,page-faults,$(paste -sd ',' syscalls)"
+#PERF_EVENTS="cpu-clock,cycles,branch-misses,cache-misses,page-faults,$(paste -sd ',' syscalls)"
+PERF_EVENTS="cycles,instructions,branches,branch-misses,cache-references,cache-misses,page-faults,$(paste -sd ',' syscalls)"
 
 LOONA_DIR=~/bearcove/loona
 
@@ -95,7 +96,7 @@ ENDPOINT="${ENDPOINT:-/repeat-4k-blocks/128}"
 RPS="${RPS:-2}"
 CONNS="${CONNS:-40}"
 STREAMS="${STREAMS:-8}"
-WARM_UP_TIME="${WARM_UP_TIME:-5}"
+WARMUP="${WARMUP:-5}"
 DURATION="${DURATION:-20}"
 TIMES="${TIMES:-1}"
 
@@ -111,7 +112,7 @@ else
     exit 1
 fi
 
-echo -e "\033[1;34m📊 Benchmark parameters: RPS=$RPS, CONNS=$CONNS, STREAMS=$STREAMS, WARM_UP_TIME=$WARM_UP_TIME, DURATION=$DURATION, TIMES=$TIMES\033[0m"
+echo -e "\033[1;34m📊 Benchmark parameters: RPS=$RPS, CONNS=$CONNS, STREAMS=$STREAMS, WARMUP=$WARMUP, DURATION=$DURATION, TIMES=$TIMES\033[0m"
 
 for server in "${!servers[@]}"; do
     read -r PID ADDR <<< "${servers[$server]}"
@@ -133,10 +134,10 @@ for server in "${!servers[@]}"; do
         echo "==================================================="
             ssh brat "${remote_command[@]}" &
             SSH_PID=$!
-            sleep "$WARM_UP_TIME"
-            ACTUAL_DURATION=$((DURATION - WARM_UP_TIME - 1))
-            echo "Starting perf for $ACTUAL_DURATION seconds..."
-            perf stat -e "$PERF_EVENTS" -p "$PID" -- sleep "$ACTUAL_DURATION"
+            sleep "$WARMUP"
+            MEASURE_DURATION=$((DURATION - WARMUP - 1))
+            echo "Starting perf for $MEASURE_DURATION seconds..."
+            perf stat -e "$PERF_EVENTS" -p "$PID" -- sleep "$MEASURE_DURATION"
             echo "Starting perf... done!"
             wait $SSH_PID
         done
