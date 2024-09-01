@@ -1,5 +1,6 @@
-#!/usr/bin/env -S PYTHONUNBUFFERED=1 FORCE_COLOR=1 uv run --with 'termcolor~=2.4.0' --with 'pandas~=2.2.2' --with 'openpyxl~=3.1.5'
+#!/usr/bin/env -S PYTHONUNBUFFERED=1 FORCE_COLOR=1 uv run
 
+import ctypes
 import os
 import signal
 import subprocess
@@ -12,9 +13,20 @@ import pandas as pd
 # Change to the script's directory
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
+# Define constants for prctl
+PR_SET_PDEATHSIG = 1
+
+# Load the libc shared library
+libc = ctypes.CDLL("libc.so.6")
+
+def set_pdeathsig():
+    """Set the parent death signal to SIGKILL."""
+    # Call prctl with PR_SET_PDEATHSIG and SIGKILL
+    libc.prctl(PR_SET_PDEATHSIG, signal.SIGKILL)
+
 # Set trap to kill the process group on script exit
 def kill_group():
-    os.killpg(0, signal.SIGTERM)
+    os.killpg(0, signal.SIGKILL)
 
 def abort_and_cleanup(signum, frame):
     print(colored("\nAborting and cleaning up...", "red"))
@@ -200,3 +212,19 @@ except KeyboardInterrupt:
     abort_and_cleanup(None, None)
 
 print(colored("✨ All done, good bye! 👋", "cyan"))
+
+print(colored("Processes still running in the group:", "yellow"))
+try:
+    pgid = os.getpgid(0)
+    ps_output = subprocess.check_output(["ps", "-o", "pid,cmd", "--no-headers", "-g", str(pgid)]).decode().strip()
+    if ps_output:
+        for line in ps_output.split('\n'):
+            pid, cmd = line.strip().split(None, 1)
+            print(f"PID: {pid}, Command: {cmd}")
+    else:
+        print("No processes found in the group.")
+except subprocess.CalledProcessError:
+    print("Error: Unable to retrieve process information.")
+
+print(colored("Cleaning up...", "red"))
+kill_group()

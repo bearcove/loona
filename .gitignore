@@ -10,3 +10,4 @@ junit.xml
 .DS_Store
 /vendor
 profile.json
+*.egg-info
