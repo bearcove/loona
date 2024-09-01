@@ -184,91 +184,109 @@ def do_samply():
 
 def do_perfstat():
     all_data = {}
-    for server, (PID, ADDR) in servers.items():
-        print(colored(f"🚀 Benchmarking {open(f'/proc/{PID}/cmdline').read().replace(chr(0), ' ').strip()}", "yellow"))
 
-        print(colored(f"🏃 Measuring {server} 🏃 (will take {duration} seconds)", "magenta"))
-        output_path = tempfile.NamedTemporaryFile(delete=False, suffix='.csv').name
+    pickle_filename = f"/tmp/loona-perfstat/combined_performance.pkl"
+    combined_df = None
 
-        perf_cmd = [
-            "perf", "stat",
-            "--event", PERF_EVENTS_STRING,
-            "--field-separator", ",",
-            "--output", output_path,
-            "--pid", str(PID),
-            "--delay", str(warmup*1000),
-            "--repeat", str(repeat),
-            "--",
-            "ssh", "brat",
-        ] + gen_h2load_cmd(ADDR)
-        if PROTO == "tls":
-            perf_cmd += ["--alpn-list", "h2"]
+    if os.environ.get("RELOAD_DF") == "1":
+        if os.path.exists(pickle_filename):
+            combined_df = pd.read_pickle(pickle_filename)
+            print(colored(f"Loaded DataFrame from {pickle_filename}", "green"))
+            return
+        else:
+            print(colored(f"Error: File {pickle_filename} does not exist.", "red"))
+            sys.exit(1)
 
-        perf_process = subprocess.Popen(perf_cmd, preexec_fn=set_pdeathsig)
-        perf_process.wait()
+    if combined_df is None:
+        for server, (PID, ADDR) in servers.items():
+            print(colored(f"🚀 Benchmarking {open(f'/proc/{PID}/cmdline').read().replace(chr(0), ' ').strip()}", "yellow"))
 
-        # Read the file, skipping lines starting with '#' and empty lines
-        csv_data = ""
-        with open(output_path, 'r') as f:
-            for line in f:
-                if not line.startswith('#') and line.strip():
-                    csv_data += line
+            print(colored(f"🏃 Measuring {server} 🏃 (will take {duration} seconds)", "magenta"))
+            output_path = tempfile.NamedTemporaryFile(delete=False, suffix='.csv').name
+
+            perf_cmd = [
+                "perf", "stat",
+                "--event", PERF_EVENTS_STRING,
+                "--field-separator", ",",
+                "--output", output_path,
+                "--pid", str(PID),
+                "--delay", str(warmup*1000),
+                "--repeat", str(repeat),
+                "--",
+                "ssh", "brat",
+            ] + gen_h2load_cmd(ADDR)
+            if PROTO == "tls":
+                perf_cmd += ["--alpn-list", "h2"]
+
+            perf_process = subprocess.Popen(perf_cmd, preexec_fn=set_pdeathsig)
+            perf_process.wait()
+
+            # Read the file, skipping lines starting with '#' and empty lines
+            csv_data = ""
+            with open(output_path, 'r') as f:
+                for line in f:
+                    if not line.startswith('#') and line.strip():
+                        csv_data += line
 
 
-        # Print the contents of output_path
-        print(f"Raw CSV data:")
-        print(csv_data)
+            # Print the contents of output_path
+            print(f"Raw CSV data:")
+            print(csv_data)
 
-        # Define the correct columns
-        column_names = ['value', 'unit', 'event', 'stddev']
-        perf_output = pd.read_csv(output_path, usecols=range(4), names=column_names)
-        os.unlink(output_path)
+            # Define the correct columns
+            column_names = ['value', 'unit', 'event', 'stddev']
+            perf_output = pd.read_csv(output_path, usecols=range(4), names=column_names)
+            os.unlink(output_path)
 
-        print("Performance Output (initial):")
-        print(perf_output)
+            print("Performance Output (initial):")
+            print(perf_output)
 
-        # Clean up the data
-        perf_output['event'] = perf_output['event'].str.strip()
-        perf_output['value'] = pd.to_numeric(perf_output['value'], errors='coerce')
+            # Clean up the data
+            perf_output['event'] = perf_output['event'].str.strip()
+            perf_output['value'] = pd.to_numeric(perf_output['value'], errors='coerce')
 
-        # Format values as billions for specific events
-        for index, row in perf_output.iterrows():
-            event = row['event']
-            if isinstance(event, str) and event != 'page-faults' and not event.startswith('syscalls:'):
-                perf_output.loc[index, 'value'] /= 1e9
-                perf_output.loc[index, 'unit'] = 'B'
+            # Format values as billions for specific events
+            for index, row in perf_output.iterrows():
+                event = row['event']
+                if isinstance(event, str) and event != 'page-faults' and not event.startswith('syscalls:'):
+                    perf_output.loc[index, 'value'] /= 1e9
+                    perf_output.loc[index, 'unit'] = 'B'
 
-        # Round values to 3 decimal places
-        perf_output['value'] = perf_output['value'].round(3)
+            # Round values to 3 decimal places
+            perf_output['value'] = perf_output['value'].round(3)
 
-        # Strip 'syscalls:sys_enter_' prefix from event names
-        perf_output['event'] = perf_output['event'].str.replace('syscalls:sys_enter_', '', regex=False)
+            # Strip 'syscalls:sys_enter_' prefix from event names
+            perf_output['event'] = perf_output['event'].str.replace('syscalls:sys_enter_', '', regex=False)
 
-        print("Performance Output (cleaned):")
-        print(perf_output)
+            print("Performance Output (cleaned):")
+            print(perf_output)
 
-        # Create a DataFrame directly from the cleaned data
-        df = perf_output.set_index('event')[['value', 'unit', 'stddev']]
+            # Create a DataFrame directly from the cleaned data
+            df = perf_output.set_index('event')[['value', 'unit', 'stddev']]
 
-        all_data[server] = df
+            all_data[server] = df
 
-    # Combine data from all servers
-    combined_df = pd.concat(all_data, axis=1)
+        # Combine data from all servers
+        combined_df = pd.concat(all_data, axis=1)
 
-    # Reorder columns to group value, unit, stddev for each server
-    new_columns = []
-    for server in servers.keys():
-        new_columns.extend([(server, 'value'), (server, 'unit'), (server, 'stddev')])
-    combined_df = combined_df.reindex(columns=pd.MultiIndex.from_tuples(new_columns))
+        # Reorder columns to group value, unit, stddev for each server
+        new_columns = []
+        for server in servers.keys():
+            new_columns.extend([(server, 'value'), (server, 'unit'), (server, 'stddev')])
+        combined_df = combined_df.reindex(columns=pd.MultiIndex.from_tuples(new_columns))
+
+        # Save the DataFrame to disk in a pickle format
+        combined_df.to_pickle(pickle_filename)
+        print(colored(f"Saved DataFrame to {pickle_filename}", "green"))
+
+    print("Combined DataFrame:")
+    print(combined_df)
 
     # Generate sheet name with current date, loona git hash, and benchmark params
     current_date = pd.Timestamp.now().strftime('%Y-%m-%d_%H-%M-%S')
     sheet_name = f"{current_date}_{loona_git_sha}_{benchmark_params.replace(', ', '_')}"
 
     print(f"Sheet name: {sheet_name}")
-
-    print("Combined DataFrame:")
-    print(combined_df)
 
     # Save the combined DataFrame as an Excel file
     excel_filename = f"/tmp/loona-perfstat/combined_performance.xlsx"
