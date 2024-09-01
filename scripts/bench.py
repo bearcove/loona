@@ -7,7 +7,8 @@ import subprocess
 import sys
 import time
 import openpyxl
-from openpyxl.styles import Alignment
+import pprint
+from openpyxl.styles import Alignment, Font
 
 from pathlib import Path
 from termcolor import colored
@@ -125,8 +126,14 @@ HYPER_ADDR = f"{HTTP_OR_HTTPS}://{OUR_PUBLIC_IP}:8001"
 LOONA_ADDR = f"{HTTP_OR_HTTPS}://{OUR_PUBLIC_IP}:8002"
 
 servers = {
-    "hyper": (HYPER_PID, HYPER_ADDR),
-    "loona": (LOONA_PID, LOONA_ADDR)
+    "hyper": {
+        "pid": HYPER_PID,
+        "address": HYPER_ADDR
+    },
+    "loona": {
+        "pid": LOONA_PID,
+        "address": LOONA_ADDR
+    }
 }
 
 SERVER = os.environ.get("SERVER")
@@ -152,12 +159,13 @@ mode = os.environ.get("MODE", "perfstat")
 
 loona_git_sha = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=os.path.expanduser('~/bearcove/loona')).decode().strip()
 
-benchmark_params = f"RPS={rps}, CLIENTS={clients}, STREAMS={streams}, WARMUP={warmup}, DURATION={duration}, REPEAT={repeat}"
+benchmark_params = f"RPS={rps}, ENDPOINT={endpoint}, CLIENTS={clients}, STREAMS={streams}, WARMUP={warmup}, DURATION={duration}, REPEAT={repeat}"
 print(colored(f"📊 Benchmark parameters: {benchmark_params}", "blue"))
 
 def gen_h2load_cmd(addr: str):
     return [
         H2LOAD,
+        "--warm-up-time", str(warmup),
         "--rps", rps,
         "--clients", clients,
         "--max-concurrent-streams", streams,
@@ -171,37 +179,42 @@ def do_samply():
         print("Please use SERVER=[loona,hyper] to narrow down to a single server.")
         sys.exit(1)
 
-    for server, (PID, ADDR) in servers.items():
+    for server_name, server in servers.items():
+        pid = server["pid"]
+        address = server["address"]
+
         print(colored("Warning: Warmup period is not taken into account in samply mode yet.", "yellow"))
 
-        samply_process = subprocess.Popen(["samply", "record", "-p", str(PID)], preexec_fn=set_pdeathsig)
+        samply_process = subprocess.Popen(["samply", "record", "-p", str(server["pid"])], preexec_fn=set_pdeathsig)
         with open("/tmp/loona-perfstat/samply.PID", "w") as f:
             f.write(str(samply_process.pid))
-            h2load_cmd = gen_h2load_cmd(ADDR)
+            h2load_cmd = gen_h2load_cmd(server["address"])
             subprocess.run(["ssh", "brat"] + h2load_cmd, check=True)
         samply_process.send_signal(signal.SIGINT)
         samply_process.wait()
 
 def do_perfstat():
-    all_data = {}
+    import pickle
+    data_filename = f"/tmp/loona-perfstat/all_data.pkl"
 
-    pickle_filename = f"/tmp/loona-perfstat/combined_performance.pkl"
-    combined_df = None
-
-    if os.environ.get("RELOAD_DF") == "1":
-        if os.path.exists(pickle_filename):
-            combined_df = pd.read_pickle(pickle_filename)
-            print(colored(f"Loaded DataFrame from {pickle_filename}", "green"))
-            return
+    all_data = None
+    if os.environ.get("FROM_DISK") == "1":
+        if os.path.exists(data_filename):
+            with open(data_filename, 'rb') as f:
+                all_data = pickle.load(f)
+            print(colored(f"Loaded all_data from {data_filename}", "green"))
         else:
-            print(colored(f"Error: File {pickle_filename} does not exist.", "red"))
+            print(colored(f"Error: File {data_filename} does not exist.", "red"))
             sys.exit(1)
 
-    if combined_df is None:
-        for server, (PID, ADDR) in servers.items():
-            print(colored(f"🚀 Benchmarking {open(f'/proc/{PID}/cmdline').read().replace(chr(0), ' ').strip()}", "yellow"))
+    if all_data is None:
+        all_data = {}
 
-            print(colored(f"🏃 Measuring {server} 🏃 (will take {duration} seconds)", "magenta"))
+        for server_name, server in servers.items():
+            pid = server["pid"]
+            address = server["address"]
+
+            print(colored(f"🏃 Measuring {server_name} 🏃 (will take {duration} seconds)", "magenta"))
             output_path = tempfile.NamedTemporaryFile(delete=False, suffix='.csv').name
 
             perf_cmd = [
@@ -209,92 +222,173 @@ def do_perfstat():
                 "--event", PERF_EVENTS_STRING,
                 "--field-separator", ",",
                 "--output", output_path,
-                "--pid", str(PID),
+                "--pid", str(pid),
                 "--delay", str(warmup*1000),
                 "--repeat", str(repeat),
                 "--",
                 "ssh", "brat",
-            ] + gen_h2load_cmd(ADDR)
+            ] + gen_h2load_cmd(address)
             if PROTO == "tls":
                 perf_cmd += ["--alpn-list", "h2"]
 
-            perf_process = subprocess.Popen(perf_cmd, preexec_fn=set_pdeathsig)
-            perf_process.wait()
+            subprocess.run(perf_cmd, preexec_fn=set_pdeathsig, check=True)
 
-            # Read the file, skipping lines starting with '#' and empty lines
-            csv_data = ""
+            # Read the CSV file, skipping comments and empty lines
+            data = []
             with open(output_path, 'r') as f:
                 for line in f:
                     if not line.startswith('#') and line.strip():
-                        csv_data += line
+                        print(f"Using CSV line: {line}")
 
+                        # Split the line by comma and strip whitespace
+                        row = [item.strip() for item in line.split(',')]
 
-            # Print the contents of output_path
-            print(f"Raw CSV data:")
-            print(csv_data)
+                        # Ensure we have exactly 4 columns
+                        if len(row) >= 4:
+                            data.append({
+                                'value': row[0],
+                                'event': row[2],
+                                'stddev': row[3]
+                            })
 
-            # Define the correct columns
-            column_names = ['value', 'unit', 'event', 'stddev']
-            perf_output = pd.read_csv(output_path, usecols=range(4), names=column_names)
-            os.unlink(output_path)
+            print("Parsed CSV data:")
+            pp = pprint.PrettyPrinter(indent=4)
+            pp.pprint(data)
 
-            print("Performance Output (initial):")
-            print(perf_output)
+            all_data[server_name] = data
 
-            # Clean up the data
-            perf_output['event'] = perf_output['event'].str.strip()
-            perf_output['value'] = pd.to_numeric(perf_output['value'], errors='coerce')
+        # Save `all_data` to disk
+        import pickle
+        with open(data_filename, 'wb') as f:
+            pickle.dump(all_data, f)
+            print(colored(f"Saved all_data to {data_filename}", "green"))
 
-            # Format values as billions for specific events
-            for index, row in perf_output.iterrows():
-                event = row['event']
-                if isinstance(event, str) and event != 'page-faults' and not event.startswith('syscalls:'):
-                    perf_output.loc[index, 'value'] /= 1e9
-                    perf_output.loc[index, 'unit'] = 'B'
+    print("All data:")
+    pp = pprint.PrettyPrinter(indent=4)
+    pp.pprint(all_data)
 
-            # Round values to 3 decimal places
-            perf_output['value'] = perf_output['value'].round(3)
+    # Create a new workbook and select the active sheet
+    wb = openpyxl.Workbook()
 
-            # Strip 'syscalls:sys_enter_' prefix from event names
-            perf_output['event'] = perf_output['event'].str.replace('syscalls:sys_enter_', '', regex=False)
+    ws = wb.active
 
-            print("Performance Output (cleaned):")
-            print(perf_output)
+    if ws is None:
+        print(colored("Error: Could not find active sheet", "red"))
+        sys.exit(1)
 
-            # Create a DataFrame directly from the cleaned data
-            df = perf_output.set_index('event')[['value', 'unit', 'stddev']]
+    default_font = Font(name='Courier New', size=11)
+    bold_font = Font(name='Courier New', size=11, bold=True)
 
-            all_data[server] = df
+    # Initialize row counter
+    current_row = 1
 
-        # Combine data from all servers
-        combined_df = pd.concat(all_data, axis=1)
+    # Add informative rows
+    informative_data = f"date: {time.strftime('%Y-%m-%d')}, loona rev: {loona_git_sha}"
+    ws.cell(row=current_row, column=1, value=informative_data)
+    ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=8)
+    merged_cell = ws.cell(row=current_row, column=1)
+    merged_cell.alignment = Alignment(horizontal='left')
+    merged_cell.font = bold_font
+    current_row += 1
 
-        # Reorder columns to group value, unit, stddev for each server
-        new_columns = []
-        for server in servers.keys():
-            new_columns.extend([(server, 'value'), (server, 'unit'), (server, 'stddev')])
-        combined_df = combined_df.reindex(columns=pd.MultiIndex.from_tuples(new_columns))
+    informative_data = f"{endpoint} over {PROTO}, {repeat} runs each, {rps} reqs/s"
+    ws.cell(row=current_row, column=1, value=informative_data)
+    ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=8)
+    merged_cell = ws.cell(row=current_row, column=1)
+    merged_cell.alignment = Alignment(horizontal='left')
+    merged_cell.font = bold_font
+    current_row += 1
 
-        # Save the DataFrame to disk in a pickle format
-        combined_df.to_pickle(pickle_filename)
-        print(colored(f"Saved DataFrame to {pickle_filename}", "green"))
+    # Add informative rows
+    informative_data = f"{clients} clients with {streams} streams each, {duration}s total duration (including {warmup}s warmup)"
+    ws.cell(row=current_row, column=1, value=informative_data)
+    ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=8)
+    merged_cell = ws.cell(row=current_row, column=1)
+    merged_cell.alignment = Alignment(horizontal='left')
+    merged_cell.font = bold_font
+    current_row += 1
 
-    print("Combined DataFrame:")
-    print(combined_df)
+    last_informative_row = current_row
 
-    # Generate sheet name with current date, loona git hash, and benchmark params
-    current_date = pd.Timestamp.now().strftime('%Y-%m-%d_%H-%M-%S')
-    sheet_name = f"{current_date}_{loona_git_sha}_{benchmark_params.replace(', ', '_')}"
+    # Add an empty row for spacing
+    current_row += 1
 
-    print(f"Sheet name: {sheet_name}")
+    # Add header row
+    headers = ["event", "hyper", "", "loona", ""]
+    for col, header in enumerate(headers, start=1):
+        cell = ws.cell(row=current_row, column=col, value=header)
+        cell.font = bold_font
 
-    # Save the combined DataFrame as an Excel file
+    # Merge cells for "hyper" and "loona"
+    ws.merge_cells(start_row=current_row, start_column=2, end_row=current_row, end_column=3)
+    ws.merge_cells(start_row=current_row, start_column=4, end_row=current_row, end_column=5)
+
+    # Set alignment for merged cells
+    ws.cell(row=current_row, column=2).alignment = Alignment(horizontal='center')
+    ws.cell(row=current_row, column=4).alignment = Alignment(horizontal='center')
+
+    # Add subheader row
+    current_row += 1
+    subheaders = ["", "value", "stddev", "value", "stddev"]
+    for col, subheader in enumerate(subheaders, start=1):
+        cell = ws.cell(row=current_row, column=col, value=subheader)
+        cell.alignment = Alignment(horizontal='center')
+        cell.font = Font(bold=True)
+
+    # Center-align the merged cells
+    for col in [2, 4]:
+        cell = ws.cell(row=current_row-1, column=col)
+        cell.alignment = Alignment(horizontal='center')
+
+    # Process and add data rows
+    current_row += 1
+    for event in PERF_EVENTS:
+        event_name = event.split(':')[-1] if ':' in event else event
+        ws.cell(row=current_row, column=1, value=event_name)
+
+        for server in ['hyper', 'loona']:
+            col = 2 if server == 'hyper' else 4
+            if server in all_data:
+                server_data = next((item for item in all_data[server] if item['event'] == event), None)
+                if server_data:
+                    value_cell = ws.cell(row=current_row, column=col, value=float(server_data['value'].replace(',', '')))
+                    if event_name in ['cycles', 'instructions', 'branches', 'branch-misses', 'cache-references', 'cache-misses']:
+                        value_cell.number_format = '#,##0.0,, "B"'
+                    else:
+                        value_cell.number_format = '#,##0'
+
+                    stddev = float(server_data['stddev'].rstrip('%')) / 100
+                    stddev_cell = ws.cell(row=current_row, column=col+1, value=stddev)
+                    stddev_cell.number_format = '0.00%'
+
+        current_row += 1
+
+    # Adjust column widths
+    for col in ws.columns:
+        max_length = 0
+        column = None
+        for cell in col[last_informative_row+1:]:  # Skip all informative rows
+            if cell.value is not None:
+                try:
+                    cell_length = len(str(cell.value))
+                    if cell_length > max_length:
+                        max_length = cell_length
+                    column = cell.column_letter
+                except TypeError:
+                    # Handle cases where len() is not applicable
+                    pass
+        adjusted_width = (max_length + 2)
+        if column is not None:
+            ws.column_dimensions[column].width = adjusted_width
+
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+        for cell in row:
+            cell.font = default_font
+
+    # Save the workbook
     excel_filename = f"/tmp/loona-perfstat/combined_performance.xlsx"
-    with pd.ExcelWriter(excel_filename, engine='openpyxl') as writer:
-        combined_df.to_excel(writer, sheet_name=sheet_name)
-        worksheet = writer.sheets[sheet_name]
-
-    print(colored(f"Saved combined performance data to {excel_filename}", "green"))
+    wb.save(excel_filename)
+    print(colored(f"Excel file saved as {excel_filename}", "green"))
 
 try:
     if mode == 'perfstat':
