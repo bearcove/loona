@@ -9,9 +9,25 @@ import time
 from pathlib import Path
 from termcolor import colored
 import pandas as pd
+import tempfile
 
 # Change to the script's directory
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+PERF_EVENTS = [
+    "cycles",
+    "instructions",
+    "branches",
+    "branch-misses",
+    "cache-references",
+    "cache-misses",
+    "page-faults",
+    "syscalls:sys_enter_write",
+    "syscalls:sys_enter_writev",
+    "syscalls:sys_enter_epoll_wait",
+    "syscalls:sys_enter_io_uring_enter"
+]
+PERF_EVENTS_STRING = ",".join(PERF_EVENTS)
 
 # Define constants for prctl
 PR_SET_PDEATHSIG = 1
@@ -55,19 +71,6 @@ for pidfile in Path("/tmp/loona-perfstat").glob("*.PID"):
 # Kill older remote processes
 subprocess.run(["ssh", "brat", "pkill -9 h2load"], check=False)
 
-PERF_EVENTS = [
-    "cycles",
-    "instructions",
-    "branches",
-    "branch-misses",
-    "cache-references",
-    "cache-misses",
-    "page-faults",
-    "syscalls:sys_enter_write",
-    "syscalls:sys_enter_writev",
-    "syscalls:sys_enter_epoll_wait",
-    "syscalls:sys_enter_io_uring_enter"
-]
 LOONA_DIR = os.path.expanduser("~/bearcove/loona")
 
 # Build the servers
@@ -96,6 +99,7 @@ if not OUR_PUBLIC_IP:
 
 print(f"📡 Our public IP address is {OUR_PUBLIC_IP}")
 
+# Declare h2load args based on PROTO
 HTTP_OR_HTTPS = "https" if PROTO == "tls" else "http"
 
 # Launch hyper server
@@ -117,20 +121,6 @@ with open("/tmp/loona-perfstat/loona.PID", "w") as f:
 HYPER_ADDR = f"{HTTP_OR_HTTPS}://{OUR_PUBLIC_IP}:8001"
 LOONA_ADDR = f"{HTTP_OR_HTTPS}://{OUR_PUBLIC_IP}:8002"
 
-# Declare h2load args based on PROTO
-H2LOAD_ARGS = []
-if PROTO == "h1":
-    print("Error: h1 is not supported")
-    sys.exit(1)
-elif PROTO == "h2c":
-    pass
-elif PROTO == "tls":
-    ALPN_LIST = os.environ.get("ALPN_LIST", "h2,http/1.1")
-    H2LOAD_ARGS = [f"--alpn-list={ALPN_LIST}"]
-else:
-    print(f"Error: Unknown PROTO '{PROTO}'")
-    sys.exit(1)
-
 servers = {
     "hyper": (HYPER_PID, HYPER_ADDR),
     "loona": (LOONA_PID, LOONA_ADDR)
@@ -146,71 +136,114 @@ if SERVER:
 
 H2LOAD = "/nix/var/nix/profiles/default/bin/h2load"
 
-ENDPOINT = os.environ.get("ENDPOINT", "/repeat-4k-blocks/128")
-RPS = os.environ.get("RPS", "2")
-CONNS = os.environ.get("CONNS", "40")
-STREAMS = os.environ.get("STREAMS", "8")
-WARMUP = int(os.environ.get("WARMUP", "5"))
-DURATION = int(os.environ.get("DURATION", "20"))
-TIMES = int(os.environ.get("TIMES", "1"))
+endpoint = os.environ.get("ENDPOINT", "/repeat-4k-blocks/128")
+rps = os.environ.get("RPS", "2")
+clients = os.environ.get("CLIENTS", "20")
+streams = os.environ.get("STREAMS", "2")
+warmup = int(os.environ.get("WARMUP", "5"))
+duration = int(os.environ.get("DURATION", "20"))
+times = int(os.environ.get("TIMES", "3"))
 
-# Set MODE to 'stat' if not specified
-MODE = os.environ.get("MODE", "stat")
+# Mode can be 'perfstat' or 'samply'
+mode = os.environ.get("MODE", "perfstat")
 
-LOONA_GIT_SHA = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=os.path.expanduser('~/bearcove/loona')).decode().strip()
+loona_git_sha = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=os.path.expanduser('~/bearcove/loona')).decode().strip()
 
-print(colored(f"📊 Benchmark parameters: RPS={RPS}, CONNS={CONNS}, STREAMS={STREAMS}, WARMUP={WARMUP}, DURATION={DURATION}, TIMES={TIMES}", "blue"))
+print(colored(f"📊 Benchmark parameters: RPS={rps}, CONNS={clients}, STREAMS={streams}, WARMUP={warmup}, DURATION={duration}, TIMES={times}", "blue"))
 
-try:
+def gen_h2load_cmd(addr: str):
+    return [
+        H2LOAD,
+        "--rps", rps,
+        "--clients", clients,
+        "--max-concurrent-streams", streams,
+        "--duration", str(duration),
+        f"{addr}{endpoint}",
+    ]
+
+def do_samply():
+    if len(servers) > 1:
+        print(colored("Error: More than one server specified.", "red"))
+        print("Please use SERVER=[loona,hyper] to narrow down to a single server.")
+        sys.exit(1)
+
+    for server, (PID, ADDR) in servers.items():
+        print(colored("Warning: Warmup period is not taken into account in samply mode yet.", "yellow"))
+
+        samply_process = subprocess.Popen(["samply", "record", "-p", str(PID)], preexec_fn=set_pdeathsig)
+        with open("/tmp/loona-perfstat/samply.PID", "w") as f:
+            f.write(str(samply_process.pid))
+            h2load_cmd = gen_h2load_cmd(ADDR)
+            subprocess.run(["ssh", "brat"] + h2load_cmd, check=True)
+        samply_process.send_signal(signal.SIGINT)
+        samply_process.wait()
+
+def do_perfstat():
     for server, (PID, ADDR) in servers.items():
         print(colored(f"🚀 Benchmarking {open(f'/proc/{PID}/cmdline').read().replace(chr(0), ' ').strip()}", "yellow"))
-        h2load_cmd = [H2LOAD] + H2LOAD_ARGS + ["--rps", RPS, "-c", CONNS, "-m", STREAMS, "--duration", str(DURATION), f"{ADDR}{ENDPOINT}"]
 
-        if MODE == "record":
-            samply_process = subprocess.Popen(["samply", "record", "-p", str(PID)], preexec_fn=set_pdeathsig)
-            with open("/tmp/loona-perfstat/samply.PID", "w") as f:
-                f.write(str(samply_process.pid))
-            subprocess.run(["ssh", "brat"] + h2load_cmd, check=True)
-            samply_process.send_signal(signal.SIGINT)
-            samply_process.wait()
-        else:
-            for i in range(1, TIMES + 1):
-                print(colored(f"🏃 Run {i} of {TIMES} for {server} server 🏃 (will take {DURATION} seconds)", "magenta"))
-                ssh_process = subprocess.Popen(["ssh", "brat"] + h2load_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=set_pdeathsig)
-                time.sleep(WARMUP)
-                MEASURE_DURATION = DURATION - WARMUP - 1
-                perf_cmd = ["perf", "stat", "-x", ",", "-e", ",".join(PERF_EVENTS), "-p", str(PID), "--", "sleep", str(MEASURE_DURATION)]
-                perf_process = subprocess.Popen(perf_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=set_pdeathsig)
-                perf_stdout, perf_stderr = perf_process.communicate()
+        print(colored(f"🏃 Measuring {server} 🏃 (will take {duration} seconds)", "magenta"))
+        output_path = tempfile.NamedTemporaryFile(delete=False, suffix='.csv').name
 
-                perf_output = perf_stdout.decode('utf-8') + perf_stderr.decode('utf-8')
-                perf_lines = [line.strip().split(',') for line in perf_output.split('\n') if line.strip() and not line.startswith('#')]
+        perf_cmd = [
+            "perf", "stat",
+            "--event", PERF_EVENTS_STRING,
+            "--field-separator", ",",
+            "--output", output_path,
+            "--pid", str(PID),
+            "--delay", str(warmup*1000),
+            "--",
+            "ssh", "brat",
+        ] + gen_h2load_cmd(ADDR)
+        if PROTO == "tls":
+            perf_cmd += ["--alpn-list", "h2"]
 
-                # Create a dictionary to store the data
-                data = {}
-                for line in perf_lines:
-                    if len(line) >= 3:
-                        value, _, label = line[:3]
-                        data[label] = value
+        perf_process = subprocess.Popen(perf_cmd, preexec_fn=set_pdeathsig)
 
-                # Create a DataFrame from the dictionary
-                df = pd.DataFrame([data]).T
-                df.columns = ['Value']
-                df.index.name = 'Event'
+        # perf stat output format:
+        # For CSV output (-x','):
+        # <value>,<unit>,<event>,<run stddev>,<time elapsed>,<percent of time elapsed>,,
+        # For human-readable output:
+        # <value>      <event>                                   #    <derived metric>   ( +- <run stddev>% )
+        #
+        # Columns:
+        # 1. Value: The raw count of the event
+        # 2. Unit: The unit of measurement (empty for most events)
+        # 3. Event: The name of the performance event being measured
+        # 4. Run stddev: The standard deviation between multiple runs as a percentage (0-100)
+        # 5. Time elapsed: The total time the event was measured
+        # 6. Percent of time elapsed: The percentage of total time the event was active
+        # 7. Derived metric: Additional calculated metrics (e.g., instructions per cycle)
 
-                # Save the DataFrame as an Excel file
-                excel_filename = f"/tmp/loona-perfstat/{server}_run_{i}.xlsx"
-                df.to_excel(excel_filename)
-                print(colored(f"Saved performance data to {excel_filename}", "green"))
+        perf_output = pd.read_csv(output_path, header=None, names=['Value', 'Unit', 'Event', 'StdDev', 'TimeElapsed', 'PercentTime', 'Empty1', 'Empty2'])
+        os.unlink(output_path)
 
-                ssh_process.wait()
+        print(perf_output)
 
-                if ssh_process.returncode != 0:
-                    output, error = ssh_process.communicate()
-                    print("h2load command failed. Output:")
-                    print(output.decode())
-                    print("Error:")
-                    print(error.decode())
+        # Clean up the data
+        perf_output['Event'] = perf_output['Event'].str.strip()
+        perf_output['Value'] = pd.to_numeric(perf_output['Value'], errors='coerce')
+        perf_output['StdDev'] = pd.to_numeric(perf_output['StdDev'], errors='coerce')
+
+        # Create a DataFrame directly from the cleaned data
+        df = perf_output.set_index('Event')[['Value', 'Unit', 'StdDev']]
+
+        # Save the DataFrame as an Excel file
+        excel_filename = f"/tmp/loona-perfstat/{server}.xlsx"
+        df.to_excel(excel_filename)
+        print(colored(f"Saved performance data to {excel_filename}", "green"))
+
+try:
+    if mode == 'perfstat':
+        do_perfstat()
+    elif mode == 'samply':
+        do_samply()
+    else:
+        print(colored(f"Error: Unknown mode '{mode}'", "red"))
+        print(colored("Known modes:", "yellow"))
+        print(colored("- perfstat", "yellow"))
+        print(colored("- samply", "yellow"))
+        sys.exit(1)
 except KeyboardInterrupt:
     print(colored("\nKeyboard interrupt detected. Cleaning up...", "red"))
     abort_and_cleanup(None, None)
