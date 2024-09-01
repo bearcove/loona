@@ -142,14 +142,15 @@ clients = os.environ.get("CLIENTS", "20")
 streams = os.environ.get("STREAMS", "2")
 warmup = int(os.environ.get("WARMUP", "5"))
 duration = int(os.environ.get("DURATION", "20"))
-times = int(os.environ.get("TIMES", "3"))
+repeat = int(os.environ.get("REPEAT", "3"))
 
 # Mode can be 'perfstat' or 'samply'
 mode = os.environ.get("MODE", "perfstat")
 
 loona_git_sha = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=os.path.expanduser('~/bearcove/loona')).decode().strip()
 
-print(colored(f"📊 Benchmark parameters: RPS={rps}, CONNS={clients}, STREAMS={streams}, WARMUP={warmup}, DURATION={duration}, TIMES={times}", "blue"))
+benchmark_params = f"RPS={rps}, CLIENTS={clients}, STREAMS={streams}, WARMUP={warmup}, DURATION={duration}, REPEAT={repeat}"
+print(colored(f"📊 Benchmark parameters: {benchmark_params}", "blue"))
 
 def gen_h2load_cmd(addr: str):
     return [
@@ -179,6 +180,7 @@ def do_samply():
         samply_process.wait()
 
 def do_perfstat():
+    all_data = {}
     for server, (PID, ADDR) in servers.items():
         print(colored(f"🚀 Benchmarking {open(f'/proc/{PID}/cmdline').read().replace(chr(0), ' ').strip()}", "yellow"))
 
@@ -192,6 +194,7 @@ def do_perfstat():
             "--output", output_path,
             "--pid", str(PID),
             "--delay", str(warmup*1000),
+            "--repeat", str(repeat),
             "--",
             "ssh", "brat",
         ] + gen_h2load_cmd(ADDR)
@@ -199,39 +202,69 @@ def do_perfstat():
             perf_cmd += ["--alpn-list", "h2"]
 
         perf_process = subprocess.Popen(perf_cmd, preexec_fn=set_pdeathsig)
+        perf_process.wait()
 
-        # perf stat output format:
-        # For CSV output (-x','):
-        # <value>,<unit>,<event>,<run stddev>,<time elapsed>,<percent of time elapsed>,,
-        # For human-readable output:
-        # <value>      <event>                                   #    <derived metric>   ( +- <run stddev>% )
-        #
-        # Columns:
-        # 1. Value: The raw count of the event
-        # 2. Unit: The unit of measurement (empty for most events)
-        # 3. Event: The name of the performance event being measured
-        # 4. Run stddev: The standard deviation between multiple runs as a percentage (0-100)
-        # 5. Time elapsed: The total time the event was measured
-        # 6. Percent of time elapsed: The percentage of total time the event was active
-        # 7. Derived metric: Additional calculated metrics (e.g., instructions per cycle)
+        # Read the file, skipping lines starting with '#' and empty lines
+        csv_data = ""
+        with open(output_path, 'r') as f:
+            for line in f:
+                if not line.startswith('#') and line.strip():
+                    csv_data += line
 
-        perf_output = pd.read_csv(output_path, header=None, names=['Value', 'Unit', 'Event', 'StdDev', 'TimeElapsed', 'PercentTime', 'Empty1', 'Empty2'])
+
+        # Print the contents of output_path
+        print(f"Raw CSV data:")
+        print(csv_data)
+
+        # Define the correct columns
+        column_names = ['value', 'unit', 'event', 'stddev']
+        perf_output = pd.read_csv(output_path, usecols=range(4), names=column_names)
         os.unlink(output_path)
 
+        print("Performance Output (initial):")
         print(perf_output)
 
         # Clean up the data
-        perf_output['Event'] = perf_output['Event'].str.strip()
-        perf_output['Value'] = pd.to_numeric(perf_output['Value'], errors='coerce')
-        perf_output['StdDev'] = pd.to_numeric(perf_output['StdDev'], errors='coerce')
+        perf_output['event'] = perf_output['event'].str.strip().str.replace('^syscalls:', '', regex=True)
+        perf_output['value'] = pd.to_numeric(perf_output['value'], errors='coerce')
+
+        print("Performance Output (cleaned):")
+        print(perf_output)
 
         # Create a DataFrame directly from the cleaned data
-        df = perf_output.set_index('Event')[['Value', 'Unit', 'StdDev']]
+        df = perf_output.set_index('event')[['value', 'unit', 'stddev']]
 
-        # Save the DataFrame as an Excel file
-        excel_filename = f"/tmp/loona-perfstat/{server}.xlsx"
-        df.to_excel(excel_filename)
-        print(colored(f"Saved performance data to {excel_filename}", "green"))
+        all_data[server] = df
+
+    # Combine data from all servers
+    combined_df = pd.concat(all_data, axis=1)
+
+    # Reorder columns to group value, unit, stddev for each server
+    new_columns = []
+    for server in servers.keys():
+        new_columns.extend([(server, 'value'), (server, 'stddev')])
+    combined_df = combined_df.reindex(columns=pd.MultiIndex.from_tuples(new_columns))
+
+    # Generate sheet name with current date, loona git hash, and benchmark params
+    current_date = pd.Timestamp.now().strftime('%Y-%m-%d_%H-%M-%S')
+    sheet_name = f"{current_date}_{loona_git_sha}_{benchmark_params.replace(', ', '_')}"
+
+    # Truncate sheet name if it's too long
+    max_sheet_name_length = 31  # Excel limitation
+    if len(sheet_name) > max_sheet_name_length:
+        sheet_name = sheet_name[:max_sheet_name_length]
+
+    print(f"Sheet name: {sheet_name}")
+
+    print("Combined DataFrame:")
+    print(combined_df)
+
+    # Save the combined DataFrame as an Excel file
+    excel_filename = f"/tmp/loona-perfstat/combined_performance.xlsx"
+    with pd.ExcelWriter(excel_filename, engine='openpyxl') as writer:
+        combined_df.to_excel(writer, sheet_name=sheet_name)
+
+    print(colored(f"Saved combined performance data to {excel_filename}", "green"))
 
 try:
     if mode == 'perfstat':
@@ -248,20 +281,4 @@ except KeyboardInterrupt:
     print(colored("\nKeyboard interrupt detected. Cleaning up...", "red"))
     abort_and_cleanup(None, None)
 
-print(colored("✨ All done, good bye! 👋", "cyan"))
-
-print(colored("Processes still running in the group:", "yellow"))
-try:
-    pgid = os.getpgid(0)
-    ps_output = subprocess.check_output(["ps", "-o", "pid,cmd", "--no-headers", "-g", str(pgid)]).decode().strip()
-    if ps_output:
-        for line in ps_output.split('\n'):
-            pid, cmd = line.strip().split(None, 1)
-            print(f"PID: {pid}, Command: {cmd}")
-    else:
-        print("No processes found in the group.")
-except subprocess.CalledProcessError:
-    print("Error: Unable to retrieve process information.")
-
-print(colored("Cleaning up...", "red"))
 kill_group()
