@@ -1,4 +1,4 @@
-#!/usr/bin/env -S bash -euo pipefail
+#!/usr/bin/env -S bash -euox pipefail
 
 . /root/.cargo/env
 
@@ -24,6 +24,9 @@ for pidfile in /tmp/loona-perfstat/*.PID; do
         rm -f "$pidfile"
     fi
 done
+
+# Kill older remote processes
+ssh brat "pkill -9 h2load" || true
 
 #PERF_EVENTS="cpu-clock,context-switches,cycles,instructions,branches,branch-misses,cache-references,cache-misses,page-faults,$(paste -sd ',' syscalls)"
 #PERF_EVENTS="cpu-clock,cycles,branch-misses,cache-misses,page-faults,$(paste -sd ',' syscalls)"
