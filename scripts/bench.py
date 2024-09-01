@@ -1,5 +1,6 @@
-#!/usr/bin/env -S uv run --with 'termcolor~=2.4.0' --with 'pandas~=2.2.2' --with 'openpyxl~=3.1.5'
- import os
+#!/usr/bin/env -S PYTHONUNBUFFERED=1 FORCE_COLOR=1 uv run --with 'termcolor~=2.4.0' --with 'pandas~=2.2.2' --with 'openpyxl~=3.1.5'
+
+import os
 import signal
 import subprocess
 import sys
@@ -38,8 +39,19 @@ for pidfile in Path("/tmp/loona-perfstat").glob("*.PID"):
 # Kill older remote processes
 subprocess.run(["ssh", "brat", "pkill -9 h2load"], check=False)
 
-PERF_EVENTS = f"cycles,instructions,branches,branch-misses,cache-references,cache-misses,page-faults,{','.join(open('syscalls').read().splitlines())}"
-
+PERF_EVENTS = [
+    "cycles",
+    "instructions",
+    "branches",
+    "branch-misses",
+    "cache-references",
+    "cache-misses",
+    "page-faults",
+    "syscalls:sys_enter_write",
+    "syscalls:sys_enter_writev",
+    "syscalls:sys_enter_epoll_wait",
+    "syscalls:sys_enter_io_uring_enter"
+]
 LOONA_DIR = os.path.expanduser("~/bearcove/loona")
 
 # Build the servers
@@ -49,7 +61,25 @@ subprocess.run(["cargo", "build", "--release", "--manifest-path", f"{LOONA_DIR}/
 PROTO = os.environ.get("PROTO", "h2c")
 os.environ["PROTO"] = PROTO
 
-OUR_PUBLIC_IP = subprocess.check_output(["curl", "-4", "ifconfig.me"]).decode().strip()
+# Get the default route interface
+default_route = subprocess.check_output(["ip", "route", "show", "0.0.0.0/0"]).decode().strip()
+default_interface = default_route.split()[4]
+
+# Get the IP address of the default interface
+ip_addr_output = subprocess.check_output(["ip", "addr", "show", "dev", default_interface]).decode().strip()
+
+OUR_PUBLIC_IP = None
+for line in ip_addr_output.split('\n'):
+    if 'inet ' in line:
+        OUR_PUBLIC_IP = line.split()[1].split('/')[0]
+        break
+
+if not OUR_PUBLIC_IP:
+    print(colored("Error: Could not determine our public IP address", "red"))
+    sys.exit(1)
+
+print(f"📡 Our public IP address is {OUR_PUBLIC_IP}")
+
 HTTP_OR_HTTPS = "https" if PROTO == "tls" else "http"
 
 # Launch hyper server
@@ -59,7 +89,6 @@ hyper_process = subprocess.Popen([f"{LOONA_DIR}/target/release/httpwg-hyper"], e
 HYPER_PID = hyper_process.pid
 with open("/tmp/loona-perfstat/hyper.PID", "w") as f:
     f.write(str(HYPER_PID))
-print(f"hyper PID: {HYPER_PID}")
 
 # Launch loona server
 loona_env = os.environ.copy()
@@ -68,7 +97,6 @@ loona_process = subprocess.Popen([f"{LOONA_DIR}/target/release/httpwg-loona"], e
 LOONA_PID = loona_process.pid
 with open("/tmp/loona-perfstat/loona.PID", "w") as f:
     f.write(str(LOONA_PID))
-print(f"loona PID: {LOONA_PID}")
 
 HYPER_ADDR = f"{HTTP_OR_HTTPS}://{OUR_PUBLIC_IP}:8001"
 LOONA_ADDR = f"{HTTP_OR_HTTPS}://{OUR_PUBLIC_IP}:8002"
@@ -113,11 +141,12 @@ TIMES = int(os.environ.get("TIMES", "1"))
 # Set MODE to 'stat' if not specified
 MODE = os.environ.get("MODE", "stat")
 
+LOONA_GIT_SHA = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=os.path.expanduser('~/bearcove/loona')).decode().strip()
+
 print(colored(f"📊 Benchmark parameters: RPS={RPS}, CONNS={CONNS}, STREAMS={STREAMS}, WARMUP={WARMUP}, DURATION={DURATION}, TIMES={TIMES}", "blue"))
 
 try:
     for server, (PID, ADDR) in servers.items():
-        print(colored(f"Loona Git SHA: {subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=os.path.expanduser('~/bearcove/loona')).decode().strip()}", "cyan"))
         print(colored(f"🚀 Benchmarking {open(f'/proc/{PID}/cmdline').read().replace(chr(0), ' ').strip()}", "yellow"))
         h2load_cmd = [H2LOAD] + H2LOAD_ARGS + ["--rps", RPS, "-c", CONNS, "-m", STREAMS, "--duration", str(DURATION), f"{ADDR}{ENDPOINT}"]
 
@@ -134,19 +163,28 @@ try:
                 ssh_process = subprocess.Popen(["ssh", "brat"] + h2load_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=os.setpgrp)
                 time.sleep(WARMUP)
                 MEASURE_DURATION = DURATION - WARMUP - 1
-                perf_cmd = ["perf", "stat", "-e", PERF_EVENTS, "-p", str(PID), "--", "sleep", str(MEASURE_DURATION)]
+                perf_cmd = ["perf", "stat", "-x", ",", "-e", ",".join(PERF_EVENTS), "-p", str(PID), "--", "sleep", str(MEASURE_DURATION)]
                 perf_process = subprocess.Popen(perf_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=os.setpgrp)
-                _, perf_stderr = perf_process.communicate()
-                perf_output = perf_stderr.decode('utf-8')
-                perf_lines = [line.strip().split() for line in perf_output.split('\n') if line.strip() and not line.startswith('#')]
-                perf_csv = ','.join([line[-1] for line in perf_lines if len(line) > 1])
+                perf_stdout, perf_stderr = perf_process.communicate()
 
-                # Create a DataFrame from the CSV string
-                df = pd.DataFrame([perf_csv.split(',')], columns=[line[-1] for line in perf_lines if len(line) > 1])
+                perf_output = perf_stdout.decode('utf-8') + perf_stderr.decode('utf-8')
+                perf_lines = [line.strip().split(',') for line in perf_output.split('\n') if line.strip() and not line.startswith('#')]
+
+                # Create a dictionary to store the data
+                data = {}
+                for line in perf_lines:
+                    if len(line) >= 3:
+                        value, _, label = line[:3]
+                        data[label] = value
+
+                # Create a DataFrame from the dictionary
+                df = pd.DataFrame(data, index=[0]).T
+                df.columns = ['Value']
+                df.index.name = 'Event'
 
                 # Save the DataFrame as an Excel file
                 excel_filename = f"/tmp/loona-perfstat/{server}_run_{i}.xlsx"
-                df.to_excel(excel_filename, index=False)
+                df.to_excel(excel_filename)
                 print(colored(f"Saved performance data to {excel_filename}", "green"))
 
                 ssh_process.wait()
@@ -160,3 +198,5 @@ try:
 except KeyboardInterrupt:
     print(colored("\nKeyboard interrupt detected. Cleaning up...", "red"))
     abort_and_cleanup(None, None)
+
+print(colored("✨ All done, good bye! 👋", "cyan"))
