@@ -1,4 +1,0 @@
-syscalls:sys_enter_write
-syscalls:sys_enter_writev
-syscalls:sys_enter_epoll_wait
-syscalls:sys_enter_io_uring_enter

@@ -1,0 +1,27 @@
+[project]
+name = "loona"
+version = "0.1.0"
+description = "Benchmarking rig for the loona Rust HTTP implementation"
+requires-python = ">=3.11"
+dependencies = [
+    "termcolor~=2.4.0",
+    "openpyxl~=3.1.5",
+    "psutil>=6.0.0",
+]
+
+[tool.setuptools]
+packages = ["scripts"]
+
+[tool.pyright]
+include = ["scripts"]
+exclude = [
+    "**/__pycache__",
+    "**/node_modules",
+    ".venv",
+]
+venvPath = "."
+venv = ".venv"
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"

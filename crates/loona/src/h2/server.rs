@@ -1454,7 +1454,7 @@ where
                     std::str::from_utf8(&value).unwrap_or("<non-utf8-value>"),
                 );
 
-                if &key[..1] == b":" {
+                if key.first() == Some(&b':') {
                     if saw_regular_header {
                         req_error = Some(H2StreamError::BadRequest(
                                 "All pseudo-header fields MUST appear in a field block before all regular field lines (RFC 9113, section 8.3)"
