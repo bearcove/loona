@@ -1,5 +1,6 @@
 #!/usr/bin/env -S PYTHONUNBUFFERED=1 FORCE_COLOR=1 uv run
 
+import psutil
 import ctypes
 import os
 import signal
@@ -12,7 +13,6 @@ from openpyxl.styles import Alignment, Font
 
 from pathlib import Path
 from termcolor import colored
-import pandas as pd
 import tempfile
 
 # Change to the script's directory
@@ -47,6 +47,16 @@ def set_pdeathsig():
 # Set trap to kill the process group on script exit
 def kill_group():
     os.killpg(0, signal.SIGKILL)
+
+def kill_group_except_self():
+    current_pid = os.getpid()
+    for proc in psutil.process_iter(['pid']):
+        try:
+            if proc.pid != current_pid and os.getpgid(proc.pid) == os.getpgid(0):
+                print(f"Killing process {proc.pid}: {proc.name()}")
+                os.kill(proc.pid, signal.SIGKILL)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
 
 def abort_and_cleanup(signum, frame):
     print(colored("\nAborting and cleaning up...", "red"))
@@ -405,4 +415,5 @@ except KeyboardInterrupt:
     print(colored("\nKeyboard interrupt detected. Cleaning up...", "red"))
     abort_and_cleanup(None, None)
 
-kill_group()
+print(colored("🎉 All done! Bye bye! 👋", "cyan"))
+# kill_group_except_self()
