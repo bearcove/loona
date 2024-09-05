@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/bearcove/loona/compare/buffet-v0.3.0...buffet-v0.3.1) - 2024-09-05
+
+### Other
+- Remove needless timers
+- allocate vec with the exact capacity
+- Filter syscsalls better, introduce record mode for perfstat, remove misleading comment
+- both hyper and loona httpwg clis use the harness now
+- comment out writev_owned
+- hacky writev implementation
+- ignore some failures
+- debug things
+- well that's super weird
+- Allow customizing number of buffers
+- typo
+
 ## [0.3.0](https://github.com/bearcove/loona/compare/buffet-v0.2.1...buffet-v0.3.0) - 2024-08-21
 
 ### Added

@@ -6,15 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.1](https://github.com/bearcove/loona/compare/b-x-v1.0.0...b-x-v1.0.1) - 2024-09-05
+## [0.1.1](https://github.com/bearcove/loona/compare/luring-v0.1.0...luring-v0.1.1) - 2024-09-05
 
 ### Other
-- release
-
-## [1.0.0](https://github.com/bearcove/loona/releases/tag/b-x-v1.0.0) - 2024-08-21
-
-### Other
-- Fix doc errors
-- Fix TLS example
-- so close (for this batch)
-- 4
+- Remove needless timers
+- debug things
+- well that's super weird
+- Make number of entries + sqpoll configurable via env vars
+- try higher ring size
