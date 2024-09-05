@@ -8,7 +8,7 @@
 
 ![The loona logo: a lunatic moon looking threatening and like it drank a beer it wasn't supposed to. Also pimples.](https://github.com/user-attachments/assets/409d548c-d642-4160-b529-5959a851d6b3)
 
-_Logo by [MisiasArt](https://www.deviantart.com/misiasart)_
+_Logo by [MisiasArt](https://misiasart.carrd.co)_
 
 An experimental, HTTP/1.1 and HTTP/2 implementation in Rust on top of io-uring.
 
