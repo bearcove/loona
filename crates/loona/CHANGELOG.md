@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/bearcove/loona/compare/loona-v0.3.0...loona-v0.3.1) - 2024-09-05
+
+### Other
+- Update logo attribution
+- don't crash on empty header name
+- Try to measure servers in steady state
+- Filter syscsalls better, introduce record mode for perfstat, remove misleading comment
+- use httpwg_harness to run testbed, use h1 there
+- both hyper and loona httpwg clis use the harness now
+- standardize testing some more
+- ignore some failures
+- well that's super weird
+- try out benchmarks
+
 ## [0.3.0](https://github.com/bearcove/loona/compare/loona-v0.2.1...loona-v0.3.0) - 2024-08-21
 
 ### Other

@@ -6,15 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.1](https://github.com/bearcove/loona/compare/b-x-v1.0.0...b-x-v1.0.1) - 2024-09-05
+## [0.1.0](https://github.com/bearcove/loona/releases/tag/httpwg-harness-v0.1.0) - 2024-09-05
 
 ### Other
-- release
-
-## [1.0.0](https://github.com/bearcove/loona/releases/tag/b-x-v1.0.0) - 2024-08-21
-
-### Other
-- Fix doc errors
-- Fix TLS example
-- so close (for this batch)
-- 4
+- Improve 404 message
+- both hyper and loona httpwg clis use the harness now

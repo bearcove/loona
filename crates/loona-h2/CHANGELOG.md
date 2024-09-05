@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/bearcove/loona/compare/loona-h2-v0.3.0...loona-h2-v0.4.0) - 2024-09-05
+
+### Other
+- Update logo attribution
+- bye syn@v1
+- well that's super weird
+
 ## [0.3.0](https://github.com/bearcove/loona/compare/loona-h2-v0.2.1...loona-h2-v0.3.0) - 2024-08-21
 
 ### Other
