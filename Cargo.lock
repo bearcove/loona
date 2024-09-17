@@ -721,7 +721,7 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "httpwg"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "b-x",
  "buffet",
@@ -1052,7 +1052,7 @@ dependencies = [
 
 [[package]]
 name = "loona-h2"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "buffet",
  "byteorder",
@@ -1064,7 +1064,7 @@ dependencies = [
 
 [[package]]
 name = "loona-hpack"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "hex",
  "serde",

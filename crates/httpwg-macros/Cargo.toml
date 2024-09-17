@@ -12,4 +12,4 @@ Macros to allow generating httpwg unit tests
 rust-version = "1.75"
 
 [dependencies]
-httpwg = { version = "0.2.3", path = "../httpwg" }
+httpwg = { version = "0.2.4", path = "../httpwg" }
