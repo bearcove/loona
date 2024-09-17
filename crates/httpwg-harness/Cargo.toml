@@ -2,8 +2,11 @@
 name = "httpwg-harness"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [dependencies]
 eyre = { version = "0.6.12", default-features = false }
-rcgen = { version = "0.13.1", default-features = false, features = ["aws_lc_rs"] }
+rcgen = { version = "0.13.1", default-features = false, features = [
+    "aws_lc_rs",
+] }
 rustls = "0.23.12"
