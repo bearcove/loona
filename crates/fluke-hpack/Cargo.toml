@@ -22,7 +22,7 @@ interop-tests = []
 
 [dev-dependencies]
 serde = { version = "1.0.206", features = ["derive"] }
-serde_json = "1.0.122"
+merde_json = "2.1.2"
 hex = "0.4.3"
 thiserror = "1.0.63"
 
