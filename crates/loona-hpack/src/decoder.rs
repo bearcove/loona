@@ -535,7 +535,7 @@ impl<'a> Decoder<'a> {
     ///
     /// Returns the number of octets consumed from the given buffer.
     fn update_max_dynamic_size(&mut self, buf: &[u8]) -> Result<usize, DecoderError> {
-        let (new_size, consumed) = decode_integer(buf, 5).ok().unwrap();
+        let (new_size, consumed) = decode_integer(buf, 5)?;
         if let Some(max_size) = self.max_allowed_table_size {
             if new_size > max_size {
                 return Err(DecoderError::InvalidMaxDynamicSize);
