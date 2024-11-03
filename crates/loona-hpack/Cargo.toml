@@ -1,6 +1,6 @@
 [package]
 name = "loona-hpack"
-version = "0.4.2"
+version = "0.4.3"
 authors = [
     "Amos Wenger <amos@bearcove.net>",
     "Marko Lalic <marko.lalic@gmail.com>",

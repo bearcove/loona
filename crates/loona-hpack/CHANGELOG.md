@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3](https://github.com/bearcove/loona/compare/loona-hpack-v0.4.2...loona-hpack-v0.4.3) - 2024-11-03
+
+### Other
+
+- Do not panic when decode_integer fails
+
 ## [0.4.2](https://github.com/bearcove/loona/compare/loona-hpack-v0.4.1...loona-hpack-v0.4.2) - 2024-09-17
 
 ### Other
