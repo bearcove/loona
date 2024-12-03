@@ -23,7 +23,7 @@ impl BX {
 
     /// Create a new `BX` from a String
     pub fn from_string(s: String) -> Self {
-        Self(s.into())
+        Self(Box::new(StringError(s)))
     }
 }
 
@@ -110,3 +110,114 @@ macro_rules! bail {
         return Err($crate::BX::from_string(format!($fmt, $($arg)*)));
     };
 }
+
+/// The stupidest Send box error ever.
+///
+/// It has `From` implementations for some libstd error types,
+/// you can derive `From<E>` for your own error types
+pub struct BS(Box<dyn StdError + Send>);
+
+#[derive(Debug)]
+struct StringError(String);
+
+impl fmt::Display for StringError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl StdError for StringError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        None
+    }
+}
+
+impl BS {
+    /// Create a new `BS` from an `E`.
+    pub fn from_err(e: impl StdError + Send + 'static) -> Self {
+        Self(Box::new(e))
+    }
+
+    /// Create a new `BS` from a boxed `E`.
+    pub fn from_boxed(e: Box<dyn StdError + Send + 'static>) -> Self {
+        Self(e)
+    }
+
+    /// Create a new `BS` from a String
+    pub fn from_string(s: String) -> Self {
+        Self(Box::new(StringError(s)))
+    }
+}
+
+pub fn box_send_error(e: impl StdError + Send + 'static) -> BS {
+    BS::from_err(e)
+}
+
+/// Adds `bs() -> BS` to error types
+pub trait BsForErrors {
+    fn bs(self) -> BS;
+}
+
+impl<E: StdError + Send + 'static> BsForErrors for E {
+    fn bs(self) -> BS {
+        BS::from_err(self)
+    }
+}
+
+/// Adds `bs() -> Result<T, BS>` to result types
+pub trait BsForResults<T> {
+    fn bs(self) -> Result<T, BS>;
+}
+
+impl<T, E: StdError + Send + 'static> BsForResults<T> for Result<T, E> {
+    fn bs(self) -> Result<T, BS> {
+        self.map_err(BS::from_err)
+    }
+}
+
+impl fmt::Debug for BS {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl fmt::Display for BS {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl StdError for BS {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        self.0.source()
+    }
+}
+
+#[macro_export]
+macro_rules! make_bsable {
+    ($ty:ty) => {
+        impl From<$ty> for $crate::BS {
+            fn from(e: $ty) -> Self {
+                $crate::BS::from_err(e)
+            }
+        }
+    };
+}
+
+make_bsable!(std::io::Error);
+make_bsable!(std::fmt::Error);
+make_bsable!(std::str::Utf8Error);
+make_bsable!(std::string::FromUtf8Error);
+make_bsable!(std::string::FromUtf16Error);
+make_bsable!(std::num::ParseIntError);
+make_bsable!(std::num::ParseFloatError);
+make_bsable!(std::num::TryFromIntError);
+make_bsable!(std::array::TryFromSliceError);
+make_bsable!(std::char::ParseCharError);
+make_bsable!(std::net::AddrParseError);
+make_bsable!(std::time::SystemTimeError);
+make_bsable!(std::env::VarError);
+make_bsable!(std::sync::mpsc::RecvError);
+make_bsable!(std::sync::mpsc::TryRecvError);
+make_bsable!(std::sync::mpsc::SendError<Box<dyn StdError + Send + Sync>>);
+make_bsable!(std::sync::PoisonError<Box<dyn StdError + Send + Sync>>);
