@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6](https://github.com/bearcove/loona/compare/httpwg-v0.2.5...httpwg-v0.2.6) - 2024-12-03
+
+### Other
+
+- updated the following local packages: b-x
+
 ## [0.2.5](https://github.com/bearcove/loona/compare/httpwg-v0.2.4...httpwg-v0.2.5) - 2024-11-03
 
 ### Other

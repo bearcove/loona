@@ -1,6 +1,6 @@
 [package]
 name = "loona"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 keywords = ["http", "http1", "http2", "io-uring", "loona"]
@@ -25,7 +25,7 @@ harness = false
 [dependencies]
 byteorder = "1.5.0"
 futures-util = "0.3.30"
-buffet = { version = "0.3.1", path = "../buffet" }
+buffet = { version = "0.3.2", path = "../buffet" }
 loona-hpack = { version = "0.4.3", path = "../loona-hpack" }
 http = "1.1.0"
 memchr = "2.7.4"
@@ -40,10 +40,10 @@ thiserror = { version = "1.0.63", default-features = false }
 tokio = { version = "1.39.2", features = ["macros", "sync"] }
 tracing = { version = "0.1.40", default-features = false }
 loona-h2 = { version = "0.4.1", path = "../loona-h2" }
-b-x = { version = "1.0.1", path = "../b-x" }
+b-x = { version = "1.0.2", path = "../b-x" }
 
 [dev-dependencies]
-buffet = { version = "0.3.1", path = "../buffet" }
+buffet = { version = "0.3.2", path = "../buffet" }
 bytes = { version = "1.7.1", default-features = false }
 pretty_assertions = { version = "1.4.0", default-features = false, features = [
     "std",
