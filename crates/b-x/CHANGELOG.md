@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2](https://github.com/bearcove/loona/compare/b-x-v1.0.1...b-x-v1.0.2) - 2024-12-03
+
+### Other
+
+- Add BX to b-x
+
 ## [1.0.1](https://github.com/bearcove/loona/compare/b-x-v1.0.0...b-x-v1.0.1) - 2024-09-05
 
 ### Other
