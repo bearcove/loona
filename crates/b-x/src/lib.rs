@@ -115,7 +115,7 @@ macro_rules! bail {
 ///
 /// It has `From` implementations for some libstd error types,
 /// you can derive `From<E>` for your own error types
-pub struct BS(Box<dyn StdError + Send>);
+pub struct BS(Box<dyn StdError + Send + Sync>);
 
 #[derive(Debug)]
 struct StringError(String);
@@ -134,12 +134,12 @@ impl StdError for StringError {
 
 impl BS {
     /// Create a new `BS` from an `E`.
-    pub fn from_err(e: impl StdError + Send + 'static) -> Self {
+    pub fn from_err(e: impl StdError + Send + Sync + 'static) -> Self {
         Self(Box::new(e))
     }
 
     /// Create a new `BS` from a boxed `E`.
-    pub fn from_boxed(e: Box<dyn StdError + Send + 'static>) -> Self {
+    pub fn from_boxed(e: Box<dyn StdError + Send + Sync + 'static>) -> Self {
         Self(e)
     }
 
@@ -149,7 +149,7 @@ impl BS {
     }
 }
 
-pub fn box_send_error(e: impl StdError + Send + 'static) -> BS {
+pub fn box_send_error(e: impl StdError + Send + Sync + 'static) -> BS {
     BS::from_err(e)
 }
 
@@ -158,7 +158,7 @@ pub trait BsForErrors {
     fn bs(self) -> BS;
 }
 
-impl<E: StdError + Send + 'static> BsForErrors for E {
+impl<E: StdError + Send + Sync + 'static> BsForErrors for E {
     fn bs(self) -> BS {
         BS::from_err(self)
     }
@@ -169,7 +169,7 @@ pub trait BsForResults<T> {
     fn bs(self) -> Result<T, BS>;
 }
 
-impl<T, E: StdError + Send + 'static> BsForResults<T> for Result<T, E> {
+impl<T, E: StdError + Send + Sync + 'static> BsForResults<T> for Result<T, E> {
     fn bs(self) -> Result<T, BS> {
         self.map_err(BS::from_err)
     }
