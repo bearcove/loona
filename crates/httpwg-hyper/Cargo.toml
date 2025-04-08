@@ -22,7 +22,7 @@ hyper-util = { version = "0.1.7", features = [
 ] }
 pin-project-lite = "0.2.14"
 rcgen = { version = "0.13.1", default-features = false, features = ["aws_lc_rs"] }
-tokio = { version = "1.39.2", features = ["full"] }
+tokio = { version = "1.43.1", features = ["full"] }
 tokio-rustls = "0.26.0"
 tokio-stream = "0.1.15"
 tokio-util = { version = "0.7.11", features = ["io"] }
