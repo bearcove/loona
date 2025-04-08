@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3](https://github.com/bearcove/loona/compare/loona-h2-v0.4.2...loona-h2-v0.4.3) - 2025-04-08
+
+### Other
+
+- updated the following local packages: buffet
+
 ## [0.4.2](https://github.com/bearcove/loona/compare/loona-h2-v0.4.1...loona-h2-v0.4.2) - 2024-12-03
 
 ### Other
