@@ -134,7 +134,7 @@ checksum = "b048fb63fd8b5923fc5aa7b340d8e156aec7ec02f0c78fa8a6ddc2613f6f71de"
 
 [[package]]
 name = "buffet"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "b-x",
  "bytemuck",
@@ -722,7 +722,7 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "httpwg"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "b-x",
  "buffet",
@@ -739,7 +739,7 @@ dependencies = [
 
 [[package]]
 name = "httpwg-cli"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "buffet",
  "color-eyre",
@@ -810,7 +810,7 @@ dependencies = [
 
 [[package]]
 name = "httpwg-macros"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "httpwg",
 ]
@@ -1015,7 +1015,7 @@ checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
 
 [[package]]
 name = "loona"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "b-x",
  "buffet",
@@ -1053,7 +1053,7 @@ dependencies = [
 
 [[package]]
 name = "loona-h2"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "buffet",
  "byteorder",
@@ -1076,7 +1076,7 @@ dependencies = [
 
 [[package]]
 name = "luring"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "io-uring",
  "send_wrapper",

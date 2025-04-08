@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6](https://github.com/bearcove/loona/compare/httpwg-macros-v0.2.5...httpwg-macros-v0.2.6) - 2025-04-08
+
+### Other
+
+- updated the following local packages: httpwg
+
 ## [0.2.5](https://github.com/bearcove/loona/compare/httpwg-macros-v0.2.4...httpwg-macros-v0.2.5) - 2024-12-03
 
 ### Other

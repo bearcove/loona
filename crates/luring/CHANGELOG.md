@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/bearcove/loona/compare/luring-v0.1.1...luring-v0.1.2) - 2025-04-08
+
+### Other
+
+- Bump tokio from 1.39.2 to 1.43.1
+
 ## [0.1.1](https://github.com/bearcove/loona/compare/luring-v0.1.0...luring-v0.1.1) - 2024-09-05
 
 ### Other
