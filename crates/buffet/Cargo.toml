@@ -30,7 +30,7 @@ pretty-hex = "0.4.1"
 send_wrapper = "0.6.0"
 socket2 = "0.5.7"
 thiserror = { version = "1.0.63", default-features = false }
-tokio = { version = "1.39.2", features = [
+tokio = { version = "1.43.1", features = [
     "sync",
     "macros",
     "rt",

@@ -14,7 +14,7 @@ rust-version = "1.75"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "1.39", features = ["rt", "net"] }
+tokio = { version = "1.43", features = ["rt", "net"] }
 slab = { version = "0.4" }
 tracing = "0.1.40"
 
