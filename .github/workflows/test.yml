@@ -107,12 +107,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
+      # No ./target here: `cargo miri` persists its whole environment under
+      # target/, and this cache volume is readable by PR runs.
+      # https://blog.rust-lang.org/2026/09/21/github-actions-leaking-secrets-when-miri-output-is-cached/
       - name: Setup cargo cache
         uses: namespacelabs/nscloud-cache-action@v1
         with:
           path: |
-            ./target
-            ./target-cov
             ~/.cargo/git
             ~/.cargo/registry
             ~/.rustup
