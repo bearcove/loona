@@ -3,6 +3,7 @@
 //! (HPACK-draft-10, Appendix B)
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// Represents a symbol that can be inserted into a Huffman-encoded octet
 /// string.
@@ -93,6 +94,20 @@ impl HuffmanDecoder {
     /// encoding of an octet string and handles the padding rules
     /// accordingly.
     pub fn decode(&mut self, buf: &[u8]) -> HuffmanDecoderResult {
+        self.decode_shared(buf)
+    }
+
+    /// Returns a decoder for the default Huffman code table, built on first
+    /// use and shared afterwards, so callers do not rebuild the table for
+    /// every string they decode.
+    pub(crate) fn shared() -> &'static HuffmanDecoder {
+        static DECODER: OnceLock<HuffmanDecoder> = OnceLock::new();
+        DECODER.get_or_init(HuffmanDecoder::new)
+    }
+
+    /// Same as `decode`; the decoder holds no per-call state, so a shared
+    /// reference is enough.
+    pub(crate) fn decode_shared(&self, buf: &[u8]) -> HuffmanDecoderResult {
         let mut current: u32 = 0;
         let mut current_len: u8 = 0;
         let mut result: Vec<u8> = Vec::new();

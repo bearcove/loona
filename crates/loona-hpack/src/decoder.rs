@@ -145,8 +145,7 @@ fn decode_string(buf: &[u8]) -> Result<(Cow<'_, [u8]>, usize), DecoderError> {
         trace!("decode_string: Using the Huffman code");
         // Huffman coding used: pass the raw octets to the Huffman decoder
         // and return its result.
-        let mut decoder = HuffmanDecoder::new();
-        let decoded = match decoder.decode(raw_string) {
+        let decoded = match HuffmanDecoder::shared().decode_shared(raw_string) {
             Err(e) => {
                 return Err(DecoderError::StringDecodingError(
                     StringDecodingError::HuffmanDecoderError(e),
